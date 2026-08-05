@@ -148,12 +148,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).send('Telegram Webhook Active');
   }
 
-  // Acknowledge update immediately to prevent Telegram retries
-  res.status(200).json({ status: 'ok' });
-
   try {
     const update = req.body;
-    if (!update) return;
+    if (!update) return res.status(200).json({ status: 'ok' });
 
     // A) Callback Query
     if (update.callback_query) {
@@ -480,4 +477,5 @@ Return JSON object:
   } catch (err) {
     console.error('Error processing Telegram webhook:', err);
   }
+  return res.status(200).json({ status: 'ok' });
 }
