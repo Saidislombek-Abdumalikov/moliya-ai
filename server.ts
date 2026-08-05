@@ -477,13 +477,13 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
     };
   };
 
-  const getDualLinkInlineButtons = (chatId?: number, fromUser?: any) => {
-    const link = chatId ? getUserAuthUrl(chatId, fromUser) : appUrl;
+  const getDualLinkInlineButtons = (requestId?: string) => {
+    const webUrl = requestId ? `${appUrl}/?req=${requestId}` : appUrl;
     return {
       inline_keyboard: [
         [
-          { text: "📱 Mini App da ochish", web_app: { url: link } },
-          { text: "🌐 Web App (Brauzer)", url: link }
+          { text: "📱 Telegram Mini App", web_app: { url: appUrl } },
+          { text: "🌐 Web App-ga o'tish", url: webUrl }
         ]
       ]
     };
@@ -694,7 +694,7 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
           }
 
           const successText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n✅ <b>Muvaffaqiyatli tasdiqlandi!</b> 🚀\nBrauzeringizdagi Moliya AI ilovasiga avtomatik kirdingiz.\n\n👇 <i>Ilovaga o'tish uchun quyidagi tugmani bosing:</i>`;
-          await sendTelegramMessage(chatId, successText, getDualLinkInlineButtons());
+          await sendTelegramMessage(chatId, successText, getDualLinkInlineButtons(requestId));
           await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
           return;
         }

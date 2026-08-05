@@ -326,7 +326,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           await verifyAndMarkLoginRequest(requestId, fromUser);
 
           const successText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n✅ <b>Muvaffaqiyatli tasdiqlandi!</b> 🚀\nBrauzeringizdagi Moliya AI ilovasiga avtomatik kirdingiz.\n\n👇 <i>Ilovaga o'tish uchun quyidagi tugmani bosing:</i>`;
-          await sendTelegramMessage(chatId, successText, getCleanInlineKeyboard());
+          await sendTelegramMessage(chatId, successText, getCleanInlineKeyboard(requestId));
           await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
           return;
         }
