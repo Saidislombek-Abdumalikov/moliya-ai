@@ -9,6 +9,7 @@ export interface OnboardingResult {
   name?: string
   phone?: string
   telegram?: string
+  telegramId?: string
   isPremium?: boolean
   notifications?: { opt1: boolean; opt2: boolean; opt3: boolean }
 }

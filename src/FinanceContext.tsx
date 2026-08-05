@@ -168,8 +168,11 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           const currentOnboarding = JSON.parse(localStorage.getItem('user_onboarding_v1') || '{}');
           const updatedOnboarding = {
             ...currentOnboarding,
+            completed: true,
+            language: currentOnboarding.language || 'uz',
             name: urlName || currentOnboarding.name || 'Telegram Foydalanuvchi',
             telegram: urlUsername ? (urlUsername.startsWith('@') ? urlUsername : '@' + urlUsername) : currentOnboarding.telegram || '@moliya_user',
+            telegramId: urlTgUserId,
           };
           setOnboarding(updatedOnboarding);
           localStorage.setItem('user_onboarding_v1', JSON.stringify(updatedOnboarding));

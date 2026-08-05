@@ -892,7 +892,9 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
           <div style={{ flex: 1 }}>
             <h3 style={{ fontSize: 17, fontWeight: 700, color: '#1E1A3C', marginBottom: 3 }}>{userName}</h3>
             <p style={{ fontSize: 13, color: '#8B82C4', marginBottom: 2, fontWeight: 500 }}>{userPhone}</p>
-            <p style={{ fontSize: 11.5, color: '#B8B0DC', wordBreak: 'break-all' }}>{userTelegram}</p>
+            <p style={{ fontSize: 11.5, color: '#7C3AED', fontWeight: 600, wordBreak: 'break-all' }}>
+              {userTelegram} {onboarding?.telegramId ? `(ID: ${onboarding.telegramId})` : ''}
+            </p>
           </div>
           <button 
             id="btn_edit_profile"
