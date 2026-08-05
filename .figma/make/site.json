@@ -1,0 +1,10 @@
+{
+  "description": "Offers an iOS-style purple-themed AI-powered financial app for seamless money management and personalized financial insights on mobile devices.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}

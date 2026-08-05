@@ -1,0 +1,6 @@
+{
+  "name": "Moliya AI",
+  "description": "A custom web application built from uploaded files.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

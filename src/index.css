@@ -1,0 +1,50 @@
+@import 'tailwindcss';
+
+@theme inline {
+  --color-background: #FAF8FE;
+  --color-foreground: #1A1538;
+  --color-card: #FFFFFF;
+  --color-card-foreground: #1A1538;
+  --color-primary: #7C3AED;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #F4EFFC;
+  --color-secondary-foreground: #5B21B6;
+  --color-muted: #F5F2FB;
+  --color-muted-foreground: #766E9E;
+  --color-accent: #DDD6FE;
+  --color-accent-foreground: #5B21B6;
+  --color-border: #ECE7F6;
+  --color-ring: #7C3AED;
+  --radius: 1.2rem;
+  --font-sans: 'Plus Jakarta Sans', 'SF Pro Display', 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Inter', system-ui, sans-serif;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  box-sizing: border-box;
+}
+
+html, body {
+  background-color: #F4F1FB;
+  color: #1A1538;
+  font-family: var(--font-sans);
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+}
+
+::-webkit-scrollbar { display: none; }
+* { scrollbar-width: none; -ms-overflow-style: none; }
+::selection { background: rgba(124,58,237,0.18); color: #5B21B6; }
+
+/* Smooth transitions for interactive elements */
+button, input, select, textarea {
+  font-family: inherit;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+button:active {
+  transform: scale(0.982);
+}
