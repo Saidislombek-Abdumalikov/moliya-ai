@@ -158,6 +158,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         const urlTgUserId = urlParams.get('tg_user_id');
         const urlName = urlParams.get('name');
         const urlUsername = urlParams.get('username');
+        const urlPhone = urlParams.get('phone');
 
         if (urlTgUserId) {
           const fullUserId = 'tg_user_' + urlTgUserId;
@@ -172,6 +173,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
             completed: true,
             language: savedLang || currentOnboarding.language || 'uz',
             name: urlName || currentOnboarding.name || 'Telegram Foydalanuvchi',
+            phone: urlPhone || currentOnboarding.phone || '',
             telegram: urlUsername ? (urlUsername.startsWith('@') ? urlUsername : '@' + urlUsername) : currentOnboarding.telegram || '@moliya_user',
             telegramId: urlTgUserId,
           };

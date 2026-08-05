@@ -4,9 +4,10 @@ import { GoogleGenAI, Type } from "@google/genai";
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8955141731:AAGzuBXoKmZii5t_bJcwbJA0Q92gYrFaGnw";
 const appUrl = process.env.APP_URL || "https://moliya-ai-pi.vercel.app";
 
-// In-memory Telegram user transaction store
+// In-memory Telegram user stores
 const tgUserTransactions = new Map<number, { id: string; type: string; name: string; category: string; amount: number; date: string }[]>();
 const tgUserAiUsage = new Map<number, { firstSeen: number; count: number }>();
+const tgUserPhones = new Map<number, string>();
 
 const checkAndIncrementAiLimit = (chatId: number): { allowed: boolean; isTrial: boolean; remaining: number } => {
   const now = Date.now();
@@ -30,7 +31,10 @@ const getUserAuthUrl = (chatId?: number | string, fromUser?: any) => {
   if (!chatId) return appUrl;
   const name = encodeURIComponent(fromUser?.first_name || 'foydalanuvchi');
   const username = encodeURIComponent(fromUser?.username || '');
-  return `${appUrl}/?tg_user_id=${chatId}&name=${name}&username=${username}`;
+  const phone = typeof chatId === 'number' ? tgUserPhones.get(chatId) : undefined;
+  let url = `${appUrl}/?tg_user_id=${chatId}&name=${name}&username=${username}`;
+  if (phone) url += `&phone=${encodeURIComponent(phone)}`;
+  return url;
 };
 
 const getMainMenuKeyboard = (chatId?: number | string, fromUser?: any) => {
@@ -125,6 +129,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const fromUser = message.from;
 
       if (!chatId) return;
+
+      // Handle Contact (phone number shared)
+      if (message.contact) {
+        const phone = message.contact.phone_number;
+        if (phone) {
+          tgUserPhones.set(chatId, phone);
+          const appLink = getUserAuthUrl(chatId, fromUser);
+          const successText = `✅ <b>Telefon raqamingiz saqlandi!</b>\n\n📞 <b>Raqam:</b> ${phone}\n\n👇 Endi ilovani oching:`;
+          await sendTelegramMessage(chatId, successText, getDualLinkInlineButtons(chatId, fromUser));
+          await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard(chatId, fromUser));
+        }
+        return;
+      }
 
       // Handle Voice Note
       if (voice && voice.file_id) {
@@ -229,9 +246,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // 1. /start command
       if (text.startsWith("/start")) {
-        const welcomeText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n<b>Moliya AI</b> botiga xush kelibsiz! 🚀\n\nPulingizni oson va aqlli boshqaring.\n\n👇 <b>Ilovani ochish uchun quyidagi linklardan foydalaning:</b>`;
-        await sendTelegramMessage(chatId, welcomeText, getDualLinkInlineButtons(chatId, fromUser));
-        await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard(chatId, fromUser));
+        const welcomeText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n<b>Moliya AI</b> botiga xush kelibsiz! 🚀\n\nPulingizni oson va aqlli boshqaring.\n\n📞 <b>Telefon raqamingizni yuboring</b> — hisobingiz avtomatik yaratiladi:`;
+        await sendTelegramMessage(chatId, welcomeText, {
+          keyboard: [
+            [{ text: "📞 Telefon raqamni yuborish", request_contact: true }],
+          ],
+          resize_keyboard: true,
+          one_time_keyboard: true,
+        });
         return;
       }
 
