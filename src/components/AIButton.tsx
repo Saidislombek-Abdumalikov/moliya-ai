@@ -412,11 +412,11 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
               style={{
                 width: '100%',
                 maxWidth: 440,
-                maxHeight: '75vh',
+                maxHeight: '85vh',
                 overflowY: 'auto',
                 background: '#FFFFFF',
                 borderRadius: '28px 28px 0 0',
-                padding: '16px 20px 32px',
+                padding: '16px 20px calc(48px + env(safe-area-inset-bottom, 24px))',
                 boxShadow: '0 -10px 40px rgba(0,0,0,0.15)',
                 position: 'relative',
               }}
@@ -966,7 +966,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                   />
                 </div>
 
-                <div style={{ display: 'flex', gap: 10 }}>
+                <div style={{ display: 'flex', gap: 10, paddingTop: 8, paddingBottom: 24 }}>
                   <button
                     onClick={startVoice}
                     style={{
@@ -991,6 +991,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                       color: entry.amount ? '#fff' : '#8B82C4',
                       fontSize: 15, fontWeight: 600, fontFamily: 'inherit',
                       cursor: entry.amount ? 'pointer' : 'default',
+                      boxShadow: entry.amount ? '0 4px 16px rgba(124, 58, 237, 0.3)' : 'none',
                     }}
                   >
                     {language === 'uz' ? 'Saqlash' : language === 'uz_cyrl' ? 'Сақлаш' : language === 'ru' ? 'Сохранить' : 'Save'}

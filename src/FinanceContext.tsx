@@ -246,7 +246,11 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     // 2. Open Telegram Bot with request parameter
     const botUrl = `https://t.me/moliya_v2bot?start=req_${requestId}`;
-    window.open(botUrl, '_blank');
+    try {
+      window.location.href = botUrl;
+    } catch {
+      window.open(botUrl, '_blank');
+    }
 
     // 3. Start Auto-Polling backend for verification
     let intervalId: any = null;

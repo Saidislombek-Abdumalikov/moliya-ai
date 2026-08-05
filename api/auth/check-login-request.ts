@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { adminDb } from '../_firebaseAdmin';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../_firebaseClient';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -17,16 +18,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const snap = await adminDb.collection('login_requests').doc(requestId).get();
-    if (!snap.exists) {
+    const snap = await getDoc(doc(db, 'users', `moliya_user_req_${requestId}`));
+    if (!snap.exists()) {
       return res.status(200).json({ status: 'NOT_FOUND' });
     }
 
     const data = snap.data();
     if (data?.status === 'VERIFIED' && data.userId && data.sessionToken) {
-      // Fetch full user document
-      const userSnap = await adminDb.collection('users').doc(data.userId).get();
-      const userData = userSnap.exists ? userSnap.data() : null;
+      const userSnap = await getDoc(doc(db, 'users', data.userId));
+      const userData = userSnap.exists() ? userSnap.data() : null;
 
       return res.status(200).json({
         status: 'VERIFIED',
@@ -40,6 +40,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({ status: data?.status || 'PENDING' });
   } catch (error: any) {
     console.error('Error checking login request:', error);
-    return res.status(500).json({ error: error.message || 'Internal Server Error' });
+    return res.status(200).json({ status: 'PENDING' });
   }
 }

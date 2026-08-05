@@ -848,46 +848,37 @@ Return JSON object:
     }
   });
 
-  // Long Polling Engine for local dev & server instant responsiveness
-  let lastUpdateId = 0;
-  async function startTelegramLongPolling() {
-    try {
-      await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/deleteWebhook`);
-      const initRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=-1`);
-      if (initRes.ok) {
-        const initData = await initRes.json();
-        if (initData.ok && Array.isArray(initData.result) && initData.result.length > 0) {
-          lastUpdateId = initData.result[initData.result.length - 1].update_id;
-        }
-      }
-      console.log(`🤖 Telegram Bot Polling ready for @moliya_v2bot (starting offset: ${lastUpdateId})...`);
-    } catch (e) {
-      console.error("Telegram init polling error:", e);
-    }
-
-    while (true) {
+  // Long Polling Engine for local dev (only if ENABLE_LOCAL_POLLING === 'true')
+  if (process.env.ENABLE_LOCAL_POLLING === 'true') {
+    let lastUpdateId = 0;
+    async function startTelegramLongPolling() {
       try {
-        const url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId + 1}&timeout=15`;
-        const res = await fetch(url);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.ok && Array.isArray(data.result)) {
-            for (const update of data.result) {
-              lastUpdateId = Math.max(lastUpdateId, update.update_id);
-              await handleTelegramUpdate(update);
-            }
-          } else if (!data.ok && data.error_code === 409) {
-            await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/deleteWebhook`);
-            await new Promise(r => setTimeout(r, 2000));
-          }
-        }
+        console.log(`🤖 Telegram Bot Polling started...`);
       } catch (e) {
-        await new Promise(r => setTimeout(r, 3000));
+        console.error("Telegram init polling error:", e);
+      }
+
+      while (true) {
+        try {
+          const url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId + 1}&timeout=15`;
+          const res = await fetch(url);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.ok && Array.isArray(data.result)) {
+              for (const update of data.result) {
+                lastUpdateId = Math.max(lastUpdateId, update.update_id);
+                await handleTelegramUpdate(update);
+              }
+            }
+          }
+        } catch (e) {
+          await new Promise(r => setTimeout(r, 3000));
+        }
       }
     }
-  }
 
-  startTelegramLongPolling().catch(e => console.error("Long polling error:", e));
+    startTelegramLongPolling().catch(e => console.error("Long polling error:", e));
+  }
 
   async function answerCallbackQuery(callbackQueryId: string, text: string) {
     try {

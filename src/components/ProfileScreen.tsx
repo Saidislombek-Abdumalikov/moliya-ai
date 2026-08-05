@@ -890,11 +890,24 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
             {getInitials(userName)}
           </div>
           <div style={{ flex: 1 }}>
-            <h3 style={{ fontSize: 17, fontWeight: 700, color: '#1E1A3C', marginBottom: 3 }}>{userName}</h3>
-            <p style={{ fontSize: 13, color: '#8B82C4', marginBottom: 2, fontWeight: 500 }}>{userPhone}</p>
-            <p style={{ fontSize: 11.5, color: '#7C3AED', fontWeight: 600, wordBreak: 'break-all' }}>
-              {userTelegram} {onboarding?.telegramId ? `(ID: ${onboarding.telegramId})` : ''}
-            </p>
+            <h3 style={{ fontSize: 17, fontWeight: 700, color: '#1E1A3C', marginBottom: 2 }}>{userName}</h3>
+            {userPhone && (
+              <p style={{ fontSize: 12.5, color: '#64748B', marginBottom: 3, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span>📞</span> <span>{userPhone}</span>
+              </p>
+            )}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+              {userTelegram && (
+                <span style={{ fontSize: 11.5, background: '#EDE9FE', color: '#7C3AED', padding: '2px 8px', borderRadius: 8, fontWeight: 600 }}>
+                  {userTelegram.startsWith('@') ? userTelegram : '@' + userTelegram}
+                </span>
+              )}
+              {onboarding?.telegramId && (
+                <span style={{ fontSize: 11, background: '#F1F5F9', color: '#64748B', padding: '2px 8px', borderRadius: 8, fontWeight: 600 }}>
+                  ID: {onboarding.telegramId}
+                </span>
+              )}
+            </div>
           </div>
           <button 
             id="btn_edit_profile"

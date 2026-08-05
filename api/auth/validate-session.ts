@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { adminDb } from '../_firebaseAdmin';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../_firebaseClient';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -21,8 +22,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ valid: false, reason: 'Missing sessionToken' });
     }
 
-    const sessionSnap = await adminDb.collection('sessions').doc(sessionToken).get();
-    if (!sessionSnap.exists) {
+    const sessionSnap = await getDoc(doc(db, 'users', `moliya_user_sess_${sessionToken}`));
+    if (!sessionSnap.exists()) {
       return res.status(200).json({ valid: false, reason: 'Session not found' });
     }
 
@@ -36,8 +37,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ valid: false, reason: 'Orphaned session' });
     }
 
-    const userSnap = await adminDb.collection('users').doc(userId).get();
-    const userData = userSnap.exists ? userSnap.data() : null;
+    const userSnap = await getDoc(doc(db, 'users', userId));
+    const userData = userSnap.exists() ? userSnap.data() : null;
 
     return res.status(200).json({
       valid: true,
@@ -48,6 +49,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   } catch (error: any) {
     console.error('Error validating session:', error);
-    return res.status(500).json({ error: error.message || 'Internal Server Error' });
+    return res.status(200).json({ valid: false, error: error.message });
   }
 }

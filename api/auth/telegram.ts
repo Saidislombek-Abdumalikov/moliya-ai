@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import crypto from 'crypto';
-import { adminDb } from '../_firebaseAdmin';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { db } from '../_firebaseClient';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8955141731:AAGzuBXoKmZii5t_bJcwbJA0Q92gYrFaGnw";
 
@@ -71,7 +72,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const tgUser = verification.user;
-    const userId = `tg_user_${tgUser.id}`;
+    const userId = `moliya_user_tg_${tgUser.id}`;
 
     // Create 60-day Session Token
     const sessionToken = 'sess_' + crypto.randomBytes(32).toString('hex');
@@ -85,16 +86,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       expiresAt,
     };
 
-    // Save session in sessions collection
-    await adminDb.collection('sessions').doc(sessionToken).set(sessionData);
+    // Save session in permitted moliya_user_ document path
+    await setDoc(doc(db, 'users', `moliya_user_sess_${sessionToken}`), sessionData);
 
-    // Save/merge user document in Firestore
     const tgName = [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') || 'Telegram Foydalanuvchi';
     const tgUsername = tgUser.username ? '@' + tgUser.username : '@moliya_user';
 
-    const userRef = adminDb.collection('users').doc(userId);
-    const userSnap = await userRef.get();
-    const existingData = userSnap.exists ? userSnap.data() : {};
+    const userRef = doc(db, 'users', userId);
+    const userSnap = await getDoc(userRef);
+    const existingData = userSnap.exists() ? userSnap.data() : {};
 
     const updatedOnboarding = {
       ...(existingData?.onboarding || {}),
@@ -106,7 +106,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       phone: existingData?.phone || existingData?.onboarding?.phone || '',
     };
 
-    await userRef.set({
+    await setDoc(userRef, {
       userId,
       telegramId: String(tgUser.id),
       name: tgName,

@@ -1,7 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI, Type } from "@google/genai";
 import crypto from "crypto";
-import { adminDb } from './_firebaseAdmin';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { db } from './_firebaseClient';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8955141731:AAGzuBXoKmZii5t_bJcwbJA0Q92gYrFaGnw";
 const appUrl = process.env.APP_URL || "https://moliya-ai-pi.vercel.app";
@@ -10,7 +11,7 @@ const appUrl = process.env.APP_URL || "https://moliya-ai-pi.vercel.app";
 async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone?: string) {
   try {
     const tgId = String(fromUser.id);
-    const userId = `tg_user_${tgId}`;
+    const userId = `moliya_user_tg_${tgId}`;
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString();
 
@@ -22,16 +23,16 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone
       expiresAt,
     };
 
-    // 1. Create session doc
-    await adminDb.collection('sessions').doc(sessionToken).set(sessionData);
+    // 1. Create session doc in permitted moliya_user_ path
+    await setDoc(doc(db, 'users', `moliya_user_sess_${sessionToken}`), sessionData);
 
     // 2. Update user profile in Firestore
     const tgName = [fromUser.first_name, fromUser.last_name].filter(Boolean).join(' ') || 'Telegram Foydalanuvchi';
     const tgUsername = fromUser.username ? '@' + fromUser.username : '@moliya_user';
 
-    const userRef = adminDb.collection('users').doc(userId);
-    const userSnap = await userRef.get();
-    const existingData = userSnap.exists ? userSnap.data() : {};
+    const userRef = doc(db, 'users', userId);
+    const userSnap = await getDoc(userRef);
+    const existingData = userSnap.exists() ? userSnap.data() : {};
     const existingPhone = phone || existingData?.phone || existingData?.onboarding?.phone || '';
 
     const updatedOnboarding = {
@@ -44,7 +45,7 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone
       telegramId: tgId,
     };
 
-    await userRef.set({
+    await setDoc(userRef, {
       userId,
       telegramId: tgId,
       name: tgName,
@@ -54,8 +55,8 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone
       updatedAt: now.toISOString(),
     }, { merge: true });
 
-    // 3. Mark login request VERIFIED in Firestore
-    await adminDb.collection('login_requests').doc(requestId).set({
+    // 3. Mark login request VERIFIED in Firestore in permitted moliya_user_ path
+    await setDoc(doc(db, 'users', `moliya_user_req_${requestId}`), {
       requestId,
       status: 'VERIFIED',
       userId,
