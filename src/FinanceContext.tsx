@@ -153,6 +153,30 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   useEffect(() => {
     async function authenticate() {
       try {
+        // 0. Check Deep Link URL parameters (e.g. ?tg_user_id=123456&name=Saidislom)
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlTgUserId = urlParams.get('tg_user_id');
+        const urlName = urlParams.get('name');
+        const urlUsername = urlParams.get('username');
+
+        if (urlTgUserId) {
+          const fullUserId = 'tg_user_' + urlTgUserId;
+          setUserId(fullUserId);
+          localStorage.setItem('user_id_v1', fullUserId);
+          localStorage.setItem('user_logged_in_v1', 'true');
+
+          const currentOnboarding = JSON.parse(localStorage.getItem('user_onboarding_v1') || '{}');
+          const updatedOnboarding = {
+            ...currentOnboarding,
+            name: urlName || currentOnboarding.name || 'Telegram Foydalanuvchi',
+            telegram: urlUsername ? (urlUsername.startsWith('@') ? urlUsername : '@' + urlUsername) : currentOnboarding.telegram || '@moliya_user',
+          };
+          setOnboarding(updatedOnboarding);
+          localStorage.setItem('user_onboarding_v1', JSON.stringify(updatedOnboarding));
+          setIsAuthReady(true);
+          return;
+        }
+
         const tg = (window as any).Telegram?.WebApp;
         let res;
         

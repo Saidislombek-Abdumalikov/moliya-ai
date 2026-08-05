@@ -300,26 +300,37 @@ Input text: "${cleanText}"
 
     usage.count += 1;
     tgUserAiUsage.set(chatId, usage);
-    return { allowed: true, isTrial: false, remaining: 5 - usage.count };
+  const appUrl = process.env.APP_URL || "https://moliya-ai-pi.vercel.app";
+
+  const getUserAuthUrl = (chatId: number, fromUser?: any) => {
+    const name = encodeURIComponent(fromUser?.first_name || 'foydalanuvchi');
+    const username = encodeURIComponent(fromUser?.username || '');
+    return `${appUrl}/?tg_user_id=${chatId}&name=${name}&username=${username}`;
   };
 
-  const getMainMenuKeyboard = () => ({
-    keyboard: [
-      [{ text: "📱 Telegram Mini App", web_app: { url: appUrl } }, { text: "🌐 Web App", url: appUrl }],
-      [{ text: "📊 Balans va Statistika" }, { text: "❌ Oxirgi operatsiyani o'chirish" }],
-      [{ text: "💡 Yordam" }]
-    ],
-    resize_keyboard: true
-  });
+  const getMainMenuKeyboard = (chatId?: number, fromUser?: any) => {
+    const link = chatId ? getUserAuthUrl(chatId, fromUser) : appUrl;
+    return {
+      keyboard: [
+        [{ text: "📱 Telegram Mini App", web_app: { url: link } }, { text: "🌐 Web App", url: link }],
+        [{ text: "📊 Balans va Statistika" }, { text: "❌ Oxirgi operatsiyani o'chirish" }],
+        [{ text: "💡 Yordam" }]
+      ],
+      resize_keyboard: true
+    };
+  };
 
-  const getDualLinkInlineButtons = () => ({
-    inline_keyboard: [
-      [
-        { text: "📱 Mini App da ochish", web_app: { url: appUrl } },
-        { text: "🌐 Web App (Brauzer)", url: appUrl }
+  const getDualLinkInlineButtons = (chatId?: number, fromUser?: any) => {
+    const link = chatId ? getUserAuthUrl(chatId, fromUser) : appUrl;
+    return {
+      inline_keyboard: [
+        [
+          { text: "📱 Mini App da ochish", web_app: { url: link } },
+          { text: "🌐 Web App (Brauzer)", url: link }
+        ]
       ]
-    ]
-  });
+    };
+  };
 
   // Automated 3-Hour Expense Reminder System
   setInterval(async () => {

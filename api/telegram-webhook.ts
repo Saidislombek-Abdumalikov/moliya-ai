@@ -26,23 +26,36 @@ const checkAndIncrementAiLimit = (chatId: number): { allowed: boolean; isTrial: 
   return { allowed: true, isTrial: false, remaining: 5 - usage.count };
 };
 
-const getMainMenuKeyboard = () => ({
-  keyboard: [
-    [{ text: "📱 Telegram Mini App", web_app: { url: appUrl } }, { text: "🌐 Web App", url: appUrl }],
-    [{ text: "📊 Balans va Statistika" }, { text: "❌ Oxirgi operatsiyani o'chirish" }],
-    [{ text: "💡 Yordam" }]
-  ],
-  resize_keyboard: true
-});
+const getUserAuthUrl = (chatId?: number | string, fromUser?: any) => {
+  if (!chatId) return appUrl;
+  const name = encodeURIComponent(fromUser?.first_name || 'foydalanuvchi');
+  const username = encodeURIComponent(fromUser?.username || '');
+  return `${appUrl}/?tg_user_id=${chatId}&name=${name}&username=${username}`;
+};
 
-const getDualLinkInlineButtons = () => ({
-  inline_keyboard: [
-    [
-      { text: "📱 Mini App da ochish", web_app: { url: appUrl } },
-      { text: "🌐 Web App (Brauzer)", url: appUrl }
+const getMainMenuKeyboard = (chatId?: number | string, fromUser?: any) => {
+  const link = getUserAuthUrl(chatId, fromUser);
+  return {
+    keyboard: [
+      [{ text: "📱 Telegram Mini App", web_app: { url: link } }, { text: "🌐 Web App", url: link }],
+      [{ text: "📊 Balans va Statistika" }, { text: "❌ Oxirgi operatsiyani o'chirish" }],
+      [{ text: "💡 Yordam" }]
+    ],
+    resize_keyboard: true
+  };
+};
+
+const getDualLinkInlineButtons = (chatId?: number | string, fromUser?: any) => {
+  const link = getUserAuthUrl(chatId, fromUser);
+  return {
+    inline_keyboard: [
+      [
+        { text: "📱 Mini App da ochish", web_app: { url: link } },
+        { text: "🌐 Web App (Brauzer)", url: link }
+      ]
     ]
-  ]
-});
+  };
+};
 
 async function sendTelegramMessage(chatId: number | string, text: string, replyMarkup?: any) {
   try {
@@ -188,12 +201,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
                 const replyCard = `🎙 <b>Ovozli operatsiya saqlandi!</b> 🌟\n\n📌 <b>Turi:</b> ${typeEmoji}\n💵 <b>Summa:</b> ${formattedAmt} so'm\n📂 <b>Kategoriya:</b> ${parsed.category}\n📝 <b>Izoh:</b> ${parsed.note || "Ovozli xabar"}`;
 
+                const userAuthUrl = getUserAuthUrl(chatId, fromUser);
                 const inlineKeyboard = {
                   inline_keyboard: [
                     [
                       { text: "❌ Operatsiyani o'chirish", callback_data: `del_${txId}` },
-                      { text: "📱 Mini App", web_app: { url: appUrl } },
-                      { text: "🌐 Web App", url: appUrl }
+                      { text: "📱 Mini App", web_app: { url: userAuthUrl } },
+                      { text: "🌐 Web App", url: userAuthUrl }
                     ]
                   ]
                 };
@@ -207,7 +221,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           console.error("Voice processing error:", voiceErr);
         }
 
-        await sendTelegramMessage(chatId, "⚠️ <i>Ovozli xabarni tushunib bo'lmadi. Qaytadan aniqroq gapirib ko'ring.</i>", getMainMenuKeyboard());
+        await sendTelegramMessage(chatId, "⚠️ <i>Ovozli xabarni tushunib bo'lmadi. Qaytadan aniqroq gapirib ko'ring.</i>", getMainMenuKeyboard(chatId, fromUser));
         return;
       }
 
@@ -216,15 +230,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // 1. /start command
       if (text.startsWith("/start")) {
         const welcomeText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n<b>Moliya AI</b> botiga xush kelibsiz! 🚀\n\nPulingizni oson va aqlli boshqaring.\n\n👇 <b>Ilovani ochish uchun quyidagi linklardan foydalaning:</b>`;
-        await sendTelegramMessage(chatId, welcomeText, getDualLinkInlineButtons());
-        await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
+        await sendTelegramMessage(chatId, welcomeText, getDualLinkInlineButtons(chatId, fromUser));
+        await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard(chatId, fromUser));
         return;
       }
 
       // 2. Help command
       if (text.startsWith("/help") || text.includes("Yordam") || text.includes("yordam")) {
         const helpText = `💡 <b>Moliya AI Boti bo'limlari:</b>\n\n• 📝 <b>Matnli xarajat kiritish</b>\n• 🎙 <b>Ovozli xabar yuborish</b>\n• 📱 <b>Ilovani ochish</b>\n• 📊 <b>Balans va hisobotlar</b>\n• ❌ <b>Operatsiyalarni o'chirish</b>\n\n⭐ <i>1 kunlik bepul sinov va oylik 5 ta AI so'rov limiti mavjud.</i>`;
-        await sendTelegramMessage(chatId, helpText, getMainMenuKeyboard());
+        await sendTelegramMessage(chatId, helpText, getMainMenuKeyboard(chatId, fromUser));
         return;
       }
 
