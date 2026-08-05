@@ -322,40 +322,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const requestId = rawArg.replace('req_', '').trim();
 
         if (requestId && requestId.length >= 8) {
-          // Store pending association for this chat
-          await adminDb.collection('login_requests').doc(`pending_${chatId}`).set({
-            requestId,
-            chatId,
-            userId: `tg_user_${fromUser.id}`,
-            createdAt: new Date().toISOString(),
-          });
+          // Immediately verify & mark login request in Firestore (no blocking phone requirement)
+          await verifyAndMarkLoginRequest(requestId, fromUser);
 
-          // Check if user already exists and has a phone number
-          const userSnap = await adminDb.collection('users').doc(`tg_user_${fromUser.id}`).get();
-          const userData = userSnap.exists ? userSnap.data() : null;
-          const phone = userData?.phone || userData?.onboarding?.phone;
-
-          if (phone) {
-            // Already registered & has phone -> Verify immediately!
-            await verifyAndMarkLoginRequest(requestId, fromUser, phone);
-            await adminDb.collection('login_requests').doc(`pending_${chatId}`).delete();
-
-            const successText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n✅ <b>Muvaffaqiyatli tasdiqlandi!</b> 🚀\nBrauzeringizdagi Moliya AI ilovasiga avtomatik kirdingiz.\n\n👇 <i>Ilovaga o'tish uchun quyidagi tugmani bosing:</i>`;
-            await sendTelegramMessage(chatId, successText, getCleanInlineKeyboard());
-            await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
-            return;
-          } else {
-            // New user or missing phone -> Prompt for contact share!
-            const promptText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n<b>Moliya AI</b> botiga xush kelibsiz! 🚀\n\nHisobingizni xavfsiz tasdiqlash uchun 📞 <b>Telefon raqamingizni yuboring:</b>`;
-            await sendTelegramMessage(chatId, promptText, {
-              keyboard: [
-                [{ text: "📞 Telefon raqamni yuborish", request_contact: true }],
-              ],
-              resize_keyboard: true,
-              one_time_keyboard: true,
-            });
-            return;
-          }
+          const successText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n✅ <b>Muvaffaqiyatli tasdiqlandi!</b> 🚀\nBrauzeringizdagi Moliya AI ilovasiga avtomatik kirdingiz.\n\n👇 <i>Ilovaga o'tish uchun quyidagi tugmani bosing:</i>`;
+          await sendTelegramMessage(chatId, successText, getCleanInlineKeyboard());
+          await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
+          return;
         }
 
         // Standard /start without request parameter
