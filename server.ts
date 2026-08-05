@@ -251,6 +251,64 @@ Input text: "${cleanText}"
       res.status(500).json({ error: e.message });
     }
   });
+  app.post("/api/parse-receipt", async (req, res) => {
+    try {
+      const { base64Image, mimeType } = req.body;
+      if (!base64Image) {
+        return res.status(400).json({ error: "Missing image data" });
+      }
+
+      if (!process.env.GEMINI_API_KEY) {
+        return res.status(500).json({ error: "Gemini API key missing" });
+      }
+
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const promptText = `
+Examine this financial invoice/receipt/cheque screenshot image. Extract transaction details in JSON:
+- type: 'expense' | 'income'
+- amount: string (number formatted with spaces, e.g. '85 000')
+- category: string ('Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\'liq', 'Ta\'lim', 'Boshqa')
+- note: string (shop or vendor name, e.g. "Korzinka" or invoice item summary)
+- title: string (short clean title)
+- date: string ("YYYY-MM-DDTHH:mm" format if readable on receipt, else null)
+`;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.1-flash-lite",
+        contents: [
+          {
+            inlineData: {
+              mimeType: mimeType || "image/jpeg",
+              data: base64Image.replace(/^data:image\/\w+;base64,/, '')
+            }
+          },
+          promptText
+        ],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              type: { type: Type.STRING, enum: ['expense', 'income'] },
+              amount: { type: Type.STRING },
+              category: { type: Type.STRING },
+              note: { type: Type.STRING },
+              title: { type: Type.STRING },
+              date: { type: Type.STRING },
+            },
+            required: ["type", "amount", "category", "note"],
+          }
+        }
+      });
+
+      const data = JSON.parse(response.text || '{}');
+      res.json(data);
+    } catch (e: any) {
+      console.error('Receipt parse error:', e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
   });

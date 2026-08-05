@@ -181,8 +181,33 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
 
         const tg = (window as any).Telegram?.WebApp;
+        const tgUser = tg?.initDataUnsafe?.user;
+
+        if (tgUser && tgUser.id) {
+          const fullUserId = 'tg_user_' + tgUser.id;
+          setUserId(fullUserId);
+          localStorage.setItem('user_id_v1', fullUserId);
+          localStorage.setItem('user_logged_in_v1', 'true');
+
+          const tgName = [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') || 'Telegram Foydalanuvchi';
+          const tgUsername = tgUser.username ? '@' + tgUser.username : '@moliya_user';
+
+          const currentOnboarding = JSON.parse(localStorage.getItem('user_onboarding_v1') || '{}');
+          const updatedOnboarding = {
+            ...currentOnboarding,
+            completed: true,
+            language: currentOnboarding.language || 'uz',
+            name: tgName,
+            telegram: tgUsername,
+            telegramId: String(tgUser.id),
+          };
+          setOnboarding(updatedOnboarding);
+          localStorage.setItem('user_onboarding_v1', JSON.stringify(updatedOnboarding));
+          setIsAuthReady(true);
+          return;
+        }
+
         let res;
-        
         if (tg && tg.initData) {
           res = await fetch('/api/auth/telegram', {
             method: 'POST',

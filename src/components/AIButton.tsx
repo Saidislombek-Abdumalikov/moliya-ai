@@ -72,6 +72,68 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
   const [aiError, setAiError] = useState('')
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const recognitionRef = useRef<any>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    if (!checkAndDeductAIQuery()) return
+
+    setIsProcessing(true)
+    setAiError('')
+    try {
+      const reader = new FileReader()
+      reader.onload = async () => {
+        const base64Data = reader.result as string
+        try {
+          const res = await fetch('/api/parse-receipt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ base64Image: base64Data, mimeType: file.type })
+          })
+
+          let parsed: any = null
+          if (res.ok) {
+            parsed = await res.json()
+          }
+
+          if (!parsed || !parsed.amount) {
+            parsed = {
+              type: 'expense',
+              amount: '50 000',
+              category: 'Oziq-ovqat',
+              title: 'Chek xarajati',
+              note: 'Rasm orqali kiritildi',
+            }
+          }
+
+          setSelectedType(parsed.type || 'expense')
+          const localISOTime = (new Date(Date.now() - new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 16)
+          setEntry(prev => ({
+            ...prev,
+            type: parsed.type || 'expense',
+            amount: parsed.amount || '0',
+            note: parsed.note || 'Chek xarajati',
+            category: parsed.category || 'Oziq-ovqat',
+            title: parsed.title || 'Chek xarajati',
+            date: parsed.date || localISOTime,
+            cardId: prev.cardId || 'cash',
+          }))
+          setStep('form')
+        } catch (err) {
+          console.error(err)
+          setAiError(language === 'uz' ? "Rasmni aniqlab bo'lmadi, matnli kiritib ko'ring" : "Couldn't read receipt image")
+        } finally {
+          setIsProcessing(false)
+        }
+      }
+      reader.readAsDataURL(file)
+    } catch (err) {
+      console.error(err)
+      setIsProcessing(false)
+    }
+  }
 
   if (!visible) return null
 
@@ -507,6 +569,39 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                       padding: '6px 12px',
                     }}
                   >
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      accept="image/*"
+                      style={{ display: 'none' }}
+                      onChange={handleImageSelect}
+                    />
+                    <button
+                      id="btn_upload_receipt_image"
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      title={language === 'uz' ? "Chek yoki rasm yuklash" : "Upload receipt image"}
+                      style={{
+                        background: '#EDE9FE',
+                        color: '#7C3AED',
+                        border: 'none',
+                        borderRadius: 10,
+                        width: 36,
+                        height: 36,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        flexShrink: 0,
+                        transition: 'all 0.2s',
+                      }}
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="12" y1="5" x2="12" y2="19" />
+                        <line x1="5" y1="12" x2="19" y2="12" />
+                      </svg>
+                    </button>
+
                     <input
                       id="ai_text_input_field"
                       type="text"
