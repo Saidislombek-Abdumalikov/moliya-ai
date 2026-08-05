@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import crypto from 'crypto';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db } from '../_firebaseClient';
+import { db } from '../_firebaseClient.js';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8955141731:AAGzuBXoKmZii5t_bJcwbJA0Q92gYrFaGnw";
 
