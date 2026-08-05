@@ -166,10 +166,11 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           localStorage.setItem('user_logged_in_v1', 'true');
 
           const currentOnboarding = JSON.parse(localStorage.getItem('user_onboarding_v1') || '{}');
+          const savedLang = localStorage.getItem('user_selected_language_v1');
           const updatedOnboarding = {
             ...currentOnboarding,
             completed: true,
-            language: currentOnboarding.language || 'uz',
+            language: savedLang || currentOnboarding.language || 'uz',
             name: urlName || currentOnboarding.name || 'Telegram Foydalanuvchi',
             telegram: urlUsername ? (urlUsername.startsWith('@') ? urlUsername : '@' + urlUsername) : currentOnboarding.telegram || '@moliya_user',
             telegramId: urlTgUserId,

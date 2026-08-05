@@ -288,10 +288,13 @@ export default function Onboarding({ onComplete }: Props) {
                     <button
                       onClick={() => {
                         if (isUzbek) {
-                          // If not already Uzbek, default to Latin
-                          if (!isUzbekSelected) setLanguage('uz')
+                          if (!isUzbekSelected) {
+                            setLanguage('uz')
+                            localStorage.setItem('user_selected_language_v1', 'uz')
+                          }
                         } else {
                           setLanguage(l.code)
+                          localStorage.setItem('user_selected_language_v1', l.code)
                         }
                       }}
                       style={{
@@ -335,7 +338,7 @@ export default function Onboarding({ onComplete }: Props) {
                           return (
                             <button
                               key={st.code}
-                              onClick={() => setLanguage(st.code)}
+                              onClick={() => { setLanguage(st.code); localStorage.setItem('user_selected_language_v1', st.code); }}
                               style={{
                                 flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
                                 gap: 4, padding: '10px 8px', borderRadius: 12,
@@ -537,9 +540,10 @@ export default function Onboarding({ onComplete }: Props) {
                 <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 10 }}>
                   <a
                     href="https://t.me/moliya_v2bot?start=login"
+                    target="_blank"
+                    rel="noopener noreferrer"
                     onClick={() => {
                       setIsWaitingTelegramAuth(true);
-                      window.location.href = 'https://t.me/moliya_v2bot?start=login';
                     }}
                     style={{
                       width: '100%', padding: '15px', borderRadius: 16, border: 'none',

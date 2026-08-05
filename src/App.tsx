@@ -58,6 +58,14 @@ export default function App() {
     }
   }, [])
 
+  // Auto-transition to app when FinanceContext authenticates via Telegram deep link
+  useEffect(() => {
+    if (stage === 'onboarding' && onboarding && (onboarding as any).completed) {
+      localStorage.setItem('user_logged_in_v1', 'true')
+      setStage('app')
+    }
+  }, [onboarding, stage])
+
   // If onboarding is null, set clean defaults
   useEffect(() => {
     if (!onboarding) {
