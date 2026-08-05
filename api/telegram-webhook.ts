@@ -93,11 +93,13 @@ const checkAndIncrementAiLimit = (chatId: number): { allowed: boolean; isTrial: 
   return { allowed: true, isTrial: false, remaining: 5 - usage.count };
 };
 
-const getCleanInlineKeyboard = () => {
+const getCleanInlineKeyboard = (requestId?: string) => {
+  const webUrl = requestId ? `${appUrl}/?req=${requestId}` : appUrl;
   return {
     inline_keyboard: [
       [
-        { text: "📱 Moliya AI ga o'tish", url: appUrl }
+        { text: "📱 Telegram Mini App", web_app: { url: appUrl } },
+        { text: "🌐 Web App-ga o'tish", url: webUrl }
       ]
     ]
   };
