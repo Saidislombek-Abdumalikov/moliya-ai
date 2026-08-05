@@ -18,12 +18,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Invalid or missing requestId' });
     }
 
-    const docRef = doc(db, 'users', `moliya_user_req_${requestId}`);
-    await setDoc(docRef, {
-      requestId,
+    const cleanId = requestId.replace(/^req_/, '').trim();
+    await setDoc(doc(db, 'users', `moliya_user_req_${cleanId}`), {
+      requestId: cleanId,
       status: 'PENDING',
       createdAt: new Date().toISOString(),
     });
+
+    if (cleanId !== requestId) {
+      await setDoc(doc(db, 'users', `moliya_user_req_${requestId}`), {
+        requestId,
+        status: 'PENDING',
+        createdAt: new Date().toISOString(),
+      });
+    }
 
     return res.status(200).json({ success: true, requestId });
   } catch (error: any) {

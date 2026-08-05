@@ -18,7 +18,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const snap = await getDoc(doc(db, 'users', `moliya_user_req_${requestId}`));
+    const cleanId = requestId.replace(/^req_/, '').trim();
+    let snap = await getDoc(doc(db, 'users', `moliya_user_req_${cleanId}`));
+    if (!snap.exists()) {
+      snap = await getDoc(doc(db, 'users', `moliya_user_req_${requestId}`));
+    }
+
     if (!snap.exists()) {
       return res.status(200).json({ status: 'NOT_FOUND' });
     }

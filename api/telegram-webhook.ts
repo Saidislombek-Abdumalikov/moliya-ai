@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI, Type } from "@google/genai";
 import crypto from "crypto";
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import { db } from './_firebaseClient';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8955141731:AAGzuBXoKmZii5t_bJcwbJA0Q92gYrFaGnw";
@@ -10,6 +10,7 @@ const appUrl = process.env.APP_URL || "https://moliya-ai-pi.vercel.app";
 // Helper: Create 60-day Session Token & Mark Login Request VERIFIED in Firestore
 async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone?: string) {
   try {
+    console.log('[BOT] verifyAndMarkLoginRequest called with requestId:', requestId, 'user:', fromUser?.id);
     const tgId = String(fromUser.id);
     const userId = `moliya_user_tg_${tgId}`;
     const now = new Date();
@@ -24,7 +25,9 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone
     };
 
     // 1. Create session doc in permitted moliya_user_ path
+    console.log('[BOT] Creating session document...');
     await setDoc(doc(db, 'users', `moliya_user_sess_${sessionToken}`), sessionData);
+    console.log('[BOT] Session created successfully');
 
     // 2. Update user profile in Firestore
     const tgName = [fromUser.first_name, fromUser.last_name].filter(Boolean).join(' ') || 'Telegram Foydalanuvchi';
@@ -45,6 +48,7 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone
       telegramId: tgId,
     };
 
+    console.log('[BOT] Updating user profile in Firestore...');
     await setDoc(userRef, {
       userId,
       telegramId: tgId,
@@ -54,19 +58,33 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone
       onboarding: updatedOnboarding,
       updatedAt: now.toISOString(),
     }, { merge: true });
+    console.log('[BOT] User profile updated');
 
-    // 3. Mark login request VERIFIED in Firestore in permitted moliya_user_ path
-    await setDoc(doc(db, 'users', `moliya_user_req_${requestId}`), {
-      requestId,
+    // 3. Mark login request VERIFIED in Firestore under clean and raw keys for safety
+    const cleanId = requestId.replace(/^req_/, '').trim();
+    console.log('[BOT] Marking login request VERIFIED. cleanId:', cleanId, 'rawId:', requestId);
+    await setDoc(doc(db, 'users', `moliya_user_req_${cleanId}`), {
+      requestId: cleanId,
       status: 'VERIFIED',
       userId,
       sessionToken,
       verifiedAt: now.toISOString(),
     }, { merge: true });
 
+    if (cleanId !== requestId) {
+      await setDoc(doc(db, 'users', `moliya_user_req_${requestId}`), {
+        requestId,
+        status: 'VERIFIED',
+        userId,
+        sessionToken,
+        verifiedAt: now.toISOString(),
+      }, { merge: true });
+    }
+
+    console.log('[BOT] ✅ Login request verified and session created for user:', userId);
     return { sessionToken, userId, onboarding: updatedOnboarding };
   } catch (err) {
-    console.error('Error verifying login request:', err);
+    console.error('[BOT] ❌ Error verifying login request:', err);
     return null;
   }
 }
@@ -169,7 +187,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         await answerCallbackQuery(cb.id, "🗑 Operatsiya o'chirildi!");
         await sendTelegramMessage(chatId, "🗑 <b>Operatsiya muvaffaqiyatli o'chirildi!</b> ✅", getMainMenuKeyboard());
       }
-      return;
+      return res.status(200).json({ status: 'ok' });
     }
 
     // B) Text or Voice Message
@@ -180,7 +198,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const voice = message.voice || message.audio;
       const fromUser = message.from;
 
-      if (!chatId) return;
+      if (!chatId) return res.status(200).json({ status: 'ok' });
 
       // Handle Contact (phone number shared)
       if (message.contact) {
@@ -191,19 +209,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const userId = `tg_user_${tgId}`;
             
             // Save phone to Firestore
-            await adminDb.collection('users').doc(userId).set({
+            await setDoc(doc(db, 'users', userId), {
               phone,
               updatedAt: new Date().toISOString()
             }, { merge: true });
 
             // Check if there is a pending login request for this chat
-            const pendingRef = adminDb.collection('login_requests').doc(`pending_${chatId}`);
-            const pendingSnap = await pendingRef.get();
-            if (pendingSnap.exists) {
+            const pendingRef = doc(db, 'login_requests', `pending_${chatId}`);
+            const pendingSnap = await getDoc(pendingRef);
+            if (pendingSnap.exists()) {
               const pendingData = pendingSnap.data();
               if (pendingData?.requestId) {
                 await verifyAndMarkLoginRequest(pendingData.requestId, fromUser, phone);
-                await pendingRef.delete();
+                await deleteDoc(pendingRef);
               }
             }
 
@@ -214,7 +232,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             console.error('Error handling contact share:', contactErr);
           }
         }
-        return;
+        return res.status(200).json({ status: 'ok' });
       }
 
       // Handle Voice Note
@@ -223,7 +241,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (!limitInfo.allowed) {
           const limitMsg = `⚠️ <b>Oylik Bepul AI Limiti Tugadi! (5/5 ishlatildi)</b>\n\nSiz oylik bepul 5 ta AI so'rov imkoniyatizdan foydalandingiz.\nCheksiz AI va ovozli tahlil uchun <b>Premium</b> tarifiga o'ting! ⭐`;
           await sendTelegramMessage(chatId, limitMsg, getCleanInlineKeyboard());
-          return;
+          return res.status(200).json({ status: 'ok' });
         }
 
         try {
@@ -302,7 +320,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 };
 
                 await sendTelegramMessage(chatId, replyCard, inlineKeyboard);
-                return;
+                return res.status(200).json({ status: 'ok' });
               }
             }
           }
@@ -311,38 +329,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         await sendTelegramMessage(chatId, "⚠️ <i>Ovozli xabarni tushunib bo'lmadi. Qaytadan aniqroq gapirib ko'ring.</i>", getMainMenuKeyboard());
-        return;
+        return res.status(200).json({ status: 'ok' });
       }
 
-      if (!text) return;
+      if (!text) return res.status(200).json({ status: 'ok' });
 
       // 1. /start command (Handles Login Request UUID e.g. /start req_UUID or standard /start)
       if (text.startsWith("/start")) {
         const rawArg = text.replace('/start', '').trim();
         const requestId = rawArg.replace('req_', '').trim();
+        console.log('[BOT] /start received. rawArg:', rawArg, 'requestId:', requestId, 'from user:', fromUser?.id);
 
         if (requestId && requestId.length >= 8) {
           // Immediately verify & mark login request in Firestore (no blocking phone requirement)
-          await verifyAndMarkLoginRequest(requestId, fromUser);
+          console.log('[BOT] Processing login request verification...');
+          const result = await verifyAndMarkLoginRequest(requestId, fromUser);
+          
+          if (!result) {
+            console.error('[BOT] ❌ verifyAndMarkLoginRequest returned null — sending error to user');
+            await sendTelegramMessage(chatId, "⚠️ Tasdiqlashda xatolik yuz berdi. Qaytadan urinib ko'ring.", getCleanInlineKeyboard());
+            return res.status(200).json({ status: 'ok' });
+          }
 
+          console.log('[BOT] ✅ Verification successful, sending success message');
           const successText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n✅ <b>Muvaffaqiyatli tasdiqlandi!</b> 🚀\nBrauzeringizdagi Moliya AI ilovasiga avtomatik kirdingiz.\n\n👇 <i>Ilovaga o'tish uchun quyidagi tugmani bosing:</i>`;
           await sendTelegramMessage(chatId, successText, getCleanInlineKeyboard(requestId));
           await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
-          return;
+          return res.status(200).json({ status: 'ok' });
         }
 
         // Standard /start without request parameter
+        console.log('[BOT] Standard /start (no login request)');
         const welcomeText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n<b>Moliya AI</b> botiga xush kelibsiz! 🚀\n\nPulingizni oson va aqlli boshqaring.\n\n👇 <b>Ilovani ochish uchun quyidagi tugmani bosing:</b>`;
         await sendTelegramMessage(chatId, welcomeText, getCleanInlineKeyboard());
         await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
-        return;
+        return res.status(200).json({ status: 'ok' });
       }
 
       // 2. Help command
       if (text.startsWith("/help") || text.includes("Yordam") || text.includes("yordam")) {
         const helpText = `💡 <b>Moliya AI Boti bo'limlari:</b>\n\n• 📝 <b>Matnli xarajat kiritish</b>\n• 🎙 <b>Ovozli xabar yuborish</b>\n• 📱 <b>Ilovani ochish</b>\n• 📊 <b>Balans va hisobotlar</b>\n• ❌ <b>Operatsiyalarni o'chirish</b>\n\n⭐ <i>1 kunlik bepul sinov va oylik 5 ta AI so'rov limiti mavjud.</i>`;
-        await sendTelegramMessage(chatId, helpText, getMainMenuKeyboard(chatId, fromUser));
-        return;
+        await sendTelegramMessage(chatId, helpText, getMainMenuKeyboard());
+        return res.status(200).json({ status: 'ok' });
       }
 
       // 3. Balance
@@ -364,7 +392,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         const balText = `📊 <b>Moliyaviy Hisobotingiz:</b> ✨\n\n🟢 <b>Jami Daromad:</b> ${fmt(totalIncome)} so'm\n🔻 <b>Jami Xarajat:</b> ${fmt(totalExpense)} so'm\n💰 <b>Sof Qoldiq:</b> ${fmt(netBalance)} so'm\n\n📋 <b>Oxirgi 3 ta operatsiya:</b>\n${lastTxsText}`;
         await sendTelegramMessage(chatId, balText, getMainMenuKeyboard());
-        return;
+        return res.status(200).json({ status: 'ok' });
       }
 
       // 4. Delete
@@ -372,21 +400,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const txs = tgUserTransactions.get(chatId) || [];
         if (txs.length === 0) {
           await sendTelegramMessage(chatId, "ℹ️ <i>O'chirish uchun tranzaksiyalar mavjud emas.</i>", getMainMenuKeyboard());
-          return;
+          return res.status(200).json({ status: 'ok' });
         }
         const lastTx = txs.pop();
         tgUserTransactions.set(chatId, txs);
         const fmt = (n: number) => n.toLocaleString('en-US').replace(/,/g, ' ');
         await sendTelegramMessage(chatId, `🗑 <b>Oxirgi operatsiya o'chirildi!</b> ✅\n\n❌ <b>O'chirildi:</b> ${fmt(lastTx?.amount || 0)} so'm (${lastTx?.category} - ${lastTx?.name})`, getMainMenuKeyboard());
-        return;
+        return res.status(200).json({ status: 'ok' });
       }
 
       // 5. Parse text expense
       const limitInfo = checkAndIncrementAiLimit(chatId);
       if (!limitInfo.allowed) {
         const limitMsg = `⚠️ <b>Oylik Bepul AI Limiti Tugadi! (5/5 ishlatildi)</b>\n\nSiz oylik bepul 5 ta AI so'rov imkoniyatizdan foydalandingiz.\nCheksiz AI so'rovlari uchun <b>Premium</b> tarifiga o'ting! ⭐`;
-        await sendTelegramMessage(chatId, limitMsg, getDualLinkInlineButtons());
-        return;
+        await sendTelegramMessage(chatId, limitMsg, getCleanInlineKeyboard());
+        return res.status(200).json({ status: 'ok' });
       }
 
       let parsed: { type: string; amount: number; category: string; note: string } | null = null;
@@ -471,7 +499,7 @@ Return JSON object:
         };
 
         await sendTelegramMessage(chatId, replyCard, inlineKeyboard);
-        return;
+        return res.status(200).json({ status: 'ok' });
       }
 
       await sendTelegramMessage(chatId, `👍 Xabaringiz qabul qilindi.`, getMainMenuKeyboard());

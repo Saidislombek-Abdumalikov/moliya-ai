@@ -233,24 +233,27 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       ? crypto.randomUUID()
       : 'req_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 
-    // 1. Register UUID with backend
-    try {
-      await fetch('/api/auth/create-login-request', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requestId }),
-      });
-    } catch (e) {
-      console.error('Failed to register login request with backend:', e);
-    }
+    console.log('[AUTH] Login request created:', requestId);
 
-    // 2. Open Telegram Bot with request parameter
+    // 1. Open Telegram IMMEDIATELY — no blocking wait
     const botUrl = `https://t.me/moliya_v2bot?start=req_${requestId}`;
+    const tgDeepLink = `tg://resolve?domain=moliya_v2bot&start=req_${requestId}`;
+    console.log('[AUTH] Opening Telegram bot...');
     try {
-      window.location.href = botUrl;
+      // Use window.open to avoid killing the current page (and its polling)
+      window.open(tgDeepLink, '_self');
     } catch {
       window.open(botUrl, '_blank');
     }
+
+    // 2. Register UUID with backend in the background (fire-and-forget)
+    fetch('/api/auth/create-login-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestId }),
+    })
+      .then(() => console.log('[AUTH] Login request registered with backend'))
+      .catch((e) => console.error('[AUTH] Failed to register login request:', e));
 
     // 3. Start Auto-Polling backend for verification
     let intervalId: any = null;
@@ -258,6 +261,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       if (intervalId) clearInterval(intervalId);
     };
 
+    console.log('[AUTH] Starting verification polling...');
     intervalId = setInterval(async () => {
       try {
         const res = await fetch(`/api/auth/check-login-request?requestId=${requestId}`);
@@ -265,7 +269,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           const data = await res.json();
           if (data.status === 'VERIFIED' && data.userId && data.sessionToken) {
             clearInterval(intervalId);
-            
+            console.log('[AUTH] ✅ Verification confirmed! userId:', data.userId);
+
             setUserId(data.userId);
             localStorage.setItem('user_id_v1', data.userId);
             localStorage.setItem('user_session_token_v1', data.sessionToken);
@@ -284,16 +289,18 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
             setOnboarding(updatedOnboarding);
             localStorage.setItem('user_onboarding_v1', JSON.stringify(updatedOnboarding));
 
+            console.log('[AUTH] Session saved, calling onVerified callback');
             if (onVerified) onVerified();
           }
         }
       } catch (err) {
-        console.error('Polling error:', err);
+        console.error('[AUTH] Polling error:', err);
       }
     }, 1500);
 
     // Auto-timeout after 2 minutes
     setTimeout(() => {
+      console.log('[AUTH] Polling timeout reached (2 min)');
       cancel();
     }, 120000);
 
