@@ -265,7 +265,6 @@ Input text: "${cleanText}"
   const tgUserAiUsage = new Map<number, { firstSeen: number; count: number }>();
 
   const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8955141731:AAGzuBXoKmZii5t_bJcwbJA0Q92gYrFaGnw";
-  const appUrl = process.env.APP_URL || "https://moliya-v2.vercel.app";
 
   async function syncUserTxToFirestore(chatId: number, txs: any[]) {
     if (!firestore) return;
@@ -300,6 +299,9 @@ Input text: "${cleanText}"
 
     usage.count += 1;
     tgUserAiUsage.set(chatId, usage);
+    return { allowed: true, isTrial: false, remaining: 5 - usage.count };
+  };
+
   const appUrl = process.env.APP_URL || "https://moliya-ai-pi.vercel.app";
 
   const getUserAuthUrl = (chatId: number, fromUser?: any) => {
