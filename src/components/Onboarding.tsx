@@ -534,10 +534,11 @@ export default function Onboarding({ onComplete }: Props) {
                 </p>
 
                 <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  <button
+                  <a
+                    href="https://t.me/moliya_v2bot?start=login"
                     onClick={() => {
-                      setIsWaitingTelegramAuth(true)
-                      window.open('https://t.me/moliya_v2bot?start=login', '_blank')
+                      setIsWaitingTelegramAuth(true);
+                      window.location.href = 'https://t.me/moliya_v2bot?start=login';
                     }}
                     style={{
                       width: '100%', padding: '15px', borderRadius: 16, border: 'none',
@@ -546,10 +547,11 @@ export default function Onboarding({ onComplete }: Props) {
                       cursor: 'pointer', fontFamily: 'inherit',
                       boxShadow: '0 6px 20px rgba(0, 136, 204, 0.35)',
                       display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                      textDecoration: 'none'
                     }}
                   >
                     <span>{t.loginTelegramBtn}</span>
-                  </button>
+                  </a>
 
                   <button
                     onClick={finish}
@@ -577,10 +579,10 @@ export default function Onboarding({ onComplete }: Props) {
                 </p>
 
                 <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  <button
-                    onClick={() => {
-                      window.open('https://t.me/moliya_v2bot?start=login', '_blank')
-                    }}
+                  <a
+                    href="https://t.me/moliya_v2bot?start=login"
+                    target="_blank"
+                    rel="noopener noreferrer"
                     style={{
                       width: '100%', padding: '14px', borderRadius: 16, border: 'none',
                       background: 'linear-gradient(135deg, #0088CC 0%, #0077B5 100%)',
@@ -588,10 +590,11 @@ export default function Onboarding({ onComplete }: Props) {
                       cursor: 'pointer', fontFamily: 'inherit',
                       boxShadow: '0 6px 20px rgba(0, 136, 204, 0.35)',
                       display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                      textDecoration: 'none'
                     }}
                   >
                     <span>📱 {(language === 'uz' || language === 'uz_cyrl') ? (language === 'uz_cyrl' ? "Telegram ботни қайта очиш" : "Telegram botni qayta ochish") : "Re-open Telegram Bot"}</span>
-                  </button>
+                  </a>
 
                   <button
                     onClick={finish}
