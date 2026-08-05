@@ -1,13 +1,78 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI, Type } from "@google/genai";
+import crypto from "crypto";
+import { adminDb } from './_firebaseAdmin';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8955141731:AAGzuBXoKmZii5t_bJcwbJA0Q92gYrFaGnw";
 const appUrl = process.env.APP_URL || "https://moliya-ai-pi.vercel.app";
 
-// In-memory Telegram user stores
+// Helper: Create 60-day Session Token & Mark Login Request VERIFIED in Firestore
+async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone?: string) {
+  try {
+    const tgId = String(fromUser.id);
+    const userId = `tg_user_${tgId}`;
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString();
+
+    const sessionToken = 'sess_' + crypto.randomBytes(32).toString('hex');
+    const sessionData = {
+      sessionToken,
+      userId,
+      createdAt: now.toISOString(),
+      expiresAt,
+    };
+
+    // 1. Create session doc
+    await adminDb.collection('sessions').doc(sessionToken).set(sessionData);
+
+    // 2. Update user profile in Firestore
+    const tgName = [fromUser.first_name, fromUser.last_name].filter(Boolean).join(' ') || 'Telegram Foydalanuvchi';
+    const tgUsername = fromUser.username ? '@' + fromUser.username : '@moliya_user';
+
+    const userRef = adminDb.collection('users').doc(userId);
+    const userSnap = await userRef.get();
+    const existingData = userSnap.exists ? userSnap.data() : {};
+    const existingPhone = phone || existingData?.phone || existingData?.onboarding?.phone || '';
+
+    const updatedOnboarding = {
+      ...(existingData?.onboarding || {}),
+      completed: true,
+      language: existingData?.onboarding?.language || 'uz',
+      name: tgName,
+      phone: existingPhone,
+      telegram: tgUsername,
+      telegramId: tgId,
+    };
+
+    await userRef.set({
+      userId,
+      telegramId: tgId,
+      name: tgName,
+      telegram: tgUsername,
+      phone: existingPhone,
+      onboarding: updatedOnboarding,
+      updatedAt: now.toISOString(),
+    }, { merge: true });
+
+    // 3. Mark login request VERIFIED in Firestore
+    await adminDb.collection('login_requests').doc(requestId).set({
+      requestId,
+      status: 'VERIFIED',
+      userId,
+      sessionToken,
+      verifiedAt: now.toISOString(),
+    }, { merge: true });
+
+    return { sessionToken, userId, onboarding: updatedOnboarding };
+  } catch (err) {
+    console.error('Error verifying login request:', err);
+    return null;
+  }
+}
+
+// In-memory Telegram user stores for speed
 const tgUserTransactions = new Map<number, { id: string; type: string; name: string; category: string; amount: number; date: string }[]>();
 const tgUserAiUsage = new Map<number, { firstSeen: number; count: number }>();
-const tgUserPhones = new Map<number, string>();
 
 const checkAndIncrementAiLimit = (chatId: number): { allowed: boolean; isTrial: boolean; remaining: number } => {
   const now = Date.now();
@@ -27,37 +92,24 @@ const checkAndIncrementAiLimit = (chatId: number): { allowed: boolean; isTrial: 
   return { allowed: true, isTrial: false, remaining: 5 - usage.count };
 };
 
-const getUserAuthUrl = (chatId?: number | string, fromUser?: any) => {
-  if (!chatId) return appUrl;
-  const name = encodeURIComponent(fromUser?.first_name || 'foydalanuvchi');
-  const username = encodeURIComponent(fromUser?.username || '');
-  const phone = typeof chatId === 'number' ? tgUserPhones.get(chatId) : undefined;
-  let url = `${appUrl}/?tg_user_id=${chatId}&name=${name}&username=${username}`;
-  if (phone) url += `&phone=${encodeURIComponent(phone)}`;
-  return url;
+const getCleanInlineKeyboard = () => {
+  return {
+    inline_keyboard: [
+      [
+        { text: "📱 Moliya AI ga o'tish", url: appUrl }
+      ]
+    ]
+  };
 };
 
-const getMainMenuKeyboard = (chatId?: number | string, fromUser?: any) => {
-  const link = getUserAuthUrl(chatId, fromUser);
+const getMainMenuKeyboard = () => {
   return {
     keyboard: [
-      [{ text: "📱 Telegram Mini App", web_app: { url: link } }, { text: "🌐 Web App", url: link }],
+      [{ text: "📱 Telegram Mini App", web_app: { url: appUrl } }, { text: "🌐 Web App", url: appUrl }],
       [{ text: "📊 Balans va Statistika" }, { text: "❌ Oxirgi operatsiyani o'chirish" }],
       [{ text: "💡 Yordam" }]
     ],
     resize_keyboard: true
-  };
-};
-
-const getDualLinkInlineButtons = (chatId?: number | string, fromUser?: any) => {
-  const link = getUserAuthUrl(chatId, fromUser);
-  return {
-    inline_keyboard: [
-      [
-        { text: "📱 Mini App da ochish", web_app: { url: link } },
-        { text: "🌐 Web App (Brauzer)", url: link }
-      ]
-    ]
   };
 };
 
@@ -134,11 +186,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (message.contact) {
         const phone = message.contact.phone_number;
         if (phone) {
-          tgUserPhones.set(chatId, phone);
-          const appLink = getUserAuthUrl(chatId, fromUser);
-          const successText = `✅ <b>Telefon raqamingiz saqlandi!</b>\n\n📞 <b>Raqam:</b> ${phone}\n\n👇 Endi ilovani oching:`;
-          await sendTelegramMessage(chatId, successText, getDualLinkInlineButtons(chatId, fromUser));
-          await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard(chatId, fromUser));
+          try {
+            const tgId = String(fromUser.id);
+            const userId = `tg_user_${tgId}`;
+            
+            // Save phone to Firestore
+            await adminDb.collection('users').doc(userId).set({
+              phone,
+              updatedAt: new Date().toISOString()
+            }, { merge: true });
+
+            // Check if there is a pending login request for this chat
+            const pendingRef = adminDb.collection('login_requests').doc(`pending_${chatId}`);
+            const pendingSnap = await pendingRef.get();
+            if (pendingSnap.exists) {
+              const pendingData = pendingSnap.data();
+              if (pendingData?.requestId) {
+                await verifyAndMarkLoginRequest(pendingData.requestId, fromUser, phone);
+                await pendingRef.delete();
+              }
+            }
+
+            const successText = `✅ <b>Telefon raqamingiz saqlandi va hisobingiz tasdiqlandi!</b> 🎉\n\n📞 <b>Raqam:</b> ${phone}\n\n👇 Brauzeringizga qaytib ilovadan foydalanishingiz mumkin:`;
+            await sendTelegramMessage(chatId, successText, getCleanInlineKeyboard());
+            await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
+          } catch (contactErr) {
+            console.error('Error handling contact share:', contactErr);
+          }
         }
         return;
       }
@@ -148,7 +222,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const limitInfo = checkAndIncrementAiLimit(chatId);
         if (!limitInfo.allowed) {
           const limitMsg = `⚠️ <b>Oylik Bepul AI Limiti Tugadi! (5/5 ishlatildi)</b>\n\nSiz oylik bepul 5 ta AI so'rov imkoniyatizdan foydalandingiz.\nCheksiz AI va ovozli tahlil uchun <b>Premium</b> tarifiga o'ting! ⭐`;
-          await sendTelegramMessage(chatId, limitMsg, getDualLinkInlineButtons());
+          await sendTelegramMessage(chatId, limitMsg, getCleanInlineKeyboard());
           return;
         }
 
@@ -218,13 +292,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
                 const replyCard = `🎙 <b>Ovozli operatsiya saqlandi!</b> 🌟\n\n📌 <b>Turi:</b> ${typeEmoji}\n💵 <b>Summa:</b> ${formattedAmt} so'm\n📂 <b>Kategoriya:</b> ${parsed.category}\n📝 <b>Izoh:</b> ${parsed.note || "Ovozli xabar"}`;
 
-                const userAuthUrl = getUserAuthUrl(chatId, fromUser);
                 const inlineKeyboard = {
                   inline_keyboard: [
                     [
                       { text: "❌ Operatsiyani o'chirish", callback_data: `del_${txId}` },
-                      { text: "📱 Mini App", web_app: { url: userAuthUrl } },
-                      { text: "🌐 Web App", url: userAuthUrl }
+                      { text: "📱 Moliya AI", url: appUrl }
                     ]
                   ]
                 };
@@ -238,22 +310,58 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           console.error("Voice processing error:", voiceErr);
         }
 
-        await sendTelegramMessage(chatId, "⚠️ <i>Ovozli xabarni tushunib bo'lmadi. Qaytadan aniqroq gapirib ko'ring.</i>", getMainMenuKeyboard(chatId, fromUser));
+        await sendTelegramMessage(chatId, "⚠️ <i>Ovozli xabarni tushunib bo'lmadi. Qaytadan aniqroq gapirib ko'ring.</i>", getMainMenuKeyboard());
         return;
       }
 
       if (!text) return;
 
-      // 1. /start command
+      // 1. /start command (Handles Login Request UUID e.g. /start req_UUID or standard /start)
       if (text.startsWith("/start")) {
-        const welcomeText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n<b>Moliya AI</b> botiga xush kelibsiz! 🚀\n\nPulingizni oson va aqlli boshqaring.\n\n📞 <b>Telefon raqamingizni yuboring</b> — hisobingiz avtomatik yaratiladi:`;
-        await sendTelegramMessage(chatId, welcomeText, {
-          keyboard: [
-            [{ text: "📞 Telefon raqamni yuborish", request_contact: true }],
-          ],
-          resize_keyboard: true,
-          one_time_keyboard: true,
-        });
+        const rawArg = text.replace('/start', '').trim();
+        const requestId = rawArg.replace('req_', '').trim();
+
+        if (requestId && requestId.length >= 8) {
+          // Store pending association for this chat
+          await adminDb.collection('login_requests').doc(`pending_${chatId}`).set({
+            requestId,
+            chatId,
+            userId: `tg_user_${fromUser.id}`,
+            createdAt: new Date().toISOString(),
+          });
+
+          // Check if user already exists and has a phone number
+          const userSnap = await adminDb.collection('users').doc(`tg_user_${fromUser.id}`).get();
+          const userData = userSnap.exists ? userSnap.data() : null;
+          const phone = userData?.phone || userData?.onboarding?.phone;
+
+          if (phone) {
+            // Already registered & has phone -> Verify immediately!
+            await verifyAndMarkLoginRequest(requestId, fromUser, phone);
+            await adminDb.collection('login_requests').doc(`pending_${chatId}`).delete();
+
+            const successText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n✅ <b>Muvaffaqiyatli tasdiqlandi!</b> 🚀\nBrauzeringizdagi Moliya AI ilovasiga avtomatik kirdingiz.\n\n👇 <i>Ilovaga o'tish uchun quyidagi tugmani bosing:</i>`;
+            await sendTelegramMessage(chatId, successText, getCleanInlineKeyboard());
+            await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
+            return;
+          } else {
+            // New user or missing phone -> Prompt for contact share!
+            const promptText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n<b>Moliya AI</b> botiga xush kelibsiz! 🚀\n\nHisobingizni xavfsiz tasdiqlash uchun 📞 <b>Telefon raqamingizni yuboring:</b>`;
+            await sendTelegramMessage(chatId, promptText, {
+              keyboard: [
+                [{ text: "📞 Telefon raqamni yuborish", request_contact: true }],
+              ],
+              resize_keyboard: true,
+              one_time_keyboard: true,
+            });
+            return;
+          }
+        }
+
+        // Standard /start without request parameter
+        const welcomeText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n<b>Moliya AI</b> botiga xush kelibsiz! 🚀\n\nPulingizni oson va aqlli boshqaring.\n\n👇 <b>Ilovani ochish uchun quyidagi tugmani bosing:</b>`;
+        await sendTelegramMessage(chatId, welcomeText, getCleanInlineKeyboard());
+        await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
         return;
       }
 

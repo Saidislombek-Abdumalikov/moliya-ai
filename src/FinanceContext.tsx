@@ -48,6 +48,7 @@ interface FinanceContextType {
   deleteTransaction: (id: string | number) => Promise<void>
   clearAllData: () => Promise<void>
   setDateRange: (range: { start: Date; end: Date }) => void
+  startTelegramLogin: (onVerified?: () => void) => Promise<{ requestId: string; cancel: () => void }>
 }
 
 const FinanceContext = createContext<FinanceContextType | undefined>(undefined)
@@ -149,161 +150,151 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const [isAuthReady, setIsAuthReady] = useState(false)
 
-  // Authenticate with Backend
+  // Authenticate with Backend via Persistent Session Token or Telegram Mini App initData
   useEffect(() => {
     async function authenticate() {
       try {
-        // 0. Check Deep Link URL parameters (e.g. ?tg_user_id=123456&name=Saidislom)
-        const urlParams = new URLSearchParams(window.location.search);
-        const urlTgUserId = urlParams.get('tg_user_id');
-        const urlName = urlParams.get('name');
-        const urlUsername = urlParams.get('username');
-        const urlPhone = urlParams.get('phone');
-
-        if (urlTgUserId) {
-          const fullUserId = 'tg_user_' + urlTgUserId;
-          setUserId(fullUserId);
-          localStorage.setItem('user_id_v1', fullUserId);
-          localStorage.setItem('user_logged_in_v1', 'true');
-
-          const currentOnboarding = JSON.parse(localStorage.getItem('user_onboarding_v1') || '{}');
-          const savedLang = localStorage.getItem('user_selected_language_v1');
-          const updatedOnboarding = {
-            ...currentOnboarding,
-            completed: true,
-            language: savedLang || currentOnboarding.language || 'uz',
-            name: urlName || currentOnboarding.name || 'Telegram Foydalanuvchi',
-            phone: urlPhone || currentOnboarding.phone || '',
-            telegram: urlUsername ? (urlUsername.startsWith('@') ? urlUsername : '@' + urlUsername) : currentOnboarding.telegram || '@moliya_user',
-            telegramId: urlTgUserId,
-          };
-          setOnboarding(updatedOnboarding);
-          localStorage.setItem('user_onboarding_v1', JSON.stringify(updatedOnboarding));
-          setIsAuthReady(true);
-          return;
-        }
-
-        const tg = (window as any).Telegram?.WebApp;
-        const tgUser = tg?.initDataUnsafe?.user;
-
-        if (tgUser && tgUser.id) {
-          const fullUserId = 'tg_user_' + tgUser.id;
-          setUserId(fullUserId);
-          localStorage.setItem('user_id_v1', fullUserId);
-          localStorage.setItem('user_logged_in_v1', 'true');
-
-          const tgName = [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') || 'Telegram Foydalanuvchi';
-          const tgUsername = tgUser.username ? '@' + tgUser.username : '@moliya_user';
-
-          const currentOnboarding = JSON.parse(localStorage.getItem('user_onboarding_v1') || '{}');
-          const updatedOnboarding = {
-            ...currentOnboarding,
-            completed: true,
-            language: currentOnboarding.language || 'uz',
-            name: tgName,
-            telegram: tgUsername,
-            telegramId: String(tgUser.id),
-          };
-          setOnboarding(updatedOnboarding);
-          localStorage.setItem('user_onboarding_v1', JSON.stringify(updatedOnboarding));
-          setIsAuthReady(true);
-          return;
-        }
-
-        let res;
-        if (tg && tg.initData) {
-          res = await fetch('/api/auth/telegram', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ initData: tg.initData })
-          });
-        } else {
-          // Use fallback sandbox mode
-          let uid = localStorage.getItem('mock_external_id')
-          if (!uid) {
-            uid = 'mock_' + Math.random().toString(36).substring(2, 11)
-            localStorage.setItem('mock_external_id', uid)
-          }
+        // 1. Check for stored 60-day Session Token
+        const sessionToken = localStorage.getItem('user_session_token_v1');
+        if (sessionToken) {
           try {
-            res = await fetch('/api/auth/fallback', {
+            const res = await fetch('/api/auth/validate-session', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ mockUid: uid })
+              body: JSON.stringify({ sessionToken }),
             });
-          } catch {
-            // API unavailable — use local-only userId
-            const localId = 'moliya_user_' + uid;
-            setUserId(localId);
-            localStorage.setItem('user_id_v1', localId);
-            setIsAuthReady(true);
-            return;
-          }
-        }
-        
-        if (res && res.ok && res.headers.get('content-type')?.includes('application/json')) {
-          try {
-            const data = await res.json();
-            if (data.userId) {
-              setUserId(data.userId);
-              localStorage.setItem('user_id_v1', data.userId);
-              if (data.user) {
-                const tgName = [data.user.first_name, data.user.last_name].filter(Boolean).join(' ') || 'Foydalanuvchi';
-                const tgUsername = data.user.username ? '@' + data.user.username : '@moliya_user';
-                const tgPhone = data.user.phone_number || '';
-                
-                const currentOnboarding = JSON.parse(localStorage.getItem('user_onboarding_v1') || '{}');
-                const updatedOnboarding = {
-                  ...currentOnboarding,
-                  name: currentOnboarding.name || tgName,
-                  telegram: tgUsername,
-                  phone: tgPhone || currentOnboarding.phone || '',
-                };
-                setOnboarding(updatedOnboarding);
-                localStorage.setItem('user_onboarding_v1', JSON.stringify(updatedOnboarding));
+            if (res.ok) {
+              const data = await res.json();
+              if (data.valid && data.userId) {
+                setUserId(data.userId);
+                localStorage.setItem('user_id_v1', data.userId);
                 localStorage.setItem('user_logged_in_v1', 'true');
+                if (data.onboarding) {
+                  setOnboarding(data.onboarding);
+                  localStorage.setItem('user_onboarding_v1', JSON.stringify(data.onboarding));
+                }
+                setIsAuthReady(true);
+                return;
               }
-            } else {
-              throw new Error('No userId in response');
             }
-          } catch {
-            // JSON parse failed or no userId — fallback
-            let uid = localStorage.getItem('mock_external_id')
-            if (!uid) {
-              uid = 'mock_' + Math.random().toString(36).substring(2, 11)
-              localStorage.setItem('mock_external_id', uid)
-            }
-            const localId = 'moliya_user_' + uid;
-            setUserId(localId);
-            localStorage.setItem('user_id_v1', localId);
+          } catch (err) {
+            console.error('Session validation network error:', err);
           }
-        } else {
-          // API returned error or non-JSON — fallback to local userId
-          let uid = localStorage.getItem('mock_external_id')
-          if (!uid) {
-            uid = 'mock_' + Math.random().toString(36).substring(2, 11)
-            localStorage.setItem('mock_external_id', uid)
-          }
-          const localId = 'moliya_user_' + uid;
-          setUserId(localId);
-          localStorage.setItem('user_id_v1', localId);
+          // If session validation failed/expired, clean up token
+          localStorage.removeItem('user_session_token_v1');
         }
-      } catch(e) {
+
+        // 2. Telegram Mini App Native Container Check
+        const tg = (window as any).Telegram?.WebApp;
+        if (tg && tg.initData) {
+          try {
+            const res = await fetch('/api/auth/telegram', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ initData: tg.initData })
+            });
+            if (res.ok) {
+              const data = await res.json();
+              if (data.userId && data.sessionToken) {
+                setUserId(data.userId);
+                localStorage.setItem('user_id_v1', data.userId);
+                localStorage.setItem('user_session_token_v1', data.sessionToken);
+                localStorage.setItem('user_logged_in_v1', 'true');
+                if (data.onboarding) {
+                  setOnboarding(data.onboarding);
+                  localStorage.setItem('user_onboarding_v1', JSON.stringify(data.onboarding));
+                }
+                setIsAuthReady(true);
+                return;
+              }
+            }
+          } catch (err) {
+            console.error('Telegram initData auth error:', err);
+          }
+        }
+
+        // 3. Unauthenticated state — check if existing local profile exists
+        const savedUserId = localStorage.getItem('user_id_v1');
+        if (savedUserId && localStorage.getItem('user_logged_in_v1') === 'true') {
+          setUserId(savedUserId);
+        }
+      } catch (e) {
         console.error('Authentication error:', e);
-        // Final fallback — never leave userId null
-        let uid = localStorage.getItem('mock_external_id')
-        if (!uid) {
-          uid = 'mock_' + Math.random().toString(36).substring(2, 11)
-          localStorage.setItem('mock_external_id', uid)
-        }
-        const localId = 'moliya_user_' + uid;
-        setUserId(localId);
-        localStorage.setItem('user_id_v1', localId);
       } finally {
         setIsAuthReady(true);
       }
     }
     authenticate();
   }, [])
+
+  // Start Telegram Login Request (UUID polling)
+  const startTelegramLogin = async (onVerified?: () => void) => {
+    const requestId = typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : 'req_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+
+    // 1. Register UUID with backend
+    try {
+      await fetch('/api/auth/create-login-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId }),
+      });
+    } catch (e) {
+      console.error('Failed to register login request with backend:', e);
+    }
+
+    // 2. Open Telegram Bot with request parameter
+    const botUrl = `https://t.me/moliya_v2bot?start=req_${requestId}`;
+    window.open(botUrl, '_blank');
+
+    // 3. Start Auto-Polling backend for verification
+    let intervalId: any = null;
+    const cancel = () => {
+      if (intervalId) clearInterval(intervalId);
+    };
+
+    intervalId = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/auth/check-login-request?requestId=${requestId}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.status === 'VERIFIED' && data.userId && data.sessionToken) {
+            clearInterval(intervalId);
+            
+            setUserId(data.userId);
+            localStorage.setItem('user_id_v1', data.userId);
+            localStorage.setItem('user_session_token_v1', data.sessionToken);
+            localStorage.setItem('user_logged_in_v1', 'true');
+
+            const currentOnboarding = JSON.parse(localStorage.getItem('user_onboarding_v1') || '{}');
+            const savedLang = localStorage.getItem('user_selected_language_v1');
+            const updatedOnboarding = {
+              ...currentOnboarding,
+              ...(data.onboarding || {}),
+              completed: true,
+              language: savedLang || data.onboarding?.language || currentOnboarding.language || 'uz',
+              phone: data.phone || data.onboarding?.phone || currentOnboarding.phone || '',
+            };
+
+            setOnboarding(updatedOnboarding);
+            localStorage.setItem('user_onboarding_v1', JSON.stringify(updatedOnboarding));
+
+            if (onVerified) onVerified();
+          }
+        }
+      } catch (err) {
+        console.error('Polling error:', err);
+      }
+    }, 1500);
+
+    // Auto-timeout after 2 minutes
+    setTimeout(() => {
+      cancel();
+    }, 120000);
+
+    return { requestId, cancel };
+  };
 
   // Sync to Firestore and LocalStorage
   useEffect(() => {
@@ -524,21 +515,6 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100dvh', background: '#FFFFFF' }}><p>Loading...</p></div>
   }
 
-  if (!userId) {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100dvh', background: '#FFFFFF', padding: 20 }}>
-        <h2 style={{ fontSize: 24, fontWeight: 'bold', marginBottom: 20, color: '#e53e3e' }}>Authentication Error</h2>
-        <p style={{ textAlign: 'center', color: '#666', maxWidth: 400, marginBottom: 20 }}>Failed to authenticate. Please ensure you are opening this app from Telegram or try reloading the application.</p>
-        <button 
-          onClick={() => window.location.reload()}
-          style={{ padding: '12px 24px', background: '#000', color: '#fff', borderRadius: 8, fontSize: 16, fontWeight: 'bold', border: 'none', cursor: 'pointer' }}
-        >
-          Reload App
-        </button>
-      </div>
-    )
-  }
-
   return (
     <FinanceContext.Provider
       value={{
@@ -558,6 +534,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         deleteTransaction,
         clearAllData,
         setDateRange,
+        startTelegramLogin,
       }}
     >
       {children}

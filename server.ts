@@ -90,6 +90,97 @@ async function startServer() {
 
   // API routes FIRST
 
+  // 1. Create Login Request UUID
+  app.post("/api/auth/create-login-request", async (req, res) => {
+    try {
+      const { requestId } = req.body || {};
+      if (!requestId || typeof requestId !== 'string' || requestId.length < 8) {
+        res.status(400).json({ error: "Invalid or missing requestId" });
+        return;
+      }
+      await firestore.collection("login_requests").doc(requestId).set({
+        requestId,
+        status: "PENDING",
+        createdAt: new Date().toISOString(),
+      });
+      res.json({ success: true, requestId });
+    } catch (e: any) {
+      console.error("Create login request error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // 2. Check Login Request Verification status
+  app.get("/api/auth/check-login-request", async (req, res) => {
+    try {
+      const requestId = (req.query.requestId as string) || (req.body && req.body.requestId);
+      if (!requestId || typeof requestId !== 'string') {
+        res.status(400).json({ error: "Missing requestId parameter" });
+        return;
+      }
+      const snap = await firestore.collection("login_requests").doc(requestId).get();
+      if (!snap.exists) {
+        res.json({ status: "NOT_FOUND" });
+        return;
+      }
+      const data = snap.data();
+      if (data?.status === "VERIFIED" && data.userId && data.sessionToken) {
+        const userSnap = await firestore.collection("users").doc(data.userId).get();
+        const userData = userSnap.exists ? userSnap.data() : null;
+        res.json({
+          status: "VERIFIED",
+          userId: data.userId,
+          sessionToken: data.sessionToken,
+          onboarding: userData?.onboarding || null,
+          phone: userData?.phone || "",
+        });
+        return;
+      }
+      res.json({ status: data?.status || "PENDING" });
+    } catch (e: any) {
+      console.error("Check login request error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // 3. Validate Session Token
+  app.post("/api/auth/validate-session", async (req, res) => {
+    try {
+      const { sessionToken } = req.body || {};
+      if (!sessionToken || typeof sessionToken !== 'string') {
+        res.json({ valid: false, reason: "Missing sessionToken" });
+        return;
+      }
+      const sessionSnap = await firestore.collection("sessions").doc(sessionToken).get();
+      if (!sessionSnap.exists) {
+        res.json({ valid: false, reason: "Session not found" });
+        return;
+      }
+      const sessionData = sessionSnap.data();
+      if (!sessionData?.expiresAt || new Date(sessionData.expiresAt).getTime() < Date.now()) {
+        res.json({ valid: false, reason: "Session expired" });
+        return;
+      }
+      const userId = sessionData.userId;
+      if (!userId) {
+        res.json({ valid: false, reason: "Orphaned session" });
+        return;
+      }
+      const userSnap = await firestore.collection("users").doc(userId).get();
+      const userData = userSnap.exists ? userSnap.data() : null;
+      res.json({
+        valid: true,
+        userId,
+        onboarding: userData?.onboarding || null,
+        cards: userData?.cards || [],
+        security: userData?.security || null,
+      });
+    } catch (e: any) {
+      console.error("Validate session error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Telegram verification endpoint
   app.post("/api/auth/telegram", async (req, res) => {
     try {
@@ -118,8 +209,44 @@ async function startServer() {
         return;
       }
 
-      const { userId, customToken } = await getOrCreateInternalUser(tgUser.id.toString(), "telegram", tgUser);
-      res.json({ userId, customToken, user: tgUser });
+      const userId = `tg_user_${tgUser.id}`;
+      const sessionToken = "sess_" + crypto.randomBytes(32).toString("hex");
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString();
+
+      await firestore.collection("sessions").doc(sessionToken).set({
+        sessionToken,
+        userId,
+        createdAt: now.toISOString(),
+        expiresAt,
+      });
+
+      const tgName = [tgUser.first_name, tgUser.last_name].filter(Boolean).join(" ") || "Telegram Foydalanuvchi";
+      const tgUsername = tgUser.username ? "@" + tgUser.username : "@moliya_user";
+
+      const userRef = firestore.collection("users").doc(userId);
+      const userSnap = await userRef.get();
+      const existingData = userSnap.exists ? userSnap.data() : {};
+
+      const updatedOnboarding = {
+        ...(existingData?.onboarding || {}),
+        completed: true,
+        language: existingData?.onboarding?.language || "uz",
+        name: tgName,
+        telegram: tgUsername,
+        telegramId: String(tgUser.id),
+      };
+
+      await userRef.set({
+        userId,
+        telegramId: String(tgUser.id),
+        name: tgName,
+        telegram: tgUsername,
+        onboarding: updatedOnboarding,
+        updatedAt: now.toISOString(),
+      }, { merge: true });
+
+      res.json({ userId, sessionToken, onboarding: updatedOnboarding, user: tgUser });
     } catch (e: any) {
       console.error("Telegram authentication error:", e);
       res.status(500).json({ error: e.message });

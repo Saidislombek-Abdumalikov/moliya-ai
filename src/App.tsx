@@ -58,15 +58,11 @@ export default function App() {
     }
   }, [])
 
-  // Auto-transition to app when FinanceContext authenticates via Telegram deep link
+  // Auto-transition to app when user gets authenticated via Session or Telegram Polling
   useEffect(() => {
-    if (stage === 'onboarding' && onboarding && (onboarding as any).completed) {
-      // Only auto-transition if FinanceContext already confirmed auth (set user_logged_in_v1)
-      // This prevents fighting with logout which removes that key
-      const isLoggedIn = localStorage.getItem('user_logged_in_v1') === 'true'
-      if (isLoggedIn) {
-        setStage('app')
-      }
+    const isLoggedIn = localStorage.getItem('user_logged_in_v1') === 'true'
+    if (stage === 'onboarding' && isLoggedIn) {
+      setStage('app')
     }
   }, [onboarding, stage])
 

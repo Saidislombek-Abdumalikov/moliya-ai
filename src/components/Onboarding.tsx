@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useFinance } from '../FinanceContext'
 
 export interface OnboardingResult {
   language: 'uz' | 'uz_cyrl' | 'ru' | 'en'
@@ -176,12 +177,24 @@ function fmtMoney(n: number) {
 }
 
 export default function Onboarding({ onComplete }: Props) {
+  const { startTelegramLogin } = useFinance()
   const [step, setStep] = useState<Step>('language')
   const [language, setLanguage] = useState<'uz' | 'uz_cyrl' | 'ru' | 'en'>('uz')
   const [goal, setGoal] = useState<number>(1000000)
   const [customGoal, setCustomGoal] = useState('')
   const [useCustomGoal, setUseCustomGoal] = useState(false)
   const [isWaitingTelegramAuth, setIsWaitingTelegramAuth] = useState(false)
+
+  const handleStartTelegramAuth = async () => {
+    setIsWaitingTelegramAuth(true);
+    try {
+      await startTelegramLogin(() => {
+        finish();
+      });
+    } catch (e) {
+      console.error('Error starting telegram auth:', e);
+    }
+  };
 
   const t = translations[language] || translations.uz
 
@@ -538,13 +551,9 @@ export default function Onboarding({ onComplete }: Props) {
                 </p>
 
                 <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  <a
-                    href="https://t.me/moliya_v2bot?start=login"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={() => {
-                      setIsWaitingTelegramAuth(true);
-                    }}
+                  <button
+                    type="button"
+                    onClick={handleStartTelegramAuth}
                     style={{
                       width: '100%', padding: '15px', borderRadius: 16, border: 'none',
                       background: 'linear-gradient(135deg, #0088CC 0%, #0077B5 100%)',
@@ -552,11 +561,10 @@ export default function Onboarding({ onComplete }: Props) {
                       cursor: 'pointer', fontFamily: 'inherit',
                       boxShadow: '0 6px 20px rgba(0, 136, 204, 0.35)',
                       display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                      textDecoration: 'none'
                     }}
                   >
                     <span>{t.loginTelegramBtn}</span>
-                  </a>
+                  </button>
 
                   <button
                     onClick={finish}
@@ -578,16 +586,15 @@ export default function Onboarding({ onComplete }: Props) {
                 </h1>
                 <p style={{ fontSize: 13, color: '#8B82C4', maxWidth: 310, lineHeight: 1.4, marginBottom: 16 }}>
                   {(language === 'uz' || language === 'uz_cyrl')
-                    ? (language === 'uz_cyrl' ? "Telegram ботда /start босилгач, юборилган '📱 Moliya App' тугмаси орқали иловага киринг." : "Telegram botda /start bosilgach, yuborilgan '📱 Moliya App' tugmasi orqali ilovaga kiring.")
-                    : "Press /start in the Telegram bot, then tap the '📱 Moliya App' button to enter your account."
+                    ? (language === 'uz_cyrl' ? "Telegram ботда /start босилгач, тизим сизни инстант аниқлайди ва асосий саҳифага ўтказади." : "Telegram botda /start bosilgach, tizim sizni avtomatik aniqlaydi va asosiy sahifaga o'tkazadi.")
+                    : "Press /start in the Telegram bot, the system will verify you and land on your account automatically."
                   }
                 </p>
 
                 <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  <a
-                    href="https://t.me/moliya_v2bot?start=login"
-                    target="_blank"
-                    rel="noopener noreferrer"
+                  <button
+                    type="button"
+                    onClick={handleStartTelegramAuth}
                     style={{
                       width: '100%', padding: '14px', borderRadius: 16, border: 'none',
                       background: 'linear-gradient(135deg, #0088CC 0%, #0077B5 100%)',
@@ -595,11 +602,10 @@ export default function Onboarding({ onComplete }: Props) {
                       cursor: 'pointer', fontFamily: 'inherit',
                       boxShadow: '0 6px 20px rgba(0, 136, 204, 0.35)',
                       display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                      textDecoration: 'none'
                     }}
                   >
                     <span>📱 {(language === 'uz' || language === 'uz_cyrl') ? (language === 'uz_cyrl' ? "Telegram ботни қайта очиш" : "Telegram botni qayta ochish") : "Re-open Telegram Bot"}</span>
-                  </a>
+                  </button>
 
                   <button
                     onClick={finish}
