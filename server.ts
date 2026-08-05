@@ -3,7 +3,7 @@ import express from "express";
 import path from "path";
 
 import { initializeApp, getApps } from "firebase/app";
-import { getFirestore, doc, setDoc, getDoc, collection, query, orderBy, limit, getDocs, deleteDoc } from "firebase/firestore";
+import { getFirestore, doc, setDoc, getDoc } from "firebase/firestore";
 import crypto from "crypto";
 
 const firebaseConfig = {
@@ -416,81 +416,52 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
     res.json({ status: "ok" });
   });
 
+  // In-memory Telegram user transaction store for instant response & syncing
+  const tgUserTransactions = new Map<number, { id: string; type: string; name: string; category: string; amount: number; date: string }[]>();
+  
   // Track active chat IDs for 3-hour automated expense reminders
   const activeTelegramChats = new Set<number>();
 
+  // Shared AI Usage tracker per user: 1-day free trial, then max 5 AI requests / month
+  const tgUserAiUsage = new Map<number, { firstSeen: number; count: number }>();
+
   const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8955141731:AAGzuBXoKmZii5t_bJcwbJA0Q92gYrFaGnw";
 
-  async function checkAndIncrementAiLimit(chatId: number): Promise<{ allowed: boolean; isTrial: boolean; remaining: number }> {
-    const userRef = doc(firestore, 'users', `moliya_user_tg_${chatId}`);
-    const snap = await getDoc(userRef);
-    const data = snap.exists() ? snap.data() : {};
+  async function syncUserTxToFirestore(chatId: number, txs: any[]) {
+    if (!firestore) return;
+    try {
+      await firestore.collection('users').doc(`tg_user_${chatId}`).set({
+        customTransactions: txs,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+    } catch (e) {
+      console.error("Firestore sync error:", e);
+    }
+  }
+
+  const checkAndIncrementAiLimit = (chatId: number): { allowed: boolean; isTrial: boolean; remaining: number } => {
     const now = Date.now();
+    let usage = tgUserAiUsage.get(chatId);
+    if (!usage) {
+      usage = { firstSeen: now, count: 0 };
+      tgUserAiUsage.set(chatId, usage);
+    }
 
-    let firstSeen = data.aiFirstSeen || now;
-    let count = data.aiCount || 0;
-
-    const isTrial = (now - firstSeen) < (24 * 3600 * 1000);
+    // 1-day trial active (24 hours unlimited)
+    const isTrial = (now - usage.firstSeen) < (24 * 3600 * 1000);
     if (isTrial) {
-      if (!data.aiFirstSeen) {
-        await setDoc(userRef, { aiFirstSeen: firstSeen }, { merge: true });
-      }
       return { allowed: true, isTrial: true, remaining: 999 };
     }
 
-    if (count >= 5) {
+    // After 1-day trial: Max 5 AI requests per month
+    if (usage.count >= 5) {
       return { allowed: false, isTrial: false, remaining: 0 };
     }
 
-    const newCount = count + 1;
-    await setDoc(userRef, { aiFirstSeen: firstSeen, aiCount: newCount }, { merge: true });
-    return { allowed: true, isTrial: false, remaining: 5 - newCount };
-  }
-
-  async function saveTelegramTransaction(chatId: number, txItem: any) {
-    const txRef = doc(firestore, 'users', `moliya_user_tg_${chatId}`, 'transactions', txItem.id);
-    await setDoc(txRef, txItem);
-  }
-
-  async function getTelegramTransactions(chatId: number): Promise<any[]> {
-    try {
-      const txColRef = collection(firestore, 'users', `moliya_user_tg_${chatId}`, 'transactions');
-      const q = query(txColRef, orderBy('date', 'desc'), limit(100));
-      const snap = await getDocs(q);
-      const txs: any[] = [];
-      snap.forEach(d => txs.push({ id: d.id, ...d.data() }));
-      return txs;
-    } catch (err) {
-      console.error('Error fetching transactions from Firestore:', err);
-      return [];
-    }
-  }
-
-  async function deleteTelegramTransaction(chatId: number, txId?: string): Promise<any | null> {
-    try {
-      const txColRef = collection(firestore, 'users', `moliya_user_tg_${chatId}`, 'transactions');
-      if (txId) {
-        const txRef = doc(firestore, 'users', `moliya_user_tg_${chatId}`, 'transactions', txId);
-        const snap = await getDoc(txRef);
-        const data = snap.exists() ? { id: snap.id, ...snap.data() } : null;
-        await deleteDoc(txRef);
-        return data;
-      } else {
-        const q = query(txColRef, orderBy('date', 'desc'), limit(1));
-        const snap = await getDocs(q);
-        if (!snap.empty) {
-          const docToDelete = snap.docs[0];
-          const data = { id: docToDelete.id, ...docToDelete.data() };
-          await deleteDoc(docToDelete.ref);
-          return data;
-        }
-        return null;
-      }
-    } catch (err) {
-      console.error('Error deleting transaction from Firestore:', err);
-      return null;
-    }
-  }
+    usage.count += 1;
+    tgUserAiUsage.set(chatId, usage);
+    return { allowed: true, isTrial: false, remaining: 5 - usage.count };
+  };
 
   const appUrl = process.env.APP_URL || "https://moliya-ai-pi.vercel.app";
 
@@ -506,13 +477,13 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
     };
   };
 
-  const getDualLinkInlineButtons = (requestId?: string) => {
-    const webUrl = requestId ? `${appUrl}/?req=${requestId}` : appUrl;
+  const getDualLinkInlineButtons = (chatId?: number, fromUser?: any) => {
+    const link = chatId ? getUserAuthUrl(chatId, fromUser) : appUrl;
     return {
       inline_keyboard: [
         [
-          { text: "📱 Telegram Mini App", web_app: { url: appUrl } },
-          { text: "🌐 Web App-ga o'tish", url: webUrl }
+          { text: "📱 Mini App da ochish", web_app: { url: link } },
+          { text: "🌐 Web App (Brauzer)", url: link }
         ]
       ]
     };
@@ -545,7 +516,10 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
 
       if (chatId && data && data.startsWith('del_')) {
         const txId = data.replace('del_', '');
-        await deleteTelegramTransaction(chatId, txId);
+        const txs = tgUserTransactions.get(chatId) || [];
+        const newTxs = txs.filter(t => t.id !== txId);
+        tgUserTransactions.set(chatId, newTxs);
+        await syncUserTxToFirestore(chatId, newTxs);
 
         await answerCallbackQuery(cb.id, "🗑 Operatsiya o'chirildi!");
         await sendTelegramMessage(chatId, "🗑 <b>Operatsiya muvaffaqiyatli o'chirildi!</b> ✅", getMainMenuKeyboard());
@@ -566,7 +540,7 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
 
       // Handle Voice Note / Audio Recording
       if (voice && voice.file_id) {
-        const limitInfo = await checkAndIncrementAiLimit(chatId);
+        const limitInfo = checkAndIncrementAiLimit(chatId);
         if (!limitInfo.allowed) {
           const limitMsg = `⚠️ <b>Oylik Bepul AI Limiti Tugadi! (5/5 ishlatildi)</b>\n\nSiz oylik bepul 5 ta AI so'rov imkoniyatizdan foydalandingiz.\nCheksiz AI va ovozli tahlil uchun <b>Premium</b> tarifiga o'ting! ⭐`;
           await sendTelegramMessage(chatId, limitMsg, getDualLinkInlineButtons());
@@ -631,7 +605,10 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
                   date: new Date().toISOString()
                 };
 
-                await saveTelegramTransaction(chatId, txItem);
+                const userList = tgUserTransactions.get(chatId) || [];
+                userList.push(txItem);
+                tgUserTransactions.set(chatId, userList);
+                await syncUserTxToFirestore(chatId, userList);
 
                 const typeEmoji = parsed.type === 'income' ? '🟢 Daromad' : '🛒 Xarajat';
                 const formattedAmt = parsed.amount.toLocaleString('en-US').replace(/,/g, ' ');
@@ -678,7 +655,7 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
             const sessionToken = 'sess_' + crypto.randomBytes(32).toString('hex');
 
             // 1. Session doc
-            await setDoc(doc(firestore, 'users', `moliya_user_sess_${sessionToken}`), {
+            await firestore.collection('users').doc(`moliya_user_sess_${sessionToken}`).set({
               sessionToken,
               userId,
               createdAt: now.toISOString(),
@@ -689,7 +666,7 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
             const tgName = [fromUser.first_name, fromUser.last_name].filter(Boolean).join(' ') || 'Telegram Foydalanuvchi';
             const tgUsername = fromUser.username ? '@' + fromUser.username : '@moliya_user';
 
-            await setDoc(doc(firestore, 'users', userId), {
+            await firestore.collection('users').doc(userId).set({
               userId,
               telegramId: tgId,
               name: tgName,
@@ -704,31 +681,20 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
               updatedAt: now.toISOString(),
             }, { merge: true });
 
-            // 3. Mark login request VERIFIED in Firestore
-            const cleanId = requestId.replace(/^req_/, '').trim();
-            await setDoc(doc(firestore, 'users', `moliya_user_req_${cleanId}`), {
-              requestId: cleanId,
+            // 3. Mark login request VERIFIED
+            await firestore.collection('users').doc(`moliya_user_req_${requestId}`).set({
+              requestId,
               status: 'VERIFIED',
               userId,
               sessionToken,
               verifiedAt: now.toISOString(),
             }, { merge: true });
-
-            if (cleanId !== requestId) {
-              await setDoc(doc(firestore, 'users', `moliya_user_req_${requestId}`), {
-                requestId,
-                status: 'VERIFIED',
-                userId,
-                sessionToken,
-                verifiedAt: now.toISOString(),
-              }, { merge: true });
-            }
           } catch (e) {
             console.error('Error verifying login request in server.ts:', e);
           }
 
           const successText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n✅ <b>Muvaffaqiyatli tasdiqlandi!</b> 🚀\nBrauzeringizdagi Moliya AI ilovasiga avtomatik kirdingiz.\n\n👇 <i>Ilovaga o'tish uchun quyidagi tugmani bosing:</i>`;
-          await sendTelegramMessage(chatId, successText, getDualLinkInlineButtons(requestId));
+          await sendTelegramMessage(chatId, successText, getDualLinkInlineButtons());
           await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
           return;
         }
@@ -748,18 +714,18 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
 
       // 3. Balance & Statistics command or button
       if (text.includes("Balans") || text.includes("balans") || text.startsWith("/balance") || text.includes("Statistika")) {
-        const txs = await getTelegramTransactions(chatId);
-        const totalIncome = txs.filter(t => t.type === 'income').reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
-        const totalExpense = txs.filter(t => t.type === 'expense').reduce((acc, t) => acc + Math.abs(Number(t.amount) || 0), 0);
+        const txs = tgUserTransactions.get(chatId) || [];
+        const totalIncome = txs.filter(t => t.type === 'income').reduce((acc, t) => acc + t.amount, 0);
+        const totalExpense = txs.filter(t => t.type === 'expense').reduce((acc, t) => acc + Math.abs(t.amount), 0);
         const netBalance = totalIncome - totalExpense;
 
         const fmt = (n: number) => n.toLocaleString('en-US').replace(/,/g, ' ');
 
         let lastTxsText = "<i>Hozircha tranzaksiyalar yo'q.</i>";
         if (txs.length > 0) {
-          lastTxsText = txs.slice(0, 3).map((t, idx) => {
+          lastTxsText = txs.slice(-3).reverse().map((t, idx) => {
             const icon = t.type === 'income' ? '🟢' : '🔻';
-            return `${idx + 1}. ${icon} <b>${t.category}</b> — ${fmt(Number(t.amount) || 0)} so'm <i>(${t.name})</i>`;
+            return `${idx + 1}. ${icon} <b>${t.category}</b> — ${fmt(t.amount)} so'm <i>(${t.name})</i>`;
           }).join('\n');
         }
 
@@ -770,18 +736,20 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
 
       // 4. Delete last transaction button or command
       if (text.includes("o'chirish") || text.includes("очириш") || text.startsWith("/delete")) {
-        const deletedTx = await deleteTelegramTransaction(chatId);
-        if (!deletedTx) {
+        const txs = tgUserTransactions.get(chatId) || [];
+        if (txs.length === 0) {
           await sendTelegramMessage(chatId, "ℹ️ <i>O'chirish uchun tranzaksiyalar mavjud emas.</i>", getMainMenuKeyboard());
           return;
         }
+        const lastTx = txs.pop();
+        tgUserTransactions.set(chatId, txs);
         const fmt = (n: number) => n.toLocaleString('en-US').replace(/,/g, ' ');
-        await sendTelegramMessage(chatId, `🗑 <b>Oxirgi operatsiya o'chirildi!</b> ✅\n\n❌ <b>O'chirildi:</b> ${fmt(Number(deletedTx?.amount) || 0)} so'm (${deletedTx?.category} - ${deletedTx?.name})`, getMainMenuKeyboard());
+        await sendTelegramMessage(chatId, `🗑 <b>Oxirgi operatsiya o'chirildi!</b> ✅\n\n❌ <b>O'chirildi:</b> ${fmt(lastTx?.amount || 0)} so'm (${lastTx?.category} - ${lastTx?.name})`, getMainMenuKeyboard());
         return;
       }
 
       // Check AI request limit before running Gemini
-      const limitInfo = await checkAndIncrementAiLimit(chatId);
+      const limitInfo = checkAndIncrementAiLimit(chatId);
       if (!limitInfo.allowed) {
         const limitMsg = `⚠️ <b>Oylik Bepul AI Limiti Tugadi! (5/5 ishlatildi)</b>\n\nSiz oylik bepul 5 ta AI so'rov imkoniyatizdan foydalandingiz.\nCheksiz AI so'rovlari uchun <b>Premium</b> tarifiga o'ting! ⭐`;
         await sendTelegramMessage(chatId, limitMsg, {
@@ -870,7 +838,9 @@ Return JSON object:
           date: new Date().toISOString()
         };
 
-        await saveTelegramTransaction(chatId, txItem);
+        const userList = tgUserTransactions.get(chatId) || [];
+        userList.push(txItem);
+        tgUserTransactions.set(chatId, userList);
 
         const typeEmoji = parsed.type === 'income' ? '🟢 Daromad' : '🛒 Xarajat';
         const formattedAmt = parsed.amount.toLocaleString('en-US').replace(/,/g, ' ');
@@ -896,29 +866,27 @@ Return JSON object:
 
   // Webhook Endpoint
   app.post("/api/telegram-webhook", async (req, res) => {
+    res.status(200).send("OK");
     try {
       await handleTelegramUpdate(req.body);
     } catch (err) {
       console.error('Error handling webhook:', err);
     }
-    res.status(200).send("OK");
   });
 
-  // Long Polling Engine for local dev & testing (Active whenever process.env.VERCEL !== '1')
-  if (process.env.VERCEL !== '1') {
+  // Long Polling Engine for local dev (only if ENABLE_LOCAL_POLLING === 'true')
+  if (process.env.ENABLE_LOCAL_POLLING === 'true') {
     let lastUpdateId = 0;
     async function startTelegramLongPolling() {
       try {
-        // Clear lingering webhooks to remove Telegram 409 Conflict locks and enable instant responses
-        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/deleteWebhook?drop_pending_updates=false`);
-        console.log(`🤖 Telegram Bot Polling Active & Webhook Cleared!`);
+        console.log(`🤖 Telegram Bot Polling started...`);
       } catch (e) {
         console.error("Telegram init polling error:", e);
       }
 
       while (true) {
         try {
-          const url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId + 1}&timeout=2`;
+          const url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId + 1}&timeout=15`;
           const res = await fetch(url);
           if (res.ok) {
             const data = await res.json();
@@ -930,7 +898,7 @@ Return JSON object:
             }
           }
         } catch (e) {
-          await new Promise(r => setTimeout(r, 2000));
+          await new Promise(r => setTimeout(r, 3000));
         }
       }
     }

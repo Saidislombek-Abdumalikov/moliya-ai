@@ -47,7 +47,6 @@ interface FinanceContextType {
   addTransaction: (tx: Omit<Transaction, 'id' | 'date'> & { id?: string | number; date?: string; messageId?: string | number }) => Promise<void>
   deleteTransaction: (id: string | number) => Promise<void>
   clearAllData: () => Promise<void>
-  dateRange: { start: Date; end: Date }
   setDateRange: (range: { start: Date; end: Date }) => void
   startTelegramLogin: (onVerified?: () => void) => Promise<{ requestId: string; cancel: () => void }>
 }
@@ -214,35 +213,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           }
         }
 
-        // 3. Check for ?req=<requestId> in URL from Telegram Bot backup link
-        const urlParams = new URLSearchParams(window.location.search);
-        const reqParam = urlParams.get('req');
-        if (reqParam && reqParam.length >= 8) {
-          try {
-            const res = await fetch(`/api/auth/check-login-request?requestId=${reqParam}`);
-            if (res.ok) {
-              const data = await res.json();
-              if (data.status === 'VERIFIED' && data.userId && data.sessionToken) {
-                setUserId(data.userId);
-                localStorage.setItem('user_id_v1', data.userId);
-                localStorage.setItem('user_session_token_v1', data.sessionToken);
-                localStorage.setItem('user_logged_in_v1', 'true');
-                if (data.onboarding) {
-                  setOnboarding(data.onboarding);
-                  localStorage.setItem('user_onboarding_v1', JSON.stringify(data.onboarding));
-                }
-                // Clean up ?req from address bar cleanly
-                window.history.replaceState({}, document.title, window.location.pathname);
-                setIsAuthReady(true);
-                return;
-              }
-            }
-          } catch (err) {
-            console.error('URL req verification error:', err);
-          }
-        }
-
-        // 4. Unauthenticated state — check if existing local profile exists
+        // 3. Unauthenticated state — check if existing local profile exists
         const savedUserId = localStorage.getItem('user_id_v1');
         if (savedUserId && localStorage.getItem('user_logged_in_v1') === 'true') {
           setUserId(savedUserId);
@@ -262,29 +233,24 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       ? crypto.randomUUID()
       : 'req_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 
-    const nativeTelegramUrl = `tg://resolve?domain=moliya_v2bot&start=req_${requestId}`;
-    const webTelegramUrl = `https://t.me/moliya_v2bot?start=req_${requestId}`;
-
-    // 1. Open Native Telegram App directly (0ms launch, no web page waiting)
+    // 1. Register UUID with backend
     try {
-      window.location.href = nativeTelegramUrl;
-    } catch {
-      window.location.href = webTelegramUrl;
+      await fetch('/api/auth/create-login-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId }),
+      });
+    } catch (e) {
+      console.error('Failed to register login request with backend:', e);
     }
 
-    // Fallback to web link if native app handler didn't switch windows within 800ms
-    setTimeout(() => {
-      if (document.hasFocus()) {
-        window.location.href = webTelegramUrl;
-      }
-    }, 800);
-
-    // 2. Register UUID with backend in parallel background request
-    fetch('/api/auth/create-login-request', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ requestId }),
-    }).catch(e => console.error('Failed to register login request:', e));
+    // 2. Open Telegram Bot with request parameter
+    const botUrl = `https://t.me/moliya_v2bot?start=req_${requestId}`;
+    try {
+      window.location.href = botUrl;
+    } catch {
+      window.open(botUrl, '_blank');
+    }
 
     // 3. Start Auto-Polling backend for verification
     let intervalId: any = null;
@@ -385,10 +351,15 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const deleteTransaction = async (id: string | number) => {
     try {
       const idStr = String(id)
-      setCustomTransactions(prev => prev.filter(t => String(t.id) !== idStr))
+      const updated = Array.from(new Set([...deletedTxIds, idStr]))
+      setDeletedTxIds(updated)
+      localStorage.setItem('user_deleted_tx_ids_v1', JSON.stringify(updated))
 
       if (userId) {
-        const customTxRef = doc(db, 'users', userId, 'transactions', idStr)
+        const userDocRef = doc(db, 'users', userId!)
+        await setDoc(userDocRef, { deletedTxIds: updated }, { merge: true })
+
+        const customTxRef = doc(db, 'users', userId!, 'transactions', idStr)
         await deleteDoc(customTxRef)
       }
     } catch (e) {
@@ -399,25 +370,25 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   // Subcollection query for transactions
   useEffect(() => {
     if (!userId || !isAuthReady) return
-    const txRef = collection(db, 'users', userId, 'transactions')
-    const q = query(
-      txRef,
-      orderBy('date', 'desc'),
-      limit(200)
-    )
+      const txRef = collection(db, 'users', userId!, 'transactions')
+      const q = query(
+        txRef,
+        orderBy('date', 'desc'),
+        limit(1000)
+      )
 
-    const unsubscribeTx = onSnapshot(q, (snap: any) => {
-      const txs: Transaction[] = []
-      snap.forEach((doc: any) => txs.push({ id: doc.id, ...doc.data() } as Transaction))
-      setCustomTransactions(txs)
-      localStorage.setItem('user_transactions_v1', JSON.stringify(txs))
-      window.dispatchEvent(new Event('user_transactions_updated'))
-    }, (err: any) => {
-      console.error('Transactions listener error:', err)
-    })
+      const unsubscribeTx = onSnapshot(q, (snap: any) => {
+        const txs: Transaction[] = []
+        snap.forEach((doc: any) => txs.push({ id: doc.id, ...doc.data() } as Transaction))
+        setCustomTransactions(txs)
+        localStorage.setItem('user_transactions_v1', JSON.stringify(txs))
+        window.dispatchEvent(new Event('user_transactions_updated'))
+      }, (err: any) => {
+        console.error('Transactions listener error:', err)
+      })
 
-    return () => unsubscribeTx()
-  }, [userId, isAuthReady])
+      return () => unsubscribeTx()
+  }, [userId, dateRange, isAuthReady])
 
 
   // Context Functions
@@ -566,7 +537,6 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         addTransaction,
         deleteTransaction,
         clearAllData,
-        dateRange,
         setDateRange,
         startTelegramLogin,
       }}

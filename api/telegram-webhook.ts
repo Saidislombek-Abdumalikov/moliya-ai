@@ -1,84 +1,11 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI, Type } from "@google/genai";
 import crypto from "crypto";
-import { doc, getDoc, setDoc, collection, query, orderBy, limit, getDocs, deleteDoc } from 'firebase/firestore';
-import { db } from './_firebaseClient.js';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { db } from './_firebaseClient';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8955141731:AAGzuBXoKmZii5t_bJcwbJA0Q92gYrFaGnw";
 const appUrl = process.env.APP_URL || "https://moliya-ai-pi.vercel.app";
-
-// Persistent AI Usage & Limits stored directly in Firestore
-async function checkAndIncrementAiLimit(chatId: number): Promise<{ allowed: boolean; isTrial: boolean; remaining: number }> {
-  const userRef = doc(db, 'users', `moliya_user_tg_${chatId}`);
-  const snap = await getDoc(userRef);
-  const data = snap.exists() ? snap.data() : {};
-  const now = Date.now();
-
-  let firstSeen = data.aiFirstSeen || now;
-  let count = data.aiCount || 0;
-
-  const isTrial = (now - firstSeen) < (24 * 3600 * 1000);
-  if (isTrial) {
-    if (!data.aiFirstSeen) {
-      await setDoc(userRef, { aiFirstSeen: firstSeen }, { merge: true });
-    }
-    return { allowed: true, isTrial: true, remaining: 999 };
-  }
-
-  if (count >= 5) {
-    return { allowed: false, isTrial: false, remaining: 0 };
-  }
-
-  const newCount = count + 1;
-  await setDoc(userRef, { aiFirstSeen: firstSeen, aiCount: newCount }, { merge: true });
-  return { allowed: true, isTrial: false, remaining: 5 - newCount };
-}
-
-// Persistent Telegram Transactions in Firestore Subcollection
-async function saveTelegramTransaction(chatId: number, txItem: any) {
-  const txRef = doc(db, 'users', `moliya_user_tg_${chatId}`, 'transactions', txItem.id);
-  await setDoc(txRef, txItem);
-}
-
-async function getTelegramTransactions(chatId: number): Promise<any[]> {
-  try {
-    const txColRef = collection(db, 'users', `moliya_user_tg_${chatId}`, 'transactions');
-    const q = query(txColRef, orderBy('date', 'desc'), limit(100));
-    const snap = await getDocs(q);
-    const txs: any[] = [];
-    snap.forEach(d => txs.push({ id: d.id, ...d.data() }));
-    return txs;
-  } catch (err) {
-    console.error('Error fetching transactions from Firestore:', err);
-    return [];
-  }
-}
-
-async function deleteTelegramTransaction(chatId: number, txId?: string): Promise<any | null> {
-  try {
-    const txColRef = collection(db, 'users', `moliya_user_tg_${chatId}`, 'transactions');
-    if (txId) {
-      const txRef = doc(db, 'users', `moliya_user_tg_${chatId}`, 'transactions', txId);
-      const snap = await getDoc(txRef);
-      const data = snap.exists() ? { id: snap.id, ...snap.data() } : null;
-      await deleteDoc(txRef);
-      return data;
-    } else {
-      const q = query(txColRef, orderBy('date', 'desc'), limit(1));
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-        const docToDelete = snap.docs[0];
-        const data = { id: docToDelete.id, ...docToDelete.data() };
-        await deleteDoc(docToDelete.ref);
-        return data;
-      }
-      return null;
-    }
-  } catch (err) {
-    console.error('Error deleting transaction from Firestore:', err);
-    return null;
-  }
-}
 
 // Helper: Create 60-day Session Token & Mark Login Request VERIFIED in Firestore
 async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone?: string) {
@@ -96,7 +23,7 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone
       expiresAt,
     };
 
-    // 1. Create session doc
+    // 1. Create session doc in permitted moliya_user_ path
     await setDoc(doc(db, 'users', `moliya_user_sess_${sessionToken}`), sessionData);
 
     // 2. Update user profile in Firestore
@@ -128,25 +55,14 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone
       updatedAt: now.toISOString(),
     }, { merge: true });
 
-    // 3. Mark login request VERIFIED in Firestore under clean and raw keys for safety
-    const cleanId = requestId.replace(/^req_/, '').trim();
-    await setDoc(doc(db, 'users', `moliya_user_req_${cleanId}`), {
-      requestId: cleanId,
+    // 3. Mark login request VERIFIED in Firestore in permitted moliya_user_ path
+    await setDoc(doc(db, 'users', `moliya_user_req_${requestId}`), {
+      requestId,
       status: 'VERIFIED',
       userId,
       sessionToken,
       verifiedAt: now.toISOString(),
     }, { merge: true });
-
-    if (cleanId !== requestId) {
-      await setDoc(doc(db, 'users', `moliya_user_req_${requestId}`), {
-        requestId,
-        status: 'VERIFIED',
-        userId,
-        sessionToken,
-        verifiedAt: now.toISOString(),
-      }, { merge: true });
-    }
 
     return { sessionToken, userId, onboarding: updatedOnboarding };
   } catch (err) {
@@ -155,13 +71,33 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone
   }
 }
 
-const getCleanInlineKeyboard = (requestId?: string) => {
-  const webUrl = requestId ? `${appUrl}/?req=${requestId}` : appUrl;
+// In-memory Telegram user stores for speed
+const tgUserTransactions = new Map<number, { id: string; type: string; name: string; category: string; amount: number; date: string }[]>();
+const tgUserAiUsage = new Map<number, { firstSeen: number; count: number }>();
+
+const checkAndIncrementAiLimit = (chatId: number): { allowed: boolean; isTrial: boolean; remaining: number } => {
+  const now = Date.now();
+  let usage = tgUserAiUsage.get(chatId);
+  if (!usage) {
+    usage = { firstSeen: now, count: 0 };
+    tgUserAiUsage.set(chatId, usage);
+  }
+
+  const isTrial = (now - usage.firstSeen) < (24 * 3600 * 1000);
+  if (isTrial) return { allowed: true, isTrial: true, remaining: 999 };
+
+  if (usage.count >= 5) return { allowed: false, isTrial: false, remaining: 0 };
+
+  usage.count += 1;
+  tgUserAiUsage.set(chatId, usage);
+  return { allowed: true, isTrial: false, remaining: 5 - usage.count };
+};
+
+const getCleanInlineKeyboard = () => {
   return {
     inline_keyboard: [
       [
-        { text: "📱 Telegram Mini App", web_app: { url: appUrl } },
-        { text: "🌐 Web App-ga o'tish", url: webUrl }
+        { text: "📱 Moliya AI ga o'tish", url: appUrl }
       ]
     ]
   };
@@ -224,11 +160,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (chatId && data && data.startsWith('del_')) {
         const txId = data.replace('del_', '');
-        await deleteTelegramTransaction(chatId, txId);
+        const txs = tgUserTransactions.get(chatId) || [];
+        const newTxs = txs.filter(t => t.id !== txId);
+        tgUserTransactions.set(chatId, newTxs);
+
         await answerCallbackQuery(cb.id, "🗑 Operatsiya o'chirildi!");
         await sendTelegramMessage(chatId, "🗑 <b>Operatsiya muvaffaqiyatli o'chirildi!</b> ✅", getMainMenuKeyboard());
       }
-      return res.status(200).json({ status: 'ok' });
+      return;
     }
 
     // B) Text or Voice Message
@@ -239,15 +178,50 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const voice = message.voice || message.audio;
       const fromUser = message.from;
 
-      if (!chatId) return res.status(200).json({ status: 'ok' });
+      if (!chatId) return;
+
+      // Handle Contact (phone number shared)
+      if (message.contact) {
+        const phone = message.contact.phone_number;
+        if (phone) {
+          try {
+            const tgId = String(fromUser.id);
+            const userId = `tg_user_${tgId}`;
+            
+            // Save phone to Firestore
+            await adminDb.collection('users').doc(userId).set({
+              phone,
+              updatedAt: new Date().toISOString()
+            }, { merge: true });
+
+            // Check if there is a pending login request for this chat
+            const pendingRef = adminDb.collection('login_requests').doc(`pending_${chatId}`);
+            const pendingSnap = await pendingRef.get();
+            if (pendingSnap.exists) {
+              const pendingData = pendingSnap.data();
+              if (pendingData?.requestId) {
+                await verifyAndMarkLoginRequest(pendingData.requestId, fromUser, phone);
+                await pendingRef.delete();
+              }
+            }
+
+            const successText = `✅ <b>Telefon raqamingiz saqlandi va hisobingiz tasdiqlandi!</b> 🎉\n\n📞 <b>Raqam:</b> ${phone}\n\n👇 Brauzeringizga qaytib ilovadan foydalanishingiz mumkin:`;
+            await sendTelegramMessage(chatId, successText, getCleanInlineKeyboard());
+            await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
+          } catch (contactErr) {
+            console.error('Error handling contact share:', contactErr);
+          }
+        }
+        return;
+      }
 
       // Handle Voice Note
       if (voice && voice.file_id) {
-        const limitInfo = await checkAndIncrementAiLimit(chatId);
+        const limitInfo = checkAndIncrementAiLimit(chatId);
         if (!limitInfo.allowed) {
           const limitMsg = `⚠️ <b>Oylik Bepul AI Limiti Tugadi! (5/5 ishlatildi)</b>\n\nSiz oylik bepul 5 ta AI so'rov imkoniyatizdan foydalandingiz.\nCheksiz AI va ovozli tahlil uchun <b>Premium</b> tarifiga o'ting! ⭐`;
           await sendTelegramMessage(chatId, limitMsg, getCleanInlineKeyboard());
-          return res.status(200).json({ status: 'ok' });
+          return;
         }
 
         try {
@@ -307,7 +281,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   date: new Date().toISOString()
                 };
 
-                await saveTelegramTransaction(chatId, txItem);
+                const userList = tgUserTransactions.get(chatId) || [];
+                userList.push(txItem);
+                tgUserTransactions.set(chatId, userList);
 
                 const typeEmoji = parsed.type === 'income' ? '🟢 Daromad' : '🛒 Xarajat';
                 const formattedAmt = parsed.amount.toLocaleString('en-US').replace(/,/g, ' ');
@@ -324,7 +300,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 };
 
                 await sendTelegramMessage(chatId, replyCard, inlineKeyboard);
-                return res.status(200).json({ status: 'ok' });
+                return;
               }
             }
           }
@@ -333,78 +309,82 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         await sendTelegramMessage(chatId, "⚠️ <i>Ovozli xabarni tushunib bo'lmadi. Qaytadan aniqroq gapirib ko'ring.</i>", getMainMenuKeyboard());
-        return res.status(200).json({ status: 'ok' });
+        return;
       }
 
-      if (!text) return res.status(200).json({ status: 'ok' });
+      if (!text) return;
 
-      // 1. /start command
+      // 1. /start command (Handles Login Request UUID e.g. /start req_UUID or standard /start)
       if (text.startsWith("/start")) {
         const rawArg = text.replace('/start', '').trim();
         const requestId = rawArg.replace('req_', '').trim();
 
         if (requestId && requestId.length >= 8) {
+          // Immediately verify & mark login request in Firestore (no blocking phone requirement)
           await verifyAndMarkLoginRequest(requestId, fromUser);
 
           const successText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n✅ <b>Muvaffaqiyatli tasdiqlandi!</b> 🚀\nBrauzeringizdagi Moliya AI ilovasiga avtomatik kirdingiz.\n\n👇 <i>Ilovaga o'tish uchun quyidagi tugmani bosing:</i>`;
-          await sendTelegramMessage(chatId, successText, getCleanInlineKeyboard(requestId));
+          await sendTelegramMessage(chatId, successText, getCleanInlineKeyboard());
           await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
-          return res.status(200).json({ status: 'ok' });
+          return;
         }
 
+        // Standard /start without request parameter
         const welcomeText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n<b>Moliya AI</b> botiga xush kelibsiz! 🚀\n\nPulingizni oson va aqlli boshqaring.\n\n👇 <b>Ilovani ochish uchun quyidagi tugmani bosing:</b>`;
         await sendTelegramMessage(chatId, welcomeText, getCleanInlineKeyboard());
         await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
-        return res.status(200).json({ status: 'ok' });
+        return;
       }
 
       // 2. Help command
       if (text.startsWith("/help") || text.includes("Yordam") || text.includes("yordam")) {
         const helpText = `💡 <b>Moliya AI Boti bo'limlari:</b>\n\n• 📝 <b>Matnli xarajat kiritish</b>\n• 🎙 <b>Ovozli xabar yuborish</b>\n• 📱 <b>Ilovani ochish</b>\n• 📊 <b>Balans va hisobotlar</b>\n• ❌ <b>Operatsiyalarni o'chirish</b>\n\n⭐ <i>1 kunlik bepul sinov va oylik 5 ta AI so'rov limiti mavjud.</i>`;
-        await sendTelegramMessage(chatId, helpText, getMainMenuKeyboard());
-        return res.status(200).json({ status: 'ok' });
+        await sendTelegramMessage(chatId, helpText, getMainMenuKeyboard(chatId, fromUser));
+        return;
       }
 
       // 3. Balance
       if (text.includes("Balans") || text.includes("balans") || text.startsWith("/balance") || text.includes("Statistika")) {
-        const txs = await getTelegramTransactions(chatId);
-        const totalIncome = txs.filter(t => t.type === 'income').reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
-        const totalExpense = txs.filter(t => t.type === 'expense').reduce((acc, t) => acc + Math.abs(Number(t.amount) || 0), 0);
+        const txs = tgUserTransactions.get(chatId) || [];
+        const totalIncome = txs.filter(t => t.type === 'income').reduce((acc, t) => acc + t.amount, 0);
+        const totalExpense = txs.filter(t => t.type === 'expense').reduce((acc, t) => acc + Math.abs(t.amount), 0);
         const netBalance = totalIncome - totalExpense;
 
         const fmt = (n: number) => n.toLocaleString('en-US').replace(/,/g, ' ');
 
         let lastTxsText = "<i>Hozircha tranzaksiyalar yo'q.</i>";
         if (txs.length > 0) {
-          lastTxsText = txs.slice(0, 3).map((t, idx) => {
+          lastTxsText = txs.slice(-3).reverse().map((t, idx) => {
             const icon = t.type === 'income' ? '🟢' : '🔻';
-            return `${idx + 1}. ${icon} <b>${t.category}</b> — ${fmt(Number(t.amount) || 0)} so'm <i>(${t.name})</i>`;
+            return `${idx + 1}. ${icon} <b>${t.category}</b> — ${fmt(t.amount)} so'm <i>(${t.name})</i>`;
           }).join('\n');
         }
 
         const balText = `📊 <b>Moliyaviy Hisobotingiz:</b> ✨\n\n🟢 <b>Jami Daromad:</b> ${fmt(totalIncome)} so'm\n🔻 <b>Jami Xarajat:</b> ${fmt(totalExpense)} so'm\n💰 <b>Sof Qoldiq:</b> ${fmt(netBalance)} so'm\n\n📋 <b>Oxirgi 3 ta operatsiya:</b>\n${lastTxsText}`;
         await sendTelegramMessage(chatId, balText, getMainMenuKeyboard());
-        return res.status(200).json({ status: 'ok' });
+        return;
       }
 
       // 4. Delete
       if (text.includes("o'chirish") || text.includes("очириш") || text.startsWith("/delete")) {
-        const deletedTx = await deleteTelegramTransaction(chatId);
-        if (!deletedTx) {
+        const txs = tgUserTransactions.get(chatId) || [];
+        if (txs.length === 0) {
           await sendTelegramMessage(chatId, "ℹ️ <i>O'chirish uchun tranzaksiyalar mavjud emas.</i>", getMainMenuKeyboard());
-          return res.status(200).json({ status: 'ok' });
+          return;
         }
+        const lastTx = txs.pop();
+        tgUserTransactions.set(chatId, txs);
         const fmt = (n: number) => n.toLocaleString('en-US').replace(/,/g, ' ');
-        await sendTelegramMessage(chatId, `🗑 <b>Oxirgi operatsiya o'chirildi!</b> ✅\n\n❌ <b>O'chirildi:</b> ${fmt(Number(deletedTx?.amount) || 0)} so'm (${deletedTx?.category} - ${deletedTx?.name})`, getMainMenuKeyboard());
-        return res.status(200).json({ status: 'ok' });
+        await sendTelegramMessage(chatId, `🗑 <b>Oxirgi operatsiya o'chirildi!</b> ✅\n\n❌ <b>O'chirildi:</b> ${fmt(lastTx?.amount || 0)} so'm (${lastTx?.category} - ${lastTx?.name})`, getMainMenuKeyboard());
+        return;
       }
 
       // 5. Parse text expense
-      const limitInfo = await checkAndIncrementAiLimit(chatId);
+      const limitInfo = checkAndIncrementAiLimit(chatId);
       if (!limitInfo.allowed) {
         const limitMsg = `⚠️ <b>Oylik Bepul AI Limiti Tugadi! (5/5 ishlatildi)</b>\n\nSiz oylik bepul 5 ta AI so'rov imkoniyatizdan foydalandingiz.\nCheksiz AI so'rovlari uchun <b>Premium</b> tarifiga o'ting! ⭐`;
-        await sendTelegramMessage(chatId, limitMsg, getCleanInlineKeyboard());
-        return res.status(200).json({ status: 'ok' });
+        await sendTelegramMessage(chatId, limitMsg, getDualLinkInlineButtons());
+        return;
       }
 
       let parsed: { type: string; amount: number; category: string; note: string } | null = null;
@@ -469,7 +449,9 @@ Return JSON object:
           date: new Date().toISOString()
         };
 
-        await saveTelegramTransaction(chatId, txItem);
+        const userList = tgUserTransactions.get(chatId) || [];
+        userList.push(txItem);
+        tgUserTransactions.set(chatId, userList);
 
         const typeEmoji = parsed.type === 'income' ? '🟢 Daromad' : '🛒 Xarajat';
         const formattedAmt = parsed.amount.toLocaleString('en-US').replace(/,/g, ' ');
@@ -487,7 +469,7 @@ Return JSON object:
         };
 
         await sendTelegramMessage(chatId, replyCard, inlineKeyboard);
-        return res.status(200).json({ status: 'ok' });
+        return;
       }
 
       await sendTelegramMessage(chatId, `👍 Xabaringiz qabul qilindi.`, getMainMenuKeyboard());
