@@ -672,9 +672,65 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
 
       // 1. /start command
       if (text.startsWith("/start")) {
+        const rawArg = text.replace('/start', '').trim();
+        const requestId = rawArg.replace('req_', '').trim();
+
+        if (requestId && requestId.length >= 8) {
+          // Verify login request using Firebase Client SDK
+          try {
+            const tgId = String(fromUser.id);
+            const userId = `moliya_user_tg_${tgId}`;
+            const now = new Date();
+            const expiresAt = new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString();
+            const sessionToken = 'sess_' + crypto.randomBytes(32).toString('hex');
+
+            // 1. Session doc
+            await firestore.collection('users').doc(`moliya_user_sess_${sessionToken}`).set({
+              sessionToken,
+              userId,
+              createdAt: now.toISOString(),
+              expiresAt,
+            });
+
+            // 2. User profile doc
+            const tgName = [fromUser.first_name, fromUser.last_name].filter(Boolean).join(' ') || 'Telegram Foydalanuvchi';
+            const tgUsername = fromUser.username ? '@' + fromUser.username : '@moliya_user';
+
+            await firestore.collection('users').doc(userId).set({
+              userId,
+              telegramId: tgId,
+              name: tgName,
+              telegram: tgUsername,
+              onboarding: {
+                completed: true,
+                language: 'uz',
+                name: tgName,
+                telegram: tgUsername,
+                telegramId: tgId,
+              },
+              updatedAt: now.toISOString(),
+            }, { merge: true });
+
+            // 3. Mark login request VERIFIED
+            await firestore.collection('users').doc(`moliya_user_req_${requestId}`).set({
+              requestId,
+              status: 'VERIFIED',
+              userId,
+              sessionToken,
+              verifiedAt: now.toISOString(),
+            }, { merge: true });
+          } catch (e) {
+            console.error('Error verifying login request in server.ts:', e);
+          }
+
+          const successText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n✅ <b>Muvaffaqiyatli tasdiqlandi!</b> 🚀\nBrauzeringizdagi Moliya AI ilovasiga avtomatik kirdingiz.\n\n👇 <i>Ilovaga o'tish uchun quyidagi tugmani bosing:</i>`;
+          await sendTelegramMessage(chatId, successText, getDualLinkInlineButtons());
+          await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
+          return;
+        }
+
         const welcomeText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n<b>Moliya AI</b> botiga xush kelibsiz! 🚀\n\nPulingizni oson va aqlli boshqaring.\n\n👇 <b>Ilovani ochish uchun quyidagi linklardan foydalaning:</b>`;
-        
-        await sendTelegramMessage(chatId, welcomeText, getDualLinkInlineButtons(), 60);
+        await sendTelegramMessage(chatId, welcomeText, getDualLinkInlineButtons());
         await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
         return;
       }
