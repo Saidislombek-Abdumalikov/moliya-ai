@@ -476,9 +476,9 @@ const getMainMenuKeyboard = () => {
   };
 };
 
-async function sendTelegramMessage(chatId: number | string, text: string, replyMarkup?: any) {
+async function sendTelegramMessage(chatId: number | string, text: string, replyMarkup?: any): Promise<number | null> {
   try {
-    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -488,9 +488,14 @@ async function sendTelegramMessage(chatId: number | string, text: string, replyM
         reply_markup: replyMarkup
       })
     });
+    const data = await res.json();
+    if (data.ok && data.result?.message_id) {
+      return data.result.message_id;
+    }
   } catch (err) {
     console.error('Failed to send Telegram message:', err);
   }
+  return null;
 }
 
 async function editTelegramMessage(chatId: number | string, messageId: number, text: string, replyMarkup?: any) {
@@ -1023,8 +1028,9 @@ async function setBotCommands() {
           return res.status(200).json({ status: 'ok' });
         }
 
+        let statusMsgId: number | null = null;
         try {
-          await sendTelegramMessage(chatId, "🎙 <i>Ovozli xabar tahlil qilinmoqda (Gemini AI)...</i>");
+          statusMsgId = await sendTelegramMessage(chatId, "🎙 <i>Ovozli xabar tahlil qilinmoqda (Moliya AI)...</i>");
 
           const fileRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${voice.file_id}`);
           const fileData = await fileRes.json();
@@ -1112,7 +1118,11 @@ async function setBotCommands() {
 
                 await savePendingDraftTx(fromUser, draftTx);
                 const card = await renderRichTransactionCard(fromUser, draftTx, true);
-                await sendTelegramMessage(chatId, card.text, card.inlineKeyboard);
+                if (statusMsgId) {
+                  await editTelegramMessage(chatId, statusMsgId, card.text, card.inlineKeyboard);
+                } else {
+                  await sendTelegramMessage(chatId, card.text, card.inlineKeyboard);
+                }
                 return res.status(200).json({ status: 'ok' });
               }
             }
@@ -1121,7 +1131,12 @@ async function setBotCommands() {
           console.error("Voice processing error:", voiceErr);
         }
 
-        await sendTelegramMessage(chatId, "⚠️ <i>Ovozli xabarni tushunib bo'lmadi. Qaytadan aniqroq gapirib ko'ring.</i>", getMainMenuKeyboard());
+        const failText = "⚠️ <i>Ovozli xabarni tushunib bo'lmadi. Qaytadan aniqroq gapirib ko'ring (Masalan: \"Taksi uchun 25000 so'm ishlatdim\").</i>";
+        if (statusMsgId) {
+          await editTelegramMessage(chatId, statusMsgId, failText, getMainMenuKeyboard());
+        } else {
+          await sendTelegramMessage(chatId, failText, getMainMenuKeyboard());
+        }
         return res.status(200).json({ status: 'ok' });
       }
 
