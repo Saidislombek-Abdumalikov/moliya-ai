@@ -229,13 +229,104 @@ async function sendTelegramDocument(chatId: number | string, fileBuffer: Buffer,
   }
 }
 
+async function savePendingDraftTx(fromUser: any, draftTx: any) {
+  try {
+    const tgId = String(fromUser?.id);
+    if (!tgId) return null;
+    const userId = `moliya_user_tg_${tgId}`;
+    const draftRef = doc(db, 'users', userId, 'pending_txs', draftTx.id);
+    await setDoc(draftRef, draftTx, { merge: true });
+    return draftTx;
+  } catch (e) {
+    console.error('Error saving pending draft tx:', e);
+    return null;
+  }
+}
+
+async function getPendingDraftTx(fromUser: any, txId: string) {
+  try {
+    const tgId = String(fromUser?.id);
+    if (!tgId) return null;
+    const userId = `moliya_user_tg_${tgId}`;
+    const draftRef = doc(db, 'users', userId, 'pending_txs', txId);
+    const snap = await getDoc(draftRef);
+    if (snap.exists()) return snap.data();
+  } catch (e) {
+    console.error('Error fetching pending draft tx:', e);
+  }
+  return null;
+}
+
+async function confirmPendingDraftTx(fromUser: any, txId: string) {
+  try {
+    const tgId = String(fromUser?.id);
+    if (!tgId) return null;
+    const userId = `moliya_user_tg_${tgId}`;
+    const draftRef = doc(db, 'users', userId, 'pending_txs', txId);
+    const snap = await getDoc(draftRef);
+    if (snap.exists()) {
+      const draftData = snap.data();
+      await saveBotTransaction(fromUser, {
+        id: draftData.id,
+        type: draftData.type,
+        name: draftData.name || draftData.note,
+        category: draftData.category,
+        amount: draftData.amount,
+        date: draftData.date || new Date().toISOString()
+      });
+      await deleteDoc(draftRef);
+      return draftData;
+    }
+  } catch (e) {
+    console.error('Error confirming pending draft tx:', e);
+  }
+  return null;
+}
+
+async function cancelPendingDraftTx(fromUser: any, txId: string) {
+  try {
+    const tgId = String(fromUser?.id);
+    if (!tgId) return null;
+    const userId = `moliya_user_tg_${tgId}`;
+    const draftRef = doc(db, 'users', userId, 'pending_txs', txId);
+    await deleteDoc(draftRef);
+    return true;
+  } catch (e) {
+    console.error('Error cancelling pending draft tx:', e);
+  }
+  return false;
+}
+
+function renderConfirmationCard(draftTx: any) {
+  const typeEmoji = draftTx.type === 'income' ? '🟢 Daromad' : '🛒 Xarajat';
+  const fmtAmt = Math.abs(draftTx.amount || 0).toLocaleString('en-US').replace(/,/g, ' ');
+
+  const text = `❓ <b>Ushbu operatsiyani saqlaymizmi?</b> 🤔\n\n` +
+    `📌 <b>Turi:</b> ${typeEmoji}\n` +
+    `💵 <b>Summa:</b> ${fmtAmt} so'm\n` +
+    `📂 <b>Kategoriya:</b> ${draftTx.category || 'Boshqa'}\n` +
+    `📝 <b>Izoh:</b> ${draftTx.name || draftTx.note || 'Operatsiya'}`;
+
+  const inlineKeyboard = {
+    inline_keyboard: [
+      [
+        { text: "✅ Saqlash", callback_data: `tx_confirm_${draftTx.id}` },
+        { text: "✏️ Tahrirlash", callback_data: `tx_edit_${draftTx.id}` },
+        { text: "❌ Bekor qilish", callback_data: `tx_cancel_${draftTx.id}` }
+      ]
+    ]
+  };
+
+  return { text, inlineKeyboard };
+}
+
 const getMainMenuKeyboard = () => {
   return {
     keyboard: [
-      [{ text: "📱 Telegram Mini App", web_app: { url: appUrl } }, { text: "🌐 Web App", url: appUrl }],
-      [{ text: "📊 Balans va Hisobot" }, { text: "📈 Kategoriyalar va Byudjet" }],
-      [{ text: "📥 Eksport (Excel/CSV)" }, { text: "⏰ Eslatmalar" }],
-      [{ text: "❌ Oxirgi operatsiyani o'chirish" }, { text: "💡 Yordam" }]
+      [{ text: "📱 Mini App", web_app: { url: appUrl } }, { text: "🌐 Web App", url: appUrl }],
+      [{ text: "📊 Balans & Hisobot" }, { text: "🎯 Byudjet & Limitlar" }],
+      [{ text: "🧾 Chek Skanner" }, { text: "📥 Eksport" }],
+      [{ text: "💡 Yordam" }]
     ],
     resize_keyboard: true
   };
@@ -399,7 +490,118 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const chatId = cb.message?.chat?.id;
       const data = cb.data;
 
-      if (chatId && data && data.startsWith('del_')) {
+      if (chatId && data && data.startsWith('tx_confirm_')) {
+        const txId = data.replace('tx_confirm_', '');
+        const confirmed = await confirmPendingDraftTx(cb.from, txId);
+        if (confirmed) {
+          await answerCallbackQuery(cb.id, "✅ Operatsiya saqlandi!");
+          const typeEmoji = confirmed.type === 'income' ? '🟢 Daromad' : '🛒 Xarajat';
+          const fmtAmt = Math.abs(confirmed.amount || 0).toLocaleString('en-US').replace(/,/g, ' ');
+          const cardText = `✅ <b>Operatsiya saqlandi!</b> 🌟\n\n📌 <b>Turi:</b> ${typeEmoji}\n💵 <b>Summa:</b> ${fmtAmt} so'm\n📂 <b>Kategoriya:</b> ${confirmed.category || 'Boshqa'}\n📝 <b>Izoh:</b> ${confirmed.name || confirmed.note || 'Operatsiya'}`;
+          const inlineKeyboard = {
+            inline_keyboard: [
+              [
+                { text: "❌ Operatsiyani o'chirish", callback_data: `del_${txId}` },
+                { text: "📱 Mini App", web_app: { url: appUrl } }
+              ]
+            ]
+          };
+          if (cb.message?.message_id) {
+            await editTelegramMessage(chatId, cb.message.message_id, cardText, inlineKeyboard);
+          } else {
+            await sendTelegramMessage(chatId, cardText, inlineKeyboard);
+          }
+        } else {
+          await answerCallbackQuery(cb.id, "⚠️ Operatsiya topilmadi!");
+        }
+      } else if (chatId && data && data.startsWith('tx_cancel_')) {
+        const txId = data.replace('tx_cancel_', '');
+        await cancelPendingDraftTx(cb.from, txId);
+        await answerCallbackQuery(cb.id, "❌ Operatsiya bekor qilindi!");
+        const cancelMsg = "❌ <b>Operatsiya bekor qilindi.</b> <i>(Tizimga saqlanmadi)</i>";
+        if (cb.message?.message_id) {
+          await editTelegramMessage(chatId, cb.message.message_id, cancelMsg, undefined);
+        } else {
+          await sendTelegramMessage(chatId, cancelMsg);
+        }
+      } else if (chatId && data && data.startsWith('tx_edit_')) {
+        const txId = data.replace('tx_edit_', '');
+        const draft = await getPendingDraftTx(cb.from, txId);
+        if (draft) {
+          const typeEmoji = draft.type === 'income' ? '🟢 Daromad' : '🛒 Xarajat';
+          const editMsg = `✏️ <b>Operatsiyani tahrirlash:</b>\n\n📌 <b>Hozirgi tur:</b> ${typeEmoji}\n📂 <b>Hozirgi kategoriya:</b> ${draft.category}`;
+          const inlineKeyboard = {
+            inline_keyboard: [
+              [
+                { text: draft.type === 'income' ? "🔄 Xarajatga o'tkazish" : "🔄 Daromadga o'tkazish", callback_data: `tx_toggle_type_${txId}` }
+              ],
+              [
+                { text: "📂 Kategoriyani tanlash", callback_data: `tx_edit_cat_${txId}` }
+              ],
+              [
+                { text: "✅ Saqlash (Tayyor)", callback_data: `tx_confirm_${txId}` },
+                { text: "❌ Bekor qilish", callback_data: `tx_cancel_${txId}` }
+              ]
+            ]
+          };
+          await answerCallbackQuery(cb.id, "✏️ Tahrirlash rejimi");
+          if (cb.message?.message_id) {
+            await editTelegramMessage(chatId, cb.message.message_id, editMsg, inlineKeyboard);
+          }
+        }
+      } else if (chatId && data && data.startsWith('tx_toggle_type_')) {
+        const txId = data.replace('tx_toggle_type_', '');
+        const draft = await getPendingDraftTx(cb.from, txId);
+        if (draft) {
+          const newType = draft.type === 'income' ? 'expense' : 'income';
+          draft.type = newType;
+          await savePendingDraftTx(cb.from, draft);
+          await answerCallbackQuery(cb.id, `🔄 Tur o'zgartirildi: ${newType === 'income' ? 'Daromad' : 'Xarajat'}`);
+          const card = renderConfirmationCard(draft);
+          if (cb.message?.message_id) {
+            await editTelegramMessage(chatId, cb.message.message_id, card.text, card.inlineKeyboard);
+          }
+        }
+      } else if (chatId && data && data.startsWith('tx_edit_cat_')) {
+        const txId = data.replace('tx_edit_cat_', '');
+        const catMsg = "📂 <b>Qaysi kategoriyaga o'zgartirmoqchisiz?</b>";
+        const inlineKeyboard = {
+          inline_keyboard: [
+            [
+              { text: "🛒 Oziq-ovqat", callback_data: `tx_save_cat_${txId}_Oziq-ovqat` },
+              { text: "🚕 Transport", callback_data: `tx_save_cat_${txId}_Transport` }
+            ],
+            [
+              { text: "👕 Kiyim", callback_data: `tx_save_cat_${txId}_Kiyim` },
+              { text: "💡 Kommunal", callback_data: `tx_save_cat_${txId}_Kommunal` }
+            ],
+            [
+              { text: "🏥 Sog'liq", callback_data: `tx_save_cat_${txId}_Sog'liq` },
+              { text: "🎓 Ta'lim", callback_data: `tx_save_cat_${txId}_Ta'lim` }
+            ]
+          ]
+        };
+        await answerCallbackQuery(cb.id, "📂 Kategoriya tanlang");
+        if (cb.message?.message_id) {
+          await editTelegramMessage(chatId, cb.message.message_id, catMsg, inlineKeyboard);
+        }
+      } else if (chatId && data && data.startsWith('tx_save_cat_')) {
+        const rest = data.replace('tx_save_cat_', '');
+        const firstUnderscore = rest.indexOf('_');
+        const txId = rest.substring(0, firstUnderscore);
+        const newCat = rest.substring(firstUnderscore + 1);
+
+        const draft = await getPendingDraftTx(cb.from, txId);
+        if (draft && newCat) {
+          draft.category = newCat;
+          await savePendingDraftTx(cb.from, draft);
+          await answerCallbackQuery(cb.id, `📂 Kategoriya: ${newCat}`);
+          const card = renderConfirmationCard(draft);
+          if (cb.message?.message_id) {
+            await editTelegramMessage(chatId, cb.message.message_id, card.text, card.inlineKeyboard);
+          }
+        }
+      } else if (chatId && data && data.startsWith('del_')) {
         const txId = data.replace('del_', '');
         const tgId = String(cb.from?.id || chatId);
         try {
@@ -595,7 +797,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               const parsed = JSON.parse(response.text || '{}');
               if (parsed && parsed.amount && parsed.amount > 0) {
                 const txId = 'tx_' + Date.now();
-                const txItem = {
+                const draftTx = {
                   id: txId,
                   type: 'expense',
                   name: `${parsed.store || "Chek"} - ${parsed.note || "Rasmli operatsiya"}`,
@@ -604,25 +806,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   date: new Date().toISOString()
                 };
 
-                await saveBotTransaction(fromUser, txItem);
-                const formattedAmt = Math.abs(parsed.amount).toLocaleString('en-US').replace(/,/g, ' ');
-
-                const replyCard = `🧾 <b>Chek tahlil qilindi va saqlandi!</b> 🌟\n\n` +
-                  `🏪 <b>Do'kon:</b> ${parsed.store || "Noma'lum"}\n` +
-                  `💵 <b>Jami summa:</b> ${formattedAmt} so'm\n` +
-                  `📂 <b>Kategoriya:</b> ${parsed.category || 'Oziq-ovqat'}\n` +
-                  `📝 <b>Tafsilot:</b> ${parsed.note || "Chek xaridi"}`;
-
-                const inlineKeyboard = {
-                  inline_keyboard: [
-                    [
-                      { text: "❌ Operatsiyani o'chirish", callback_data: `del_${txId}` },
-                      { text: "📱 Mini App", web_app: { url: appUrl } }
-                    ]
-                  ]
-                };
-
-                await sendTelegramMessage(chatId, replyCard, inlineKeyboard);
+                await savePendingDraftTx(fromUser, draftTx);
+                const card = renderConfirmationCard(draftTx);
+                await sendTelegramMessage(chatId, card.text, card.inlineKeyboard);
                 return res.status(200).json({ status: 'ok' });
               }
             }
@@ -692,33 +878,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               const parsed = JSON.parse(response.text || '{}');
               if (parsed && parsed.amount && parsed.amount > 0) {
                 const txId = 'tx_' + Date.now();
-                const txItem = {
+                const draftTx = {
                   id: txId,
                   type: parsed.type || 'expense',
-                  name: parsed.note || "Ovozli yozuv",
+                  name: parsed.note || "Ovozli xabar",
                   category: parsed.category || 'Boshqa',
-                  amount: parsed.amount,
+                  amount: Math.abs(parsed.amount),
                   date: new Date().toISOString()
                 };
 
-                const userList = await getBotTransactions(fromUser);
-                await saveBotTransaction(fromUser, txItem);
-
-                const typeEmoji = parsed.type === 'income' ? '🟢 Daromad' : '🛒 Xarajat';
-                const formattedAmt = parsed.amount.toLocaleString('en-US').replace(/,/g, ' ');
-
-                const replyCard = `🎙 <b>Ovozli operatsiya saqlandi!</b> 🌟\n\n📌 <b>Turi:</b> ${typeEmoji}\n💵 <b>Summa:</b> ${formattedAmt} so'm\n📂 <b>Kategoriya:</b> ${parsed.category}\n📝 <b>Izoh:</b> ${parsed.note || "Ovozli xabar"}`;
-
-                const inlineKeyboard = {
-                  inline_keyboard: [
-                    [
-                      { text: "❌ Operatsiyani o'chirish", callback_data: `del_${txId}` },
-                      { text: "📱 Moliya AI", url: appUrl }
-                    ]
-                  ]
-                };
-
-                await sendTelegramMessage(chatId, replyCard, inlineKeyboard);
+                await savePendingDraftTx(fromUser, draftTx);
+                const card = renderConfirmationCard(draftTx);
+                await sendTelegramMessage(chatId, card.text, card.inlineKeyboard);
                 return res.status(200).json({ status: 'ok' });
               }
             }
@@ -905,33 +1076,18 @@ Return JSON object:
 
       if (parsed && parsed.amount && parsed.amount > 0) {
         const txId = 'tx_' + Date.now();
-        const txItem = {
+        const draftTx = {
           id: txId,
-          type: parsed.type,
+          type: parsed.type || 'expense',
           name: parsed.note || text,
           category: parsed.category || 'Boshqa',
-          amount: parsed.amount,
+          amount: Math.abs(parsed.amount),
           date: new Date().toISOString()
         };
 
-        await saveBotTransaction(fromUser, txItem);
-
-        const typeEmoji = parsed.type === 'income' ? '🟢 Daromad' : '🛒 Xarajat';
-        const formattedAmt = parsed.amount.toLocaleString('en-US').replace(/,/g, ' ');
-
-        const replyCard = `✅ <b>Operatsiya saqlandi!</b> 🌟\n\n📌 <b>Turi:</b> ${typeEmoji}\n💵 <b>Summa:</b> ${formattedAmt} so'm\n📂 <b>Kategoriya:</b> ${parsed.category}\n📝 <b>Izoh:</b> ${parsed.note || text}`;
-
-        const inlineKeyboard = {
-          inline_keyboard: [
-            [
-              { text: "❌ Operatsiyani o'chirish", callback_data: `del_${txId}` },
-              { text: "📱 Mini App", web_app: { url: appUrl } },
-              { text: "🌐 Web App", url: appUrl }
-            ]
-          ]
-        };
-
-        await sendTelegramMessage(chatId, replyCard, inlineKeyboard);
+        await savePendingDraftTx(fromUser, draftTx);
+        const card = renderConfirmationCard(draftTx);
+        await sendTelegramMessage(chatId, card.text, card.inlineKeyboard);
         return res.status(200).json({ status: 'ok' });
       }
 
