@@ -320,6 +320,125 @@ function renderConfirmationCard(draftTx: any) {
   return { text, inlineKeyboard };
 }
 
+async function renderRichTransactionCard(fromUser: any, tx: any, isPending: boolean = false) {
+  const txs = await getBotTransactions(fromUser);
+  const now = new Date();
+  
+  const currentMonthTxs = txs.filter(t => {
+    const d = new Date(t.date || 0);
+    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+  });
+
+  const totalIncome = txs.filter(t => t.type === 'income').reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
+  const totalExpense = txs.filter(t => t.type === 'expense').reduce((acc, t) => acc + Math.abs(Number(t.amount) || 0), 0);
+  const netBalance = totalIncome - totalExpense;
+
+  const monthlyExpense = currentMonthTxs.filter(t => t.type === 'expense').reduce((acc, t) => acc + Math.abs(Number(t.amount) || 0), 0);
+
+  const txCategory = tx.category || 'Boshqa';
+  const categoryMonthlyTotal = currentMonthTxs
+    .filter(t => t.type === 'expense' && (t.category === txCategory || (!t.category && txCategory === 'Boshqa')))
+    .reduce((acc, t) => acc + Math.abs(Number(t.amount) || 0), 0) + (isPending ? Math.abs(Number(tx.amount) || 0) : 0);
+
+  const fmtAmt = (n: number) => Math.abs(n || 0).toLocaleString('en-US').replace(/,/g, ' ');
+  const fmtMln = (n: number) => {
+    const mln = n / 1000000;
+    return mln >= 1 ? `${mln.toFixed(1)}mln` : `${fmtAmt(n)}`;
+  };
+
+  const txDate = tx.date ? new Date(tx.date) : new Date();
+  const dateFormatted = `${String(txDate.getDate()).padStart(2, '0')}.${String(txDate.getMonth() + 1).padStart(2, '0')}.${txDate.getFullYear()}`;
+
+  let text = "";
+  if (tx.type === 'expense') {
+    text = `<b>${isPending ? "❓ Hisobotga qo'shilsinmi?" : "Hisobotga qo'shildi ✅"}</b>\n\n` +
+      `<b>Chiqim:</b>\n` +
+      `<b>Sana:</b> ${dateFormatted}\n\n` +
+      `<b>Summa:</b> UZS ${fmtAmt(tx.amount)}\n` +
+      `<b>Kategoriya:</b> 💲 ${txCategory}\n` +
+      `<b>Izoh:</b> ${tx.name || tx.note || "Xarajat"}\n\n` +
+      `💡 <i>${txCategory} kategoriyasidagi jami xarajatlar ${fmtMln(categoryMonthlyTotal)} UZS bo'ldi.</i>\n\n` +
+      `<b>Bu oygi chiqimlar:</b> ${fmtAmt(monthlyExpense + (isPending ? Math.abs(Number(tx.amount) || 0) : 0))} UZS\n\n` +
+      `<b>Balans:</b>\n` +
+      `💵 UY-Ro'zg'or: ${fmtAmt(netBalance - (isPending ? Math.abs(Number(tx.amount) || 0) : 0))} UZS`;
+  } else {
+    text = `✅ <b>${fmtAmt(tx.amount)} UZS miqdoridagi daromad «UY-Ro'zg'or» balansingizga muvaffaqiyatli qo'shildi.</b>\n\n` +
+      `<b>Balans:</b>\n` +
+      `💵 UY-Ro'zg'or: ${fmtAmt(netBalance + (isPending ? Math.abs(Number(tx.amount) || 0) : 0))} UZS`;
+  }
+
+  let inlineKeyboard: any = null;
+  if (isPending) {
+    inlineKeyboard = {
+      inline_keyboard: [
+        [
+          { text: "✅ Saqlash", callback_data: `tx_confirm_${tx.id}` },
+          { text: "✏️ Tahrirlash", callback_data: `tx_edit_${tx.id}` },
+          { text: "❌ Bekor qilish", callback_data: `tx_cancel_${tx.id}` }
+        ]
+      ]
+    };
+  } else {
+    inlineKeyboard = {
+      inline_keyboard: [
+        [
+          { text: "❌ Bekor qilish", callback_data: `del_${tx.id}` },
+          { text: "📱 Mini App", web_app: { url: appUrl } }
+        ]
+      ]
+    };
+  }
+
+  return { text, inlineKeyboard };
+}
+
+async function buildGoalBudgetReport(fromUser: any) {
+  const txs = await getBotTransactions(fromUser);
+  const tgId = String(fromUser?.id);
+  const userSnap = await getDoc(doc(db, 'users', `moliya_user_tg_${tgId}`));
+  const userData = userSnap.exists() ? userSnap.data() : {};
+  const goal = userData?.onboarding?.goal || userData?.goal || 2000000;
+
+  const now = new Date();
+  const currentMonthTxs = txs.filter(t => {
+    const d = new Date(t.date || 0);
+    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+  });
+
+  const totalExpense = currentMonthTxs.filter(t => t.type === 'expense').reduce((acc, t) => acc + Math.abs(Number(t.amount) || 0), 0);
+  const fmt = (n: number) => n.toLocaleString('en-US').replace(/,/g, ' ');
+
+  const percent = goal > 0 ? Math.min(100, Math.round((totalExpense / goal) * 100)) : 0;
+  const bar = renderProgressBar(percent / 100, 10);
+  const remaining = Math.max(0, goal - totalExpense);
+
+  const text = `🎯 <b>Oylik Byudjet Rejasi</b> 📊\n\n` +
+    `💰 <b>Oylik belgilangan byudjet:</b> ${fmt(goal)} UZS\n` +
+    `🛒 <b>Shu oygi jami xarajat:</b> ${fmt(totalExpense)} UZS\n` +
+    `📊 <b>Byudjet bajarilishi:</b> ${percent}% <code>[${bar}]</code>\n` +
+    `💵 <b>Qolgan limit:</b> ${fmt(remaining)} UZS\n\n` +
+    `💡 <i>Oylik byudjetingizni o'zgartirish uchun pastdagi tugmalardan tanlang:</i>`;
+
+  const inlineKeyboard = {
+    inline_keyboard: [
+      [
+        { text: "🎯 1 mln", callback_data: "save_goal_1000000" },
+        { text: "🎯 2 mln", callback_data: "save_goal_2000000" },
+        { text: "🎯 3 mln", callback_data: "save_goal_3000000" }
+      ],
+      [
+        { text: "🎯 5 mln", callback_data: "save_goal_5000000" },
+        { text: "🎯 10 mln", callback_data: "save_goal_10000000" }
+      ],
+      [
+        { text: "📊 Statistika va Tahlil", callback_data: "period_month" }
+      ]
+    ]
+  };
+
+  return { text, inlineKeyboard };
+}
+
 const getMainMenuKeyboard = () => {
   return {
     keyboard: [
@@ -495,24 +614,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const confirmed = await confirmPendingDraftTx(cb.from, txId);
         if (confirmed) {
           await answerCallbackQuery(cb.id, "✅ Operatsiya saqlandi!");
-          const typeEmoji = confirmed.type === 'income' ? '🟢 Daromad' : '🛒 Xarajat';
-          const fmtAmt = Math.abs(confirmed.amount || 0).toLocaleString('en-US').replace(/,/g, ' ');
-          const cardText = `✅ <b>Operatsiya saqlandi!</b> 🌟\n\n📌 <b>Turi:</b> ${typeEmoji}\n💵 <b>Summa:</b> ${fmtAmt} so'm\n📂 <b>Kategoriya:</b> ${confirmed.category || 'Boshqa'}\n📝 <b>Izoh:</b> ${confirmed.name || confirmed.note || 'Operatsiya'}`;
-          const inlineKeyboard = {
-            inline_keyboard: [
-              [
-                { text: "❌ Operatsiyani o'chirish", callback_data: `del_${txId}` },
-                { text: "📱 Mini App", web_app: { url: appUrl } }
-              ]
-            ]
-          };
+          const richCard = await renderRichTransactionCard(cb.from, confirmed, false);
           if (cb.message?.message_id) {
-            await editTelegramMessage(chatId, cb.message.message_id, cardText, inlineKeyboard);
+            await editTelegramMessage(chatId, cb.message.message_id, richCard.text, richCard.inlineKeyboard);
           } else {
-            await sendTelegramMessage(chatId, cardText, inlineKeyboard);
+            await sendTelegramMessage(chatId, richCard.text, richCard.inlineKeyboard);
           }
         } else {
           await answerCallbackQuery(cb.id, "⚠️ Operatsiya topilmadi!");
+        }
+      } else if (chatId && data && data.startsWith('save_goal_')) {
+        const newGoal = parseInt(data.replace('save_goal_', ''), 10);
+        if (newGoal > 0) {
+          const tgId = String(cb.from?.id);
+          const userId = `moliya_user_tg_${tgId}`;
+          await setDoc(doc(db, 'users', userId), { goal: newGoal, 'onboarding.goal': newGoal }, { merge: true });
+          const fmtGoal = newGoal.toLocaleString('en-US').replace(/,/g, ' ');
+          await answerCallbackQuery(cb.id, `🎯 Byudjet: ${fmtGoal} UZS`);
+          const goalReport = await buildGoalBudgetReport(cb.from);
+          if (cb.message?.message_id) {
+            await editTelegramMessage(chatId, cb.message.message_id, goalReport.text, goalReport.inlineKeyboard);
+          } else {
+            await sendTelegramMessage(chatId, goalReport.text, goalReport.inlineKeyboard);
+          }
         }
       } else if (chatId && data && data.startsWith('tx_cancel_')) {
         const txId = data.replace('tx_cancel_', '');
@@ -557,7 +681,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           draft.type = newType;
           await savePendingDraftTx(cb.from, draft);
           await answerCallbackQuery(cb.id, `🔄 Tur o'zgartirildi: ${newType === 'income' ? 'Daromad' : 'Xarajat'}`);
-          const card = renderConfirmationCard(draft);
+          const card = await renderRichTransactionCard(cb.from, draft, true);
           if (cb.message?.message_id) {
             await editTelegramMessage(chatId, cb.message.message_id, card.text, card.inlineKeyboard);
           }
@@ -578,6 +702,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             [
               { text: "🏥 Sog'liq", callback_data: `tx_save_cat_${txId}_Sog'liq` },
               { text: "🎓 Ta'lim", callback_data: `tx_save_cat_${txId}_Ta'lim` }
+            ],
+            [
+              { text: "💲 Mehnat chiqimlari", callback_data: `tx_save_cat_${txId}_Mehnat chiqimlari` }
             ]
           ]
         };
@@ -596,7 +723,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           draft.category = newCat;
           await savePendingDraftTx(cb.from, draft);
           await answerCallbackQuery(cb.id, `📂 Kategoriya: ${newCat}`);
-          const card = renderConfirmationCard(draft);
+          const card = await renderRichTransactionCard(cb.from, draft, true);
           if (cb.message?.message_id) {
             await editTelegramMessage(chatId, cb.message.message_id, card.text, card.inlineKeyboard);
           }
@@ -807,7 +934,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 };
 
                 await savePendingDraftTx(fromUser, draftTx);
-                const card = renderConfirmationCard(draftTx);
+                const card = await renderRichTransactionCard(fromUser, draftTx, true);
                 await sendTelegramMessage(chatId, card.text, card.inlineKeyboard);
                 return res.status(200).json({ status: 'ok' });
               }
@@ -888,7 +1015,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 };
 
                 await savePendingDraftTx(fromUser, draftTx);
-                const card = renderConfirmationCard(draftTx);
+                const card = await renderRichTransactionCard(fromUser, draftTx, true);
                 await sendTelegramMessage(chatId, card.text, card.inlineKeyboard);
                 return res.status(200).json({ status: 'ok' });
               }
@@ -911,7 +1038,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         console.log('[BOT] /start received. rawArg:', rawArg, 'requestId:', requestId, 'from user:', fromUser?.id);
 
         if (requestId && requestId.length >= 8) {
-          // Immediately verify & mark login request in Firestore (no blocking phone requirement)
           console.log('[BOT] Processing login request verification...');
           const result = await verifyAndMarkLoginRequest(requestId, fromUser);
           
@@ -928,50 +1054,79 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           return res.status(200).json({ status: 'ok' });
         }
 
-        // Standard /start without request parameter
+        // Standard /start without request parameter — check if user has phone saved
         console.log('[BOT] Standard /start (no login request)');
+        const tgId = String(fromUser?.id);
+        const userSnap = await getDoc(doc(db, 'users', `moliya_user_tg_${tgId}`));
+        const userData = userSnap.exists() ? userSnap.data() : {};
+
         const welcomeText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n<b>Moliya AI</b> botiga xush kelibsiz! 🚀\n\nPulingizni oson va aqlli boshqaring.\n\n👇 <b>Ilovani ochish uchun quyidagi tugmani bosing:</b>`;
+        
+        if (!userData?.phone && !userData?.onboarding?.phone) {
+          const phonePromptText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
+            `<b>Moliya AI</b> botiga xush kelibsiz! 🚀\n\n` +
+            `📞 <i>Profilingiz to'liq bo'lishi uchun telefon raqamingizni yuboring (Bu raqam profilingiz uchun saqlanadi):</i>`;
+          const phoneReplyKeyboard = {
+            keyboard: [
+              [{ text: "📞 Telefon raqamini ulashish", request_contact: true }],
+              [{ text: "📱 Mini App", web_app: { url: appUrl } }, { text: "🌐 Web App", url: appUrl }]
+            ],
+            resize_keyboard: true,
+            one_time_keyboard: true
+          };
+          await sendTelegramMessage(chatId, phonePromptText, phoneReplyKeyboard);
+          return res.status(200).json({ status: 'ok' });
+        }
+
         await sendTelegramMessage(chatId, welcomeText, getCleanInlineKeyboard());
         await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
         return res.status(200).json({ status: 'ok' });
       }
 
-      // 2. Help command
+      // 2. Help command ("💡 Yordam")
       if (text.startsWith("/help") || text.includes("Yordam") || text.includes("yordam")) {
-        const helpText = `💡 <b>Moliya AI Boti bo'limlari:</b>\n\n• 📝 <b>Matnli xarajat kiritish</b>\n• 🎙 <b>Ovozli xabar yuborish</b>\n• 📱 <b>Ilovani ochish</b>\n• 📊 <b>Balans va hisobotlar</b>\n• ❌ <b>Operatsiyalarni o'chirish</b>\n\n⭐ <i>1 kunlik bepul sinov va oylik 5 ta AI so'rov limiti mavjud.</i>`;
-        await sendTelegramMessage(chatId, helpText, getMainMenuKeyboard());
+        const helpText = `💡 <b>Moliya AI Boti Yordam Markazi</b> ✨\n\n` +
+          `• 🎙 <b>Ovozli xabar:</b> Xarajat va daromadlarni ovozli yuboring\n` +
+          `• 🧾 <b>Chek skanerlash:</b> Chek rasmini yuboring (AI Vision)\n` +
+          `• 📝 <b>Matn:</b> "Taksi 25000" deb yozib yuboring\n` +
+          `• 📊 <b>Balans & Hisobot:</b> Kunlik va oylik statistika\n` +
+          `• 🎯 <b>Byudjet & Limitlar:</b> Oylik moliyaviy reja\n` +
+          `• 📥 <b>Eksport:</b> Tranzaksiyalarni Excel/CSV shaklida yuklab olish\n\n` +
+          `👨‍💻 <b>Admin bilan bog'lanish:</b> @saidislombek_abdumalikov`;
+
+        const helpKeyboard = {
+          inline_keyboard: [
+            [
+              { text: "💬 Admin bilan bog'lanish", url: "https://t.me/saidislombek_abdumalikov" }
+            ],
+            [
+              { text: "📱 Mini App", web_app: { url: appUrl } },
+              { text: "🌐 Web App", url: appUrl }
+            ]
+          ]
+        };
+        await sendTelegramMessage(chatId, helpText, helpKeyboard);
         return res.status(200).json({ status: 'ok' });
       }
 
-      // 3. Balance, Stats, and Category Breakdown (/balance, /stats, /budget)
-      if (text.includes("Balans") || text.includes("balans") || text.startsWith("/balance") || text.includes("Statistika") || text.startsWith("/stats") || text.includes("Kategoriyalar") || text.includes("Byudjet") || text.startsWith("/budget") || text.startsWith("/byudjet")) {
-        const budgetMatch = text.match(/\/(?:budget|byudjet)\s+(.+?)\s+(\d+[\d\s]*)/i);
-        if (budgetMatch) {
-          const categoryRaw = budgetMatch[1].trim();
-          const limitVal = parseInt(budgetMatch[2].replace(/\s+/g, ''), 10);
-          if (limitVal > 0) {
-            await setUserBudget(fromUser, categoryRaw, limitVal);
-            const fmtLimit = limitVal.toLocaleString('en-US').replace(/,/g, ' ');
-            const msg = `✅ <b>Byudjet limiti o'rnatildi!</b> 🎯\n\n📂 <b>Kategoriya:</b> ${categoryRaw}\n🎯 <b>Oylik limit:</b> ${fmtLimit} so'm`;
-            await sendTelegramMessage(chatId, msg, getMainMenuKeyboard());
-            return res.status(200).json({ status: 'ok' });
-          }
-        }
-
+      // 3. Balance & Stats (/balance, /stats, "Balans & Hisobot")
+      if (text.includes("Balans") || text.includes("balans") || text.startsWith("/balance") || text.includes("Statistika") || text.startsWith("/stats")) {
         const report = await buildPeriodReport(fromUser, 'month');
         await sendTelegramMessage(chatId, report.text, report.inlineKeyboard);
         return res.status(200).json({ status: 'ok' });
       }
 
-      // 5. Delete
-      if (text.includes("o'chirish") || text.includes("очириш") || text.startsWith("/delete")) {
-        const deletedTx = await deleteLastBotTransaction(fromUser);
-        if (!deletedTx) {
-          await sendTelegramMessage(chatId, "ℹ️ <i>O'chirish uchun tranzaksiyalar mavjud emas.</i>", getMainMenuKeyboard());
-          return res.status(200).json({ status: 'ok' });
-        }
-        const fmt = (n: number) => n.toLocaleString('en-US').replace(/,/g, ' ');
-        await sendTelegramMessage(chatId, `🗑 <b>Oxirgi operatsiya o'chirildi!</b> ✅\n\n❌ <b>O'chirildi:</b> ${fmt(deletedTx.amount)} so'm (${deletedTx.category} - ${deletedTx.name})`, getMainMenuKeyboard());
+      // 4. Budget & Goal (/budget, /byudjet, "Byudjet & Limitlar")
+      if (text.includes("Byudjet") || text.includes("byudjet") || text.startsWith("/budget") || text.startsWith("/byudjet") || text.includes("Limitlar")) {
+        const goalReport = await buildGoalBudgetReport(fromUser);
+        await sendTelegramMessage(chatId, goalReport.text, goalReport.inlineKeyboard);
+        return res.status(200).json({ status: 'ok' });
+      }
+
+      // 5. Check Scanner Prompt ("🧾 Chek Skanner")
+      if (text.includes("Chek") || text.includes("chek") || text.includes("Skanner")) {
+        const checkPrompt = `🧾 <b>Chek skanerlash (AI Vision)</b> 📸\n\nDo'kon chekini (Korzinka, Makro, Havas va boshqalar) rasmga olib shu yerga yuboring!\nSun'iy intellekt chekdagi summani avtomatik o'qiydi va hisobotga kiritadi. 🚀`;
+        await sendTelegramMessage(chatId, checkPrompt, getMainMenuKeyboard());
         return res.status(200).json({ status: 'ok' });
       }
 
@@ -1086,7 +1241,7 @@ Return JSON object:
         };
 
         await savePendingDraftTx(fromUser, draftTx);
-        const card = renderConfirmationCard(draftTx);
+        const card = await renderRichTransactionCard(fromUser, draftTx, true);
         await sendTelegramMessage(chatId, card.text, card.inlineKeyboard);
         return res.status(200).json({ status: 'ok' });
       }
