@@ -594,7 +594,7 @@ export default function Onboarding({ onComplete }: Props) {
                 <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 10 }}>
                   <button
                     type="button"
-                    onClick={handleStartTelegramAuth}
+                    onClick={() => window.location.reload()}
                     style={{
                       width: '100%', padding: '14px', borderRadius: 16, border: 'none',
                       background: 'linear-gradient(135deg, #0088CC 0%, #0077B5 100%)',
@@ -604,7 +604,7 @@ export default function Onboarding({ onComplete }: Props) {
                       display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
                     }}
                   >
-                    <span>📱 {(language === 'uz' || language === 'uz_cyrl') ? (language === 'uz_cyrl' ? "Telegram ботни қайта очиш" : "Telegram botni qayta ochish") : "Re-open Telegram Bot"}</span>
+                    <span>🔄 {(language === 'uz' || language === 'uz_cyrl') ? (language === 'uz_cyrl' ? "Саҳифани янгилаш" : "Sahifani yangilash") : (language === 'ru' ? "Обновить страницу" : "Refresh Page")}</span>
                   </button>
 
                   <button
