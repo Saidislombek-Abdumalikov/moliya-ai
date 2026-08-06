@@ -898,18 +898,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ status: 'ok' });
       }
 
+let commandsSet = false;
 async function setBotCommands() {
+  if (commandsSet) return;
+  commandsSet = true;
   try {
     await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setMyCommands`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         commands: [
-          { command: "start", description: "🚀 Botni ishga tushirish va menyu" },
-          { command: "help", description: "💡 Yordam markazi va admin" },
-          { command: "stats", description: "📊 Balans va hisobotlar" },
-          { command: "budget", description: "🎯 Byudjet va limitlar" },
-          { command: "export", description: "📥 Hisobotni Excel/CSV shaklida yuklab olish" }
+          { command: "start", description: "🚀 Botni ishga tushirish va menyu" }
         ]
       })
     });
