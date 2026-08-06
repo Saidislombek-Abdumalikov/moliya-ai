@@ -12,6 +12,8 @@ import PinLockScreen from './components/PinLockScreen'
 import AppTour from './components/AppTour'
 import { useFinance } from './FinanceContext'
 
+import InstallPromptModal from './components/InstallPromptModal'
+
 export type Screen = 'home' | 'calendar' | 'analytics' | 'profile' | 'admin'
 type Stage = 'onboarding' | 'app'
 
@@ -171,6 +173,7 @@ export default function App() {
 
       <BottomNav active={activeScreen} onChange={setActiveScreen} language={onboarding?.language} />
       <AIButton visible={activeScreen !== 'profile' && activeScreen !== 'admin'} language={onboarding?.language || 'uz'} />
+      <InstallPromptModal />
       <AppTour 
         isOpen={showTour} 
         onClose={() => setShowTour(false)} 

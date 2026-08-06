@@ -628,6 +628,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const update = req.body;
     if (!update) return res.status(200).json({ status: 'ok' });
 
+    setBotCommands().catch(e => console.error('setBotCommands error:', e));
+
     // A) Callback Query
     if (update.callback_query) {
       const cb = update.callback_query;
@@ -891,12 +893,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ status: 'ok' });
       }
 
+async function setBotCommands() {
+  try {
+    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setMyCommands`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        commands: [
+          { command: "start", description: "🚀 Botni ishga tushirish va menyu" },
+          { command: "help", description: "💡 Yordam markazi va admin" },
+          { command: "stats", description: "📊 Balans va hisobotlar" },
+          { command: "budget", description: "🎯 Byudjet va limitlar" },
+          { command: "export", description: "📥 Hisobotni Excel/CSV shaklida yuklab olish" }
+        ]
+      })
+    });
+  } catch (e) {
+    console.error('Error setting bot commands:', e);
+  }
+}
+
       // Handle Photo (Receipt OCR)
       const photo = message.photo;
       if (photo && Array.isArray(photo) && photo.length > 0) {
         const limitInfo = await checkAndIncrementAiLimitAsync(fromUser);
         if (!limitInfo.allowed) {
-          const limitMsg = `⚠️ <b>Oylik Bepul AI Limiti Tugadi! (5/5 ishlatildi)</b>\n\nSiz oylik bepul 5 ta AI so'rov imkoniyatizdan foydalandingiz.\nCheksiz AI va chek tahlili uchun <b>Premium</b> tarifiga o'ting! ⭐`;
+          const limitMsg = `⚠️ <b>Chek skanerlash AI faqat Premium tarifda! (5/5 ishlatildi)</b>\n\nSiz oylik bepul 5 ta AI so'rov imkoniyatizdan foydalandingiz.\nCheksiz AI chek tahlili va ovozli xabar uchun <b>Premium</b> tarifiga o'ting! ⭐`;
           await sendTelegramMessage(chatId, limitMsg, getCleanInlineKeyboard());
           return res.status(200).json({ status: 'ok' });
         }
