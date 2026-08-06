@@ -2584,7 +2584,6 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
             </motion.div>
           </div>
         )}
-      </AnimatePresence>
 
       {/* Option A: Clear My Data Modal */}
         {activeModal === 'clearDataOnly' && (
@@ -2867,6 +2866,8 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
             </motion.div>
           </div>
         )}
+      </AnimatePresence>
+
       {/* 8. HELP & CHAT SUPPORT MODAL */}
       {activeModal === 'help' && (
         <div style={{

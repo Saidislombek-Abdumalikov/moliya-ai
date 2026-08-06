@@ -567,37 +567,44 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const clearAllData = async () => {
     try {
-      if (!userId) return
+      const currentTgId = onboarding?.telegramId || localStorage.getItem('telegram_user_id')
 
-      // Clear Firestore document — wipe all financial data but keep userId
-      await setDoc(doc(db, 'users', userId), {
-        onboarding: null,
-        cards: [],
-        security: { pinEnabled: false, faceIdEnabled: false, pinCode: '' },
-        deletedTxIds: [],
-        hasSampleData: false
-      }, { merge: true })
+      if (userId) {
+        // 1. Delete transactions subcollection
+        try {
+          const txRef = collection(db, 'users', userId, 'transactions')
+          const snap = await getDocs(query(txRef))
+          await Promise.all(snap.docs.map(d => deleteDoc(d.ref)))
+        } catch (e) {
+          console.error('Error deleting transactions subcollection:', e)
+        }
 
-      // Attempt to delete custom transactions from Firestore
-      try {
-        const txRef = collection(db, 'users', userId, 'transactions')
-        const q = query(txRef)
-        const snap = await getDocs(q)
-        const deletePromises = snap.docs.map(d => deleteDoc(d.ref))
-        await Promise.all(deletePromises)
-      } catch (e) {
-        console.error('Failed to delete transactions from Firestore:', e)
+        // 2. Delete main user document
+        try {
+          await deleteDoc(doc(db, 'users', userId))
+        } catch (e) {
+          console.error('Error deleting main user document:', e)
+        }
       }
 
-      // Remove all financial localStorage keys, including onboarding
-      localStorage.removeItem('user_onboarding_v1')
-      localStorage.removeItem('user_cards_v1')
-      localStorage.removeItem('user_security_v1')
-      localStorage.removeItem('user_deleted_tx_ids_v1')
-      localStorage.removeItem('user_transactions_v1')
-      localStorage.setItem('user_has_sample_v1', 'false')
+      // 3. Delete Telegram user mapping documents if available
+      if (currentTgId) {
+        try {
+          await deleteDoc(doc(db, 'users', `moliya_user_tg_${currentTgId}`))
+        } catch (e) {
+          console.error('Error deleting moliya_user_tg_ doc:', e)
+        }
+        try {
+          await deleteDoc(doc(db, 'users', `tg_user_${currentTgId}`))
+        } catch (e) {
+          console.error('Error deleting tg_user_ doc:', e)
+        }
+      }
 
-      // Clear all react state in memory
+      // 4. Completely wipe localStorage
+      localStorage.clear()
+
+      // 5. Reset React state in memory
       setOnboarding(null)
       setCards([])
       setSecurity({ pinEnabled: false, faceIdEnabled: false, pinCode: '' })
@@ -605,7 +612,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       setCustomTransactions([])
       setHasSampleDataState(false)
     } catch (e) {
-      console.error('Failed to clear data:', e)
+      console.error('Failed to delete account permanently:', e)
     }
   }
 
