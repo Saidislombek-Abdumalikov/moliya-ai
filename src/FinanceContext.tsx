@@ -291,15 +291,30 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     console.log('[AUTH] Login request created:', requestId);
 
-    // 1. Open Telegram IMMEDIATELY — no blocking wait
+    // 1. Open Telegram Bot — Popup-blocker safe launch for Mobile & Desktop
     const botUrl = `https://t.me/moliya_v2bot?start=req_${requestId}`;
     const tgDeepLink = `tg://resolve?domain=moliya_v2bot&start=req_${requestId}`;
-    console.log('[AUTH] Opening Telegram bot...');
+    console.log('[AUTH] Opening Telegram bot...', botUrl);
+
     try {
-      // Use window.open to avoid killing the current page (and its polling)
-      window.open(tgDeepLink, '_self');
-    } catch {
-      window.open(botUrl, '_blank');
+      const isMobile = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      if (isMobile) {
+        window.location.href = tgDeepLink;
+        setTimeout(() => {
+          window.location.href = botUrl;
+        }, 600);
+      } else {
+        const link = document.createElement('a');
+        link.href = botUrl;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+    } catch (e) {
+      console.error('[AUTH] Failed to launch Telegram link:', e);
+      window.location.href = botUrl;
     }
 
     // 2. Register UUID with backend in the background (fire-and-forget)
