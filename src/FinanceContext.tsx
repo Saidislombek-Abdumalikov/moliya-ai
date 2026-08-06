@@ -226,6 +226,14 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
         // 3. Telegram Mini App Native Container Check
         const tg = (window as any).Telegram?.WebApp;
+        if (tg) {
+          try {
+            if (typeof tg.ready === 'function') tg.ready();
+            if (typeof tg.expand === 'function') tg.expand();
+          } catch (tgErr) {
+            console.error('[AUTH] Telegram WebApp ready/expand error:', tgErr);
+          }
+        }
         if (tg && tg.initData) {
           console.log('[AUTH] Found Telegram Mini App initData. Authenticating with Telegram backend...');
           try {
