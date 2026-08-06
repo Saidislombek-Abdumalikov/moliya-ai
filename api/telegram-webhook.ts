@@ -4,9 +4,7 @@ import crypto from "crypto";
 import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
 import { db } from './_firebaseClient.js';
 
-const BOT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_BOT_TOKEN.includes("AAF0axUBdGs6D1LN32tNncb2cOp47-z9oho")) 
-  ? process.env.TELEGRAM_BOT_TOKEN 
-  : "8955141731:AAF0axUBdGs6D1LN32tNncb2cOp47-z9oho";
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const appUrl = process.env.APP_URL || "https://moliya-ai-pi.vercel.app";
 
 // Helper: Create 60-day Session Token & Mark Login Request VERIFIED in Firestore

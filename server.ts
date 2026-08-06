@@ -180,7 +180,7 @@ async function startServer() {
   app.post("/api/auth/telegram", async (req, res) => {
     try {
       const { initData } = req.body;
-      const botToken = process.env.TELEGRAM_BOT_TOKEN || "8955141731:AAGzuBXoKmZii5t_bJcwbJA0Q92gYrFaGnw";
+      const botToken = process.env.TELEGRAM_BOT_TOKEN || "";
 
       const verification = verifyTelegramInitData(initData, botToken);
       if (!verification.isValid || !verification.user?.id) {
@@ -429,7 +429,7 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
   // Shared AI Usage tracker per user: 1-day free trial, then max 5 AI requests / month
   const tgUserAiUsage = new Map<number, { firstSeen: number; count: number }>();
 
-  const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8955141731:AAGzuBXoKmZii5t_bJcwbJA0Q92gYrFaGnw";
+  const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 
   async function syncUserTxToFirestore(chatId: number, txs: any[]) {
     if (!firestore) return;

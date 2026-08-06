@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../_firebaseClient.js';
 
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8955141731:AAGzuBXoKmZii5t_bJcwbJA0Q92gYrFaGnw";
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 
 function verifyTelegramInitData(initData: string, botToken: string): { isValid: boolean; user?: any } {
   if (!botToken || !initData) {
