@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react'
-import { doc, onSnapshot, setDoc, collection, query, where, orderBy, getDocs, deleteDoc, limit } from 'firebase/firestore'
+import { doc, onSnapshot, setDoc, collection, query, where, getDocs, deleteDoc } from 'firebase/firestore'
 import { db } from './firebase'
 import type { OnboardingResult } from './components/Onboarding'
 
@@ -147,6 +147,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999)
     return { start, end }
   })
+  // Keep setDateRange exported in context interface if components call it
+  void dateRange;
 
   const [isAuthReady, setIsAuthReady] = useState(false)
 
@@ -409,6 +411,9 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         if (data.hasSampleData !== undefined) {
           setHasSampleDataState(data.hasSampleData)
           localStorage.setItem('user_has_sample_v1', String(data.hasSampleData))
+        } else {
+          setHasSampleDataState(false)
+          localStorage.setItem('user_has_sample_v1', 'false')
         }
       } else {
         // Seed Firestore if document doesn't exist yet but we have local data
@@ -417,9 +422,12 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           cards,
           security,
           deletedTxIds,
+          hasSampleData: false,
         }, { merge: true }).catch((err) => {
           console.error('Error seeding user document:', err)
         })
+        setHasSampleDataState(false)
+        localStorage.setItem('user_has_sample_v1', 'false')
       }
       setLoading(false)
     }, (error) => {
@@ -429,7 +437,6 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     return () => unsubscribeUser()
   }, [userId, isAuthReady])
-
 
   const deleteTransaction = async (id: string | number) => {
     try {
@@ -450,28 +457,31 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   }
 
-  // Subcollection query for transactions
+  // Subcollection query for transactions (Resilient query sorted in memory)
   useEffect(() => {
     if (!userId || !isAuthReady) return
-      const txRef = collection(db, 'users', userId!, 'transactions')
-      const q = query(
-        txRef,
-        orderBy('date', 'desc'),
-        limit(1000)
-      )
+    const txRef = collection(db, 'users', userId!, 'transactions')
+    const q = query(txRef)
 
-      const unsubscribeTx = onSnapshot(q, (snap: any) => {
-        const txs: Transaction[] = []
-        snap.forEach((doc: any) => txs.push({ id: doc.id, ...doc.data() } as Transaction))
-        setCustomTransactions(txs)
-        localStorage.setItem('user_transactions_v1', JSON.stringify(txs))
-        window.dispatchEvent(new Event('user_transactions_updated'))
-      }, (err: any) => {
-        console.error('Transactions listener error:', err)
+    const unsubscribeTx = onSnapshot(q, (snap: any) => {
+      const txs: Transaction[] = []
+      snap.forEach((docSnap: any) => {
+        const data = docSnap.data()
+        txs.push({ id: docSnap.id, ...data } as Transaction)
       })
+      // Sort in memory by date descending
+      txs.sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())
 
-      return () => unsubscribeTx()
-  }, [userId, dateRange, isAuthReady])
+      console.log(`[AUTH] Firestore transactions synced (${txs.length}) for userId:`, userId)
+      setCustomTransactions(txs)
+      localStorage.setItem('user_transactions_v1', JSON.stringify(txs))
+      window.dispatchEvent(new Event('user_transactions_updated'))
+    }, (err: any) => {
+      console.error('[AUTH] Transactions listener error:', err)
+    })
+
+    return () => unsubscribeTx()
+  }, [userId, isAuthReady])
 
 
   // Context Functions
