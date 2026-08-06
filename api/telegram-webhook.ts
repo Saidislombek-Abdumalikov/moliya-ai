@@ -624,6 +624,25 @@ async function buildPeriodReport(fromUser: any, period: 'today' | 'week' | 'mont
   return { text, inlineKeyboard };
 }
 
+let commandsSet = false;
+async function setBotCommands() {
+  if (commandsSet) return;
+  commandsSet = true;
+  try {
+    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setMyCommands`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        commands: [
+          { command: "start", description: "🚀 Botni ishga tushirish va menyu" }
+        ]
+      })
+    });
+  } catch (e) {
+    console.error('Error setting bot commands:', e);
+  }
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     return res.status(200).send('Telegram Webhook Active');
@@ -897,25 +916,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
         return res.status(200).json({ status: 'ok' });
       }
-
-let commandsSet = false;
-async function setBotCommands() {
-  if (commandsSet) return;
-  commandsSet = true;
-  try {
-    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setMyCommands`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        commands: [
-          { command: "start", description: "🚀 Botni ishga tushirish va menyu" }
-        ]
-      })
-    });
-  } catch (e) {
-    console.error('Error setting bot commands:', e);
-  }
-}
 
       // Handle Photo (Receipt OCR)
       const photo = message.photo;
