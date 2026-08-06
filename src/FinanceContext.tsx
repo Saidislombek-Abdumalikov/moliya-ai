@@ -47,6 +47,7 @@ interface FinanceContextType {
   addTransaction: (tx: Omit<Transaction, 'id' | 'date'> & { id?: string | number; date?: string; messageId?: string | number }) => Promise<void>
   deleteTransaction: (id: string | number) => Promise<void>
   clearAllData: () => Promise<void>
+  clearOnlyFinancialData: () => Promise<void>
   setDateRange: (range: { start: Date; end: Date }) => void
   startTelegramLogin: (onVerified?: () => void) => Promise<{ requestId: string; cancel: () => void }>
 }
@@ -608,6 +609,37 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   }
 
+  const clearOnlyFinancialData = async () => {
+    try {
+      if (userId) {
+        try {
+          const txRef = collection(db, 'users', userId, 'transactions')
+          const snap = await getDocs(query(txRef))
+          const deletePromises = snap.docs.map(d => deleteDoc(d.ref))
+          await Promise.all(deletePromises)
+
+          await setDoc(doc(db, 'users', userId), {
+            goal: 0,
+            hasSampleData: false,
+            deletedTxIds: []
+          }, { merge: true })
+        } catch (e) {
+          console.error('Failed to clear financial data from Firestore:', e)
+        }
+      }
+
+      localStorage.removeItem('user_transactions_v1')
+      localStorage.removeItem('user_deleted_tx_ids_v1')
+      localStorage.setItem('user_has_sample_v1', 'false')
+
+      setCustomTransactions([])
+      setDeletedTxIds([])
+      setHasSampleDataState(false)
+    } catch (e) {
+      console.error('Failed to clear financial data:', e)
+    }
+  }
+
   if (!isAuthReady) {
     return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100dvh', background: '#FFFFFF' }}><p>Loading...</p></div>
   }
@@ -630,6 +662,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         addTransaction,
         deleteTransaction,
         clearAllData,
+        clearOnlyFinancialData,
         setDateRange,
         startTelegramLogin,
       }}

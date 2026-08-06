@@ -1189,7 +1189,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return res.status(200).json({ status: 'ok' });
           }
 
-          console.log('[BOT] ✅ Verification successful, sending success message');
+          console.log('[BOT] ✅ Verification successful, checking phone number...');
+          let userData: any = {};
+          try {
+            const tgId = String(fromUser?.id);
+            const userSnap = await getDoc(doc(db, 'users', `moliya_user_tg_${tgId}`));
+            if (userSnap.exists()) userData = userSnap.data();
+          } catch (e) {
+            console.error('[BOT] Error reading user doc on /start req:', e);
+          }
+
+          if (!userData?.phone && !userData?.onboarding?.phone) {
+            const phonePromptText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
+              `✅ <b>Muvaffaqiyatli tasdiqlandi!</b> 🚀\n\n` +
+              `📞 <i>Profilingiz to'liq bo'lishi uchun telefon raqamingizni yuboring (Bu raqam profilingiz uchun saqlanadi):</i>`;
+            const phoneReplyKeyboard = {
+              keyboard: [
+                [{ text: "📞 Telefon raqamini ulashish", request_contact: true }],
+                [{ text: "📱 Mini App", web_app: { url: appUrl } }, { text: "🌐 Web App", url: appUrl }]
+              ],
+              resize_keyboard: true,
+              one_time_keyboard: true
+            };
+            await sendTelegramMessage(chatId, phonePromptText, phoneReplyKeyboard);
+            return res.status(200).json({ status: 'ok' });
+          }
+
           const successText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n✅ <b>Muvaffaqiyatli tasdiqlandi!</b> 🚀\nBrauzeringizdagi Moliya AI ilovasiga avtomatik kirdingiz.\n\n👇 <i>Ilovaga o'tish uchun quyidagi tugmani bosing:</i>`;
           await sendTelegramMessage(chatId, successText, getCleanInlineKeyboard(requestId));
           await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());

@@ -46,8 +46,10 @@ const translations = {
         exportSub: 'PDF, Excel',
         help: 'Yordam',
         helpSub: '24/7 tezkor xizmat',
-        clearData: 'Hisobni tozalash',
-        clearDataSub: 'Barcha ma\'lumotlarni o\'chirish'
+        clearData: 'Ma\'lumotlarimni tozalash',
+        clearDataSub: 'Moliyaviy yozuvlarni tozalash (Hisob faol qoladi)',
+        deleteAccount: 'Hisobni o\'chirish',
+        deleteAccountSub: 'Hisob va barcha ma\'lumotlarni butunlay o\'chirish'
       }
     },
     logout: 'Chiqish',
@@ -156,8 +158,10 @@ const translations = {
         exportSub: 'PDF, Excel',
         help: 'Ёрдам',
         helpSub: '24/7 тезкор хизмат',
-        clearData: 'Ҳисобни тозалаш',
-        clearDataSub: 'Барча маълумотларни ўчириш'
+        clearData: 'Маълумотларимни тозалаш',
+        clearDataSub: 'Молиявий ёзувларни тозалаш (Ҳисоб фаол қолади)',
+        deleteAccount: 'Ҳисобни ўчириш',
+        deleteAccountSub: 'Ҳисоб ва барча маълумотларни бутунлай ўчириш'
       }
     },
     logout: 'Чиқиш',
@@ -266,8 +270,10 @@ const translations = {
         exportSub: 'PDF, Excel',
         help: 'Помощь',
         helpSub: 'Поддержка 24/7',
-        clearData: 'Очистить данные аккаунта',
-        clearDataSub: 'Сбросить финансы, PIN'
+        clearData: 'Очистить мои данные',
+        clearDataSub: 'Очистить финансовые записи (Аккаунт останется активен)',
+        deleteAccount: 'Удалить аккаунт',
+        deleteAccountSub: 'Безвозвратно удалить аккаунт и все данные'
       }
     },
     logout: 'Выйти',
@@ -376,8 +382,10 @@ const translations = {
         exportSub: 'PDF, Excel',
         help: 'Help',
         helpSub: '24/7 live support',
-        clearData: 'Clear Account Data',
-        clearDataSub: 'Reset money, PIN, settings'
+        clearData: 'Clear My Data',
+        clearDataSub: 'Delete financial records (Your account stays active)',
+        deleteAccount: 'Delete Account',
+        deleteAccountSub: 'Permanently delete account and all data'
       }
     },
     logout: 'Logout',
@@ -471,7 +479,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
 
   // Modal States
   const [activeModal, setActiveModal] = useState<
-    'edit' | 'premium' | 'notifications' | 'security' | 'payments' | 'lang' | 'export' | 'help' | 'clearConfirm' | 'logout_confirm' | null
+    'edit' | 'premium' | 'notifications' | 'security' | 'payments' | 'lang' | 'export' | 'help' | 'clearConfirm' | 'clearDataOnly' | 'logout_confirm' | null
   >(null)
 
   // Transient Toast state
@@ -482,7 +490,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
   const [editPhone, setEditPhone] = useState(userPhone)
   const [editTelegram, setEditTelegram] = useState(userTelegram)
 
-  const { cards: rawCards, saveCards, security: contextSecurity, updateSecurity, clearAllData, customTransactions, addTransaction } = useFinance()
+  const { cards: rawCards, saveCards, security: contextSecurity, updateSecurity, clearAllData, clearOnlyFinancialData, customTransactions, addTransaction } = useFinance()
   const cards = Array.isArray(rawCards) ? rawCards : []
 
   const getCardBalance = (cardId: string) => {
@@ -1193,9 +1201,31 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
             </svg>
           </div>
 
-          {/* Clear Account Data */}
+          {/* Option A: Clear My Data */}
           <div 
-            id="menu_item_clear"
+            id="menu_item_clear_data"
+            onClick={() => {
+              setDeleteConfirmName('')
+              setActiveModal('clearDataOnly')
+            }}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px',
+              borderBottom: '1px solid #E4E1F4', cursor: 'pointer',
+            }}
+          >
+            <span style={{ fontSize: 18, width: 28, textAlign: 'center' }}>🧹</span>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: 14, fontWeight: 600, color: '#D97706' }}>{t.menu.items.clearData}</p>
+              <p style={{ fontSize: 11.5, color: '#F59E0B' }}>{t.menu.items.clearDataSub}</p>
+            </div>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M5 3L9 7L5 11" stroke="#F59E0B" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+
+          {/* Option B: Delete Account */}
+          <div 
+            id="menu_item_delete_account"
             onClick={() => {
               setDeleteStep(1)
               setDeleteConfirmName('')
@@ -1210,8 +1240,8 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
           >
             <span style={{ fontSize: 18, width: 28, textAlign: 'center' }}>🗑️</span>
             <div style={{ flex: 1 }}>
-              <p style={{ fontSize: 14, fontWeight: 600, color: '#DC2626' }}>{t.menu.items.clearData}</p>
-              <p style={{ fontSize: 11.5, color: '#FCA3A3' }}>{t.menu.items.clearDataSub}</p>
+              <p style={{ fontSize: 14, fontWeight: 600, color: '#DC2626' }}>{t.menu.items.deleteAccount}</p>
+              <p style={{ fontSize: 11.5, color: '#FCA3A3' }}>{t.menu.items.deleteAccountSub}</p>
             </div>
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
               <path d="M5 3L9 7L5 11" stroke="#FCA3A3" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
@@ -2556,7 +2586,93 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
         )}
       </AnimatePresence>
 
-      {/* Clear Data / Account Deletion Wizard Modal */}
+      {/* Option A: Clear My Data Modal */}
+        {activeModal === 'clearDataOnly' && (
+          <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+            <motion.div 
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setActiveModal(null)}
+              style={{ position: 'absolute', inset: 0, background: 'rgba(30, 26, 60, 0.5)', backdropFilter: 'blur(4px)' }} 
+            />
+            <motion.div 
+              initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }} transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              style={{
+                position: 'relative',
+                width: '100%', maxWidth: 440, background: '#FFFFFF',
+                borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: '24px 20px 32px',
+                boxShadow: '0 -10px 30px rgba(0,0,0,0.15)', zIndex: 1001
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <h3 style={{ fontSize: 18, fontWeight: 700, color: '#1E1A3C' }}>
+                  🧹 {lang === 'uz' ? "Ma'lumotlarimni tozalash" : lang === 'uz_cyrl' ? "Маълумотларимни тозалаш" : lang === 'ru' ? "Очистить мои данные" : "Clear My Data"}
+                </h3>
+                <button
+                  onClick={() => setActiveModal(null)}
+                  style={{
+                    width: 28, height: 28, borderRadius: '50%', background: '#F5F4FA', border: 'none',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, color: '#5C548A', cursor: 'pointer', fontWeight: 700
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div style={{ background: '#FEF3C7', padding: '14px 16px', borderRadius: 16, border: '1px solid #FCD34D', marginBottom: 16 }}>
+                <p style={{ fontSize: 13, color: '#92400E', lineHeight: 1.5, fontWeight: 500 }}>
+                  {lang === 'uz' ? "Barcha moliyaviy yozuvlar, tranzaksiyalar, kategoriyalar, hisobotlar, byudjetlar va maqsadlar o'chiriladi. Hisobingiz va profilingiz faol holatda qoladi va siz ilovadan toza ma'lumotlar bilan foydalanishda davom eta olasiz." : lang === 'uz_cyrl' ? "Барча молиявий ёзувлар, транзакциялар, категориялар, ҳисоботлар, бюджетлар ва мақсадлар ўчирилади. Ҳисобингиз ва профилингиз фаол ҳолатда қолади ва сиз иловадан тоза маълумотлар билан фойдаланишда давом эта оласиз." : lang === 'ru' ? "Все финансовые записи, транзакции, категории, отчеты, бюджеты и цели будут удалены. Ваш аккаунт и профиль останутся активными, и вы сможете продолжить работу с чистыми данными." : "All financial records, transactions, categories, analytics, budgets, and goals will be removed. Your account itself will remain active, and you can continue using the application."}
+                </p>
+              </div>
+
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: '#1E1A3C', display: 'block', marginBottom: 8 }}>
+                  {lang === 'uz' ? `Tasdiqlash uchun ismingizni kiriting (${userName}):` : lang === 'uz_cyrl' ? `Тасдиқлаш учун исмингизни киритинг (${userName}):` : lang === 'ru' ? `Введите имя для подтверждения (${userName}):` : `Enter your name to confirm (${userName}):`}
+                </label>
+                <input 
+                  type="text" 
+                  value={deleteConfirmName} 
+                  onChange={e => setDeleteConfirmName(e.target.value)} 
+                  placeholder={userName}
+                  style={{
+                    width: '100%', padding: '12px 16px', borderRadius: 12, border: '1.5px solid #E4E1F4',
+                    fontSize: 14, outline: 'none'
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button 
+                  onClick={() => setActiveModal(null)}
+                  style={{
+                    flex: 1, padding: '12px', borderRadius: 12, border: '1.5px solid #E4E1F4',
+                    background: '#FFFFFF', color: '#5C548A', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit'
+                  }}
+                >
+                  {lang === 'uz' ? 'Bekor qilish' : lang === 'uz_cyrl' ? 'Бекор қилиш' : lang === 'ru' ? 'Отмена' : 'Cancel'}
+                </button>
+                <button 
+                  disabled={deleteConfirmName.trim() !== userName.trim()}
+                  onClick={async () => {
+                    setActiveModal(null)
+                    setToastMessage(lang === 'uz' ? "Moliyaviy ma'lumotlar tozalanmoqda..." : lang === 'uz_cyrl' ? "Молиявий маълумотлар тозаланмоқда..." : lang === 'ru' ? "Очистка финансовых данных..." : "Clearing financial data...")
+                    await clearOnlyFinancialData()
+                    setToastMessage(lang === 'uz' ? "Moliyaviy ma'lumotlar tozalandi! ✅" : lang === 'uz_cyrl' ? "Молиявий маълумотлар тозаланди! ✅" : lang === 'ru' ? "Финансовые данные очищены! ✅" : "Financial data cleared! ✅")
+                  }}
+                  style={{
+                    flex: 1, padding: '12px', borderRadius: 12, border: 'none',
+                    background: deleteConfirmName.trim() === userName.trim() ? '#D97706' : '#FCD34D',
+                    color: '#FFFFFF', fontSize: 13, fontWeight: 700,
+                    cursor: deleteConfirmName.trim() === userName.trim() ? 'pointer' : 'not-allowed', fontFamily: 'inherit'
+                  }}
+                >
+                  🧹 {lang === 'uz' ? "Ma'lumotlarimni tozalash" : lang === 'uz_cyrl' ? "Маълумотларимни тозалаш" : lang === 'ru' ? "Очистить мои данные" : "Clear My Data"}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+      {/* Option B: Account Deletion Wizard Modal */}
         {activeModal === 'clearConfirm' && (
           <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
             <motion.div 
@@ -2575,7 +2691,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
             >
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: '#DC2626', background: '#FEF2F2', padding: '4px 10px', borderRadius: 12 }}>
-                  Qadam {deleteStep} / 4
+                  {lang === 'uz' ? `Qadam ${deleteStep} / 4` : lang === 'uz_cyrl' ? `Қадам ${deleteStep} / 4` : lang === 'ru' ? `Шаг ${deleteStep} / 4` : `Step ${deleteStep} / 4`}
                 </span>
                 <button
                   onClick={() => setActiveModal(null)}
@@ -2591,9 +2707,11 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
               {/* Step 1: Confirmation Dialog */}
               {deleteStep === 1 && (
                 <div>
-                  <h3 style={{ fontSize: 18, fontWeight: 700, color: '#1E1A3C', marginBottom: 10 }}>⚠️ Hisobni o'chirish</h3>
+                  <h3 style={{ fontSize: 18, fontWeight: 700, color: '#1E1A3C', marginBottom: 10 }}>
+                    {lang === 'uz' ? "⚠️ Hisobni o'chirish" : lang === 'uz_cyrl' ? "⚠️ Ҳисобни ўчириш" : lang === 'ru' ? "⚠️ Удаление аккаунта" : "⚠️ Delete Account"}
+                  </h3>
                   <p style={{ fontSize: 14, color: '#DC2626', marginBottom: 20, lineHeight: 1.5, fontWeight: 500 }}>
-                    You are about to permanently delete your account. This action cannot be undone.
+                    {lang === 'uz' ? "Siz hisobingizni butunlay o'chirish arafasidasiz. Bu harakatni ortga qaytarib bo'lmaydi." : lang === 'uz_cyrl' ? "Сиз ҳисобингизни бутунлай ўчириш арафасидасиз. Бу ҳаракатни ортга қайтариб бўлмайди." : lang === 'ru' ? "Вы собираетесь навсегда удалить свой аккаунт. Это действие нельзя отменить." : "You are about to permanently delete your account. This action cannot be undone."}
                   </p>
                   <div style={{ display: 'flex', gap: 10 }}>
                     <button 
@@ -2603,7 +2721,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                         background: '#FFFFFF', color: '#5C548A', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit'
                       }}
                     >
-                      Bekor qilish
+                      {lang === 'uz' ? 'Bekor qilish' : lang === 'uz_cyrl' ? 'Бекор қилиш' : lang === 'ru' ? 'Отмена' : 'Cancel'}
                     </button>
                     <button 
                       onClick={() => setDeleteStep(2)}
@@ -2612,7 +2730,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                         background: '#DC2626', color: '#FFFFFF', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit'
                       }}
                     >
-                      Davom etish →
+                      {lang === 'uz' ? 'Davom etish →' : lang === 'uz_cyrl' ? 'Давом этиш →' : lang === 'ru' ? 'Продолжить →' : 'Continue →'}
                     </button>
                   </div>
                 </div>
@@ -2621,9 +2739,11 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
               {/* Step 2: Name Verification */}
               {deleteStep === 2 && (
                 <div>
-                  <h3 style={{ fontSize: 18, fontWeight: 700, color: '#1E1A3C', marginBottom: 10 }}>👤 Ismingizni tasdiqlang</h3>
+                  <h3 style={{ fontSize: 18, fontWeight: 700, color: '#1E1A3C', marginBottom: 10 }}>
+                    {lang === 'uz' ? "👤 Ismingizni tasdiqlang" : lang === 'uz_cyrl' ? "👤 Исмингизни тасдиқланг" : lang === 'ru' ? "👤 Подтвердите имя" : "👤 Confirm Your Name"}
+                  </h3>
                   <p style={{ fontSize: 13, color: '#5C548A', marginBottom: 16 }}>
-                    Hisobingizni o'chirish uchun ismingizni to'liq va aniq kiriting: <b>{userName}</b>
+                    {lang === 'uz' ? `Hisobingizni o'chirish uchun ismingizni to'liq va aniq kiriting:` : lang === 'uz_cyrl' ? `Ҳисобингизни ўчириш учун исмингизни киритинг:` : lang === 'ru' ? `Введите точное имя вашего аккаунта:` : `Enter your exact account name:`} <b>{userName}</b>
                   </p>
                   <input 
                     type="text" 
@@ -2643,7 +2763,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                         background: '#FFFFFF', color: '#5C548A', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit'
                       }}
                     >
-                      Bekor qilish
+                      {lang === 'uz' ? 'Bekor qilish' : lang === 'uz_cyrl' ? 'Бекор қилиш' : lang === 'ru' ? 'Отмена' : 'Cancel'}
                     </button>
                     <button 
                       onClick={() => setDeleteStep(3)}
@@ -2655,7 +2775,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                         cursor: deleteConfirmName.trim() === userName.trim() ? 'pointer' : 'not-allowed', fontFamily: 'inherit'
                       }}
                     >
-                      Keyingisi →
+                      {lang === 'uz' ? 'Keyingisi →' : lang === 'uz_cyrl' ? 'Кейингиси →' : lang === 'ru' ? 'Далее →' : 'Next →'}
                     </button>
                   </div>
                 </div>
@@ -2664,9 +2784,11 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
               {/* Step 3: 4-Digit Code Verification */}
               {deleteStep === 3 && (
                 <div>
-                  <h3 style={{ fontSize: 18, fontWeight: 700, color: '#1E1A3C', marginBottom: 10 }}>🔢 Tasdiqlash kodi</h3>
+                  <h3 style={{ fontSize: 18, fontWeight: 700, color: '#1E1A3C', marginBottom: 10 }}>
+                    {lang === 'uz' ? "🔢 Tasdiqlash kodi" : lang === 'uz_cyrl' ? "🔢 Тасдиқлаш кодини киритинг" : lang === 'ru' ? "🔢 Код подтверждения" : "🔢 Verification Code"}
+                  </h3>
                   <p style={{ fontSize: 13, color: '#5C548A', marginBottom: 12 }}>
-                    Quyidagi 4 xonali tasdiqlash kodini pastga kiriting:
+                    {lang === 'uz' ? "Quyidagi 4 xonali tasdiqlash kodini kiriting:" : lang === 'uz_cyrl' ? "Қуйидаги 4 хонали тасдиқлаш кодини киритинг:" : lang === 'ru' ? "Введите следующий 4-значный код:" : "Enter the following 4-digit code:"}
                   </p>
                   <div style={{ textAlign: 'center', background: '#F5F4FA', padding: '14px', borderRadius: 16, marginBottom: 16, fontSize: 24, fontWeight: 800, letterSpacing: 6, color: '#7C3AED' }}>
                     {deleteRandomCode}
@@ -2676,7 +2798,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                     maxLength={4}
                     value={deleteInputCode} 
                     onChange={e => setDeleteInputCode(e.target.value)} 
-                    placeholder="4 xonali kod"
+                    placeholder={lang === 'uz' ? "4 xonali kod" : lang === 'uz_cyrl' ? "4 хонали код" : lang === 'ru' ? "4-значный код" : "4-digit code"}
                     style={{
                       width: '100%', padding: '12px 16px', borderRadius: 12, border: '1.5px solid #E4E1F4',
                       fontSize: 18, textAlign: 'center', letterSpacing: 4, outline: 'none', marginBottom: 20
@@ -2690,7 +2812,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                         background: '#FFFFFF', color: '#5C548A', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit'
                       }}
                     >
-                      Bekor qilish
+                      {lang === 'uz' ? 'Bekor qilish' : lang === 'uz_cyrl' ? 'Бекор қилиш' : lang === 'ru' ? 'Отмена' : 'Cancel'}
                     </button>
                     <button 
                       onClick={() => setDeleteStep(4)}
@@ -2702,7 +2824,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                         cursor: deleteInputCode.trim() === deleteRandomCode ? 'pointer' : 'not-allowed', fontFamily: 'inherit'
                       }}
                     >
-                      Oxirgi tasdiq →
+                      {lang === 'uz' ? 'Oxirgi tasdiq →' : lang === 'uz_cyrl' ? 'Охирги тасдиқ →' : lang === 'ru' ? 'Финал →' : 'Final Check →'}
                     </button>
                   </div>
                 </div>
@@ -2711,10 +2833,12 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
               {/* Step 4: Final Warning & Permanent Delete */}
               {deleteStep === 4 && (
                 <div>
-                  <h3 style={{ fontSize: 18, fontWeight: 700, color: '#DC2626', marginBottom: 10 }}>🚨 Oxirgi ogohlantirish!</h3>
+                  <h3 style={{ fontSize: 18, fontWeight: 700, color: '#DC2626', marginBottom: 10 }}>
+                    {lang === 'uz' ? "🚨 Oxirgi ogohlantirish!" : lang === 'uz_cyrl' ? "🚨 Охирги огоҳлантириш!" : lang === 'ru' ? "🚨 Последнее предупреждение!" : "🚨 Final Warning!"}
+                  </h3>
                   <div style={{ background: '#FEF2F2', padding: '14px 16px', borderRadius: 16, border: '1px solid #FCA5A5', marginBottom: 20 }}>
                     <p style={{ fontSize: 13, color: '#991B1B', lineHeight: 1.5, fontWeight: 500 }}>
-                      You are permanently deleting your Moliya AI account. This action permanently removes your account and associated data. Deleted data cannot be recovered. Moliya AI is not responsible for any consequences after the account has been permanently deleted.
+                      {lang === 'uz' ? "Siz Moliya AI hisobingizni butunlay o'chiryapsiz. Bu harakat profilingiz va barcha ma'lumotlaringizni qayta tiklab bo'lmaydigan qilib o'chirib tashlaydi. O'chirilgan ma'lumotlarni qaytarib bo'lmaydi. Moliya AI hisob to'liq o'chirilgandan keyin yuzaga kelishi mumkin bo'lgan har qanday oqibatlar uchun javobgar emas." : lang === 'uz_cyrl' ? "Сиз Moliya AI ҳисобингизни бутунлай ўчиряпсиз. Бу ҳаракат профилингиз ва барча маълумотларингизни қайта тиклаб бўлмайдиган қилиб ўчириб ташлайди. Ўчирилган маълумотларни қайтариб бўлмайди. Moliya AI ҳисоб тўлиқ ўчирилгандан кейин юзага келиши мумкин бўлган ҳар қандай оқибатлар учун жавобгар эмас." : lang === 'ru' ? "Вы навсегда удаляете свой аккаунт Moliya AI. Это действие безвозвратно удаляет ваш аккаунт и все связанные данные. Удаленные данные невозможно восстановить. Moliya AI не несет ответственности за любые последствия после полного удаления аккаунта." : "You are permanently deleting your Moliya AI account. This action permanently removes your account and associated data. Deleted data cannot be recovered. Moliya AI is not responsible for any consequences after the account has been permanently deleted."}
                     </p>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -2726,7 +2850,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                         boxShadow: '0 4px 14px rgba(220, 38, 38, 0.3)'
                       }}
                     >
-                      Hisobni va barcha ma'lumotlarni butunlay o'chirish 🗑
+                      {lang === 'uz' ? "Hisobni va barcha ma'lumotlarni butunlay o'chirish 🗑" : lang === 'uz_cyrl' ? "Ҳисобни ва барча маълумотларни бутунлай ўчириш 🗑" : lang === 'ru' ? "Безвозвратно удалить аккаунт 🗑" : "Permanently Delete Account & All Data 🗑"}
                     </button>
                     <button 
                       onClick={() => setActiveModal(null)}
@@ -2735,7 +2859,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                         background: '#FFFFFF', color: '#5C548A', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit'
                       }}
                     >
-                      Bekor qilish (Orqaga)
+                      {lang === 'uz' ? "Bekor qilish (Orqaga)" : lang === 'uz_cyrl' ? "Бекор қилиш (Орқага)" : lang === 'ru' ? "Отмена (Назад)" : "Cancel (Go back)"}
                     </button>
                   </div>
                 </div>
