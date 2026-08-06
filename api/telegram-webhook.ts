@@ -58,7 +58,16 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone
       onboarding: updatedOnboarding,
       updatedAt: now.toISOString(),
     }, { merge: true });
-    console.log('[BOT] User profile updated');
+    
+    await setDoc(doc(db, 'users', `tg_user_${tgId}`), {
+      userId,
+      telegramId: tgId,
+      name: tgName,
+      telegram: tgUsername,
+      phone: existingPhone,
+      updatedAt: now.toISOString(),
+    }, { merge: true });
+    console.log('[BOT] User profile updated in both document paths');
 
     // 3. Mark login request VERIFIED in Firestore under clean and raw keys for safety
     const cleanId = requestId.replace(/^req_/, '').trim();
@@ -920,13 +929,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (phone) {
           try {
             const tgId = String(fromUser.id);
-            const userId = `tg_user_${tgId}`;
+            const fullName = [fromUser.first_name, fromUser.last_name].filter(Boolean).join(' ') || 'Foydalanuvchi';
+            const username = fromUser.username ? `@${fromUser.username}` : '';
             
-            // Save phone to Firestore
-            await setDoc(doc(db, 'users', userId), {
+            const profileData = {
               phone,
+              name: fullName,
+              telegram: username,
+              telegramId: tgId,
               updatedAt: new Date().toISOString()
+            };
+
+            // Save phone and profile data to both user document paths
+            await setDoc(doc(db, 'users', `moliya_user_tg_${tgId}`), {
+              ...profileData,
+              onboarding: {
+                name: fullName,
+                phone,
+                telegram: username,
+                telegramId: tgId
+              }
             }, { merge: true });
+            
+            await setDoc(doc(db, 'users', `tg_user_${tgId}`), profileData, { merge: true });
 
             // Check if there is a pending login request for this chat
             const pendingRef = doc(db, 'login_requests', `pending_${chatId}`);
