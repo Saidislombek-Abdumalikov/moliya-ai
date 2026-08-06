@@ -176,12 +176,48 @@ const getCleanInlineKeyboard = (requestId?: string) => {
   };
 };
 
+const renderProgressBar = (ratio: number, length: number = 8) => {
+  const filled = Math.min(length, Math.max(0, Math.round(ratio * length)));
+  const empty = length - filled;
+  return '█'.repeat(filled) + '░'.repeat(empty);
+};
+
+async function getUserBudgets(fromUser: any) {
+  try {
+    const tgId = String(fromUser?.id);
+    if (!tgId) return {};
+    const userId = `moliya_user_tg_${tgId}`;
+    const userSnap = await getDoc(doc(db, 'users', userId));
+    if (userSnap.exists()) {
+      return userSnap.data()?.budgets || {};
+    }
+  } catch (e) {
+    console.error('Error fetching user budgets:', e);
+  }
+  return {};
+}
+
+async function setUserBudget(fromUser: any, category: string, limitAmt: number) {
+  try {
+    const tgId = String(fromUser?.id);
+    if (!tgId) return null;
+    const userId = `moliya_user_tg_${tgId}`;
+    const existing = await getUserBudgets(fromUser);
+    const updated = { ...existing, [category]: limitAmt };
+    await setDoc(doc(db, 'users', userId), { budgets: updated }, { merge: true });
+    return updated;
+  } catch (e) {
+    console.error('Error setting user budget:', e);
+    return null;
+  }
+}
+
 const getMainMenuKeyboard = () => {
   return {
     keyboard: [
       [{ text: "📱 Telegram Mini App", web_app: { url: appUrl } }, { text: "🌐 Web App", url: appUrl }],
-      [{ text: "📊 Balans va Statistika" }, { text: "❌ Oxirgi operatsiyani o'chirish" }],
-      [{ text: "💡 Yordam" }]
+      [{ text: "📊 Balans va Hisobot" }, { text: "📈 Kategoriyalar va Byudjet" }],
+      [{ text: "❌ Oxirgi operatsiyani o'chirish" }, { text: "💡 Yordam" }]
     ],
     resize_keyboard: true
   };
@@ -450,7 +486,74 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ status: 'ok' });
       }
 
-      // 4. Delete
+      // 4. Category Breakdown & Budget Limits (/stats, /budget)
+      if (text.startsWith("/stats") || text.includes("Kategoriyalar") || text.includes("Byudjet") || text.startsWith("/budget") || text.startsWith("/byudjet")) {
+        const budgetMatch = text.match(/\/(?:budget|byudjet)\s+(.+?)\s+(\d+[\d\s]*)/i);
+        if (budgetMatch) {
+          const categoryRaw = budgetMatch[1].trim();
+          const limitVal = parseInt(budgetMatch[2].replace(/\s+/g, ''), 10);
+          if (limitVal > 0) {
+            await setUserBudget(fromUser, categoryRaw, limitVal);
+            const fmtLimit = limitVal.toLocaleString('en-US').replace(/,/g, ' ');
+            const msg = `✅ <b>Byudjet limiti o'rnatildi!</b> 🎯\n\n📂 <b>Kategoriya:</b> ${categoryRaw}\n🎯 <b>Oylik limit:</b> ${fmtLimit} so'm`;
+            await sendTelegramMessage(chatId, msg, getMainMenuKeyboard());
+            return res.status(200).json({ status: 'ok' });
+          }
+        }
+
+        const txs = await getBotTransactions(fromUser);
+        const budgets = await getUserBudgets(fromUser);
+
+        const now = new Date();
+        const currentMonthTxs = txs.filter(t => {
+          const d = new Date(t.date || 0);
+          return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+        });
+
+        const totalExpense = currentMonthTxs.filter(t => t.type === 'expense').reduce((acc, t) => acc + Math.abs(Number(t.amount) || 0), 0);
+        const totalIncome = currentMonthTxs.filter(t => t.type === 'income').reduce((acc, t) => acc + Number(t.amount) || 0, 0);
+
+        const catMap: Record<string, number> = {};
+        currentMonthTxs.filter(t => t.type === 'expense').forEach(t => {
+          const cat = t.category || 'Boshqa';
+          catMap[cat] = (catMap[cat] || 0) + Math.abs(Number(t.amount) || 0);
+        });
+
+        const fmt = (n: number) => n.toLocaleString('en-US').replace(/,/g, ' ');
+
+        let catReportText = "";
+        const catEntries = Object.entries(catMap).sort((a, b) => b[1] - a[1]);
+
+        if (catEntries.length === 0) {
+          catReportText = "<i>Ushbu oyda hali xarajatlar yo'q.</i>";
+        } else {
+          catReportText = catEntries.map(([cat, amt]) => {
+            const percent = totalExpense > 0 ? Math.round((amt / totalExpense) * 100) : 0;
+            const bar = renderProgressBar(percent / 100, 8);
+            const budgetLimit = budgets[cat];
+            let budgetNotice = "";
+            if (budgetLimit && budgetLimit > 0) {
+              const bPercent = Math.round((amt / budgetLimit) * 100);
+              const bEmoji = bPercent >= 100 ? '🚨' : bPercent >= 80 ? '⚠️' : '🎯';
+              budgetNotice = `\n   ${bEmoji} <i>Limit: ${fmt(budgetLimit)} so'm (${bPercent}%)</i>`;
+            }
+            return `📂 <b>${cat}</b>: ${fmt(amt)} so'm (${percent}%)\n   <code>[${bar}]</code>${budgetNotice}`;
+          }).join('\n\n');
+        }
+
+        const reportMsg = `📈 <b>Oylik Kategoriyalar va Byudjet Tahlili</b> 📊\n\n` +
+          `💰 <b>Oylik daromad:</b> ${fmt(totalIncome)} so'm\n` +
+          `🛒 <b>Oylik xarajat:</b> ${fmt(totalExpense)} so'm\n\n` +
+          `━━━━━━━━━━━━━━━━━━\n` +
+          `<b>Kategoriyalar bo'yicha ajratish:</b>\n\n` +
+          `${catReportText}\n\n` +
+          `💡 <i>Byudjet o'rnatish uchun:</i>\n<code>/budget Kategoriya Summa</code>\n<i>Masalan: /budget Oziq-ovqat 1500000</i>`;
+
+        await sendTelegramMessage(chatId, reportMsg, getMainMenuKeyboard());
+        return res.status(200).json({ status: 'ok' });
+      }
+
+      // 5. Delete
       if (text.includes("o'chirish") || text.includes("очириш") || text.startsWith("/delete")) {
         const deletedTx = await deleteLastBotTransaction(fromUser);
         if (!deletedTx) {
