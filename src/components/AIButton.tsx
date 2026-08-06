@@ -217,7 +217,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
     setRecording(false)
   }
 
-  const startVoice = () => {
+  const startVoice = async () => {
     if (!checkAndDeductAIQuery()) {
       setStep('type')
       return
@@ -225,6 +225,17 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
 
     setStep('voice')
     setRecording(true)
+
+    // Request audio stream upfront so browser remembers microphone permission persistently
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        stream.getTracks().forEach(t => t.stop())
+        localStorage.setItem('mic_perm_granted', 'true')
+      } catch (micErr) {
+        console.warn('Microphone permission stream warning:', micErr)
+      }
+    }
 
     try {
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition

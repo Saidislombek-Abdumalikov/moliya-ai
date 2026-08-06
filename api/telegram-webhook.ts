@@ -1159,7 +1159,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // 1.5. Web App Link command ("🌐 Web App")
       if (text.includes("Web App") || text.includes("web app") || text.includes("Web app") || text.startsWith("/webapp") || text.includes("🌐 Web App")) {
-        const webAppText = `🌐 <b>Moliya AI Web App (Brauzer) havolasi:</b>\n\n👇 Brauzeringizda kirish uchun quyidagi havolani bosing:\n${appUrl}`;
+        const webAppText = `🌐 <b>Moliya AI Web App:</b>\n\n👇 <i>Brauzerda kirish uchun quyidagi tugmani bosing:</i>`;
         const inlineKeyboard = {
           inline_keyboard: [
             [
