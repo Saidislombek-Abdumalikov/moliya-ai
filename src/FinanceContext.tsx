@@ -234,13 +234,15 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
             console.error('[AUTH] Telegram WebApp ready/expand error:', tgErr);
           }
         }
-        if (tg && tg.initData) {
-          console.log('[AUTH] Found Telegram Mini App initData. Authenticating with Telegram backend...');
+        const initData = tg?.initData || '';
+        const initDataUnsafe = tg?.initDataUnsafe;
+        if (tg && (initData || initDataUnsafe?.user?.id)) {
+          console.log('[AUTH] Found Telegram Mini App environment. Authenticating with Telegram backend...');
           try {
             const res = await fetch('/api/auth/telegram', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ initData: tg.initData })
+              body: JSON.stringify({ initData, initDataUnsafe })
             });
             if (res.ok) {
               const data = await res.json();

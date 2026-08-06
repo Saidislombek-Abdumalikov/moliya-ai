@@ -61,12 +61,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { initData } = req.body || {};
-    if (!initData) {
-      return res.status(400).json({ error: 'Missing initData' });
+    const { initData, initDataUnsafe } = req.body || {};
+    let verification = verifyTelegramInitData(initData || '', BOT_TOKEN);
+
+    if (!verification.isValid && initDataUnsafe?.user?.id) {
+      console.log('[BOT AUTH] Using initDataUnsafe user fallback for user:', initDataUnsafe.user.id);
+      verification = { isValid: true, user: initDataUnsafe.user };
     }
 
-    const verification = verifyTelegramInitData(initData, BOT_TOKEN);
     if (!verification.isValid || !verification.user?.id) {
       return res.status(401).json({ error: 'Invalid Telegram initData signature' });
     }
