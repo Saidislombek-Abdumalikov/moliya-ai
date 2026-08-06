@@ -467,7 +467,7 @@ async function buildGoalBudgetReport(fromUser: any) {
 const getMainMenuKeyboard = () => {
   return {
     keyboard: [
-      [{ text: "📱 Mini App", web_app: { url: appUrl } }, { text: "🌐 Web App", url: appUrl }],
+      [{ text: "📱 Mini App", web_app: { url: appUrl } }, { text: "🌐 Web App" }],
       [{ text: "📊 Balans & Hisobot" }, { text: "🎯 Byudjet & Limitlar" }],
       [{ text: "🧾 Chek Skanner" }, { text: "📥 Eksport" }],
       [{ text: "💡 Yordam" }]
@@ -1154,6 +1154,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         await sendTelegramMessage(chatId, welcomeText, getCleanInlineKeyboard());
         await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
+        return res.status(200).json({ status: 'ok' });
+      }
+
+      // 1.5. Web App Link command ("🌐 Web App")
+      if (text.includes("Web App") || text.includes("web app") || text.includes("Web app") || text.startsWith("/webapp") || text.includes("🌐 Web App")) {
+        const webAppText = `🌐 <b>Moliya AI Web App (Brauzer) havolasi:</b>\n\n👇 Brauzeringizda kirish uchun quyidagi havolani bosing:\n${appUrl}`;
+        const inlineKeyboard = {
+          inline_keyboard: [
+            [
+              { text: "🌐 Web App-ni brauzerda ochish 🚀", url: appUrl }
+            ],
+            [
+              { text: "📱 Telegram Mini App", web_app: { url: appUrl } }
+            ]
+          ]
+        };
+        await sendTelegramMessage(chatId, webAppText, inlineKeyboard);
         return res.status(200).json({ status: 'ok' });
       }
 
