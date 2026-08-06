@@ -109,7 +109,11 @@ async function startServer() {
         res.status(400).json({ error: "Missing requestId parameter" });
         return;
       }
-      const snap = await getDoc(doc(firestore, "users", `moliya_user_req_${requestId}`));
+      const cleanId = requestId.replace(/^req_/, '').trim();
+      let snap = await getDoc(doc(firestore, "users", `moliya_user_req_${cleanId}`));
+      if (!snap.exists()) {
+        snap = await getDoc(doc(firestore, "users", `moliya_user_req_${requestId}`));
+      }
       if (!snap.exists()) {
         res.json({ status: "NOT_FOUND" });
         return;

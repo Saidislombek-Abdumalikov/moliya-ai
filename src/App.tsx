@@ -58,13 +58,22 @@ export default function App() {
     }
   }, [])
 
-  // Auto-transition to app when user gets authenticated via Session or Telegram Polling
+  // Auto-transition to app when user gets authenticated via Session, URL parameter, or Telegram Polling
   useEffect(() => {
-    const isLoggedIn = localStorage.getItem('user_logged_in_v1') === 'true'
-    if (stage === 'onboarding' && isLoggedIn) {
-      setStage('app')
+    const checkLoggedIn = () => {
+      const isLoggedIn = localStorage.getItem('user_logged_in_v1') === 'true'
+      if (isLoggedIn) {
+        setStage('app')
+      }
     }
-  }, [onboarding, stage])
+    checkLoggedIn()
+    window.addEventListener('storage', checkLoggedIn)
+    window.addEventListener('user_logged_in_updated', checkLoggedIn)
+    return () => {
+      window.removeEventListener('storage', checkLoggedIn)
+      window.removeEventListener('user_logged_in_updated', checkLoggedIn)
+    }
+  }, [onboarding])
 
   // If onboarding is null, set clean defaults
   useEffect(() => {

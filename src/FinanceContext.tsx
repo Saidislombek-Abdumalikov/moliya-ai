@@ -150,13 +150,50 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const [isAuthReady, setIsAuthReady] = useState(false)
 
-  // Authenticate with Backend via Persistent Session Token or Telegram Mini App initData
+  // Authenticate with Backend via Persistent Session Token, Telegram Mini App initData, or URL ?req= Parameter
   useEffect(() => {
     async function authenticate() {
       try {
-        // 1. Check for stored 60-day Session Token
+        console.log('[AUTH] Initializing authentication check...');
+
+        // 1. Check for URL ?req= Parameter (e.g. user opened link sent by Telegram Bot)
+        const urlParams = new URLSearchParams(window.location.search);
+        const reqParam = urlParams.get('req');
+        if (reqParam) {
+          console.log('[AUTH] Found ?req= URL parameter:', reqParam);
+          try {
+            const res = await fetch(`/api/auth/check-login-request?requestId=${reqParam}`);
+            if (res.ok) {
+              const data = await res.json();
+              if (data.status === 'VERIFIED' && data.userId && data.sessionToken) {
+                console.log('[AUTH] ✅ Authenticated via URL req parameter! userId:', data.userId);
+                setUserId(data.userId);
+                localStorage.setItem('user_id_v1', data.userId);
+                localStorage.setItem('user_session_token_v1', data.sessionToken);
+                localStorage.setItem('user_logged_in_v1', 'true');
+                if (data.onboarding) {
+                  setOnboarding(data.onboarding);
+                  localStorage.setItem('user_onboarding_v1', JSON.stringify(data.onboarding));
+                }
+                // Clean ?req= from URL without page reload
+                const cleanUrl = window.location.pathname + window.location.hash;
+                window.history.replaceState({}, document.title, cleanUrl);
+                window.dispatchEvent(new Event('user_logged_in_updated'));
+                setIsAuthReady(true);
+                return;
+              } else {
+                console.log('[AUTH] ?req= status:', data.status);
+              }
+            }
+          } catch (reqErr) {
+            console.error('[AUTH] Error checking ?req= login request:', reqErr);
+          }
+        }
+
+        // 2. Check for stored 60-day Session Token
         const sessionToken = localStorage.getItem('user_session_token_v1');
         if (sessionToken) {
+          console.log('[AUTH] Validating stored session token...');
           try {
             const res = await fetch('/api/auth/validate-session', {
               method: 'POST',
@@ -166,6 +203,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
             if (res.ok) {
               const data = await res.json();
               if (data.valid && data.userId) {
+                console.log('[AUTH] ✅ Session token valid for userId:', data.userId);
                 setUserId(data.userId);
                 localStorage.setItem('user_id_v1', data.userId);
                 localStorage.setItem('user_logged_in_v1', 'true');
@@ -173,20 +211,23 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
                   setOnboarding(data.onboarding);
                   localStorage.setItem('user_onboarding_v1', JSON.stringify(data.onboarding));
                 }
+                window.dispatchEvent(new Event('user_logged_in_updated'));
                 setIsAuthReady(true);
                 return;
               }
             }
           } catch (err) {
-            console.error('Session validation network error:', err);
+            console.error('[AUTH] Session validation network error:', err);
           }
           // If session validation failed/expired, clean up token
+          console.log('[AUTH] Session token expired or invalid. Removing stored token.');
           localStorage.removeItem('user_session_token_v1');
         }
 
-        // 2. Telegram Mini App Native Container Check
+        // 3. Telegram Mini App Native Container Check
         const tg = (window as any).Telegram?.WebApp;
         if (tg && tg.initData) {
+          console.log('[AUTH] Found Telegram Mini App initData. Authenticating with Telegram backend...');
           try {
             const res = await fetch('/api/auth/telegram', {
               method: 'POST',
@@ -196,6 +237,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
             if (res.ok) {
               const data = await res.json();
               if (data.userId && data.sessionToken) {
+                console.log('[AUTH] ✅ Telegram Mini App auth successful! userId:', data.userId);
                 setUserId(data.userId);
                 localStorage.setItem('user_id_v1', data.userId);
                 localStorage.setItem('user_session_token_v1', data.sessionToken);
@@ -204,22 +246,26 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
                   setOnboarding(data.onboarding);
                   localStorage.setItem('user_onboarding_v1', JSON.stringify(data.onboarding));
                 }
+                window.dispatchEvent(new Event('user_logged_in_updated'));
                 setIsAuthReady(true);
                 return;
               }
             }
           } catch (err) {
-            console.error('Telegram initData auth error:', err);
+            console.error('[AUTH] Telegram initData auth error:', err);
           }
         }
 
-        // 3. Unauthenticated state — check if existing local profile exists
+        // 4. Unauthenticated state — check if existing local profile exists
         const savedUserId = localStorage.getItem('user_id_v1');
         if (savedUserId && localStorage.getItem('user_logged_in_v1') === 'true') {
+          console.log('[AUTH] Using local saved userId:', savedUserId);
           setUserId(savedUserId);
+        } else {
+          console.log('[AUTH] User is unauthenticated.');
         }
       } catch (e) {
-        console.error('Authentication error:', e);
+        console.error('[AUTH] Authentication error:', e);
       } finally {
         setIsAuthReady(true);
       }
@@ -289,6 +335,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
             setOnboarding(updatedOnboarding);
             localStorage.setItem('user_onboarding_v1', JSON.stringify(updatedOnboarding));
 
+            window.dispatchEvent(new Event('user_logged_in_updated'));
             console.log('[AUTH] Session saved, calling onVerified callback');
             if (onVerified) onVerified();
           }
