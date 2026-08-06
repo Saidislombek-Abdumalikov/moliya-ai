@@ -16,7 +16,8 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString();
 
-    const sessionToken = 'sess_' + crypto.randomBytes(32).toString('hex');
+    const randomHex = Array.from({ length: 32 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
+    const sessionToken = 'sess_' + randomHex;
     const sessionData = {
       sessionToken,
       userId,
@@ -1214,7 +1215,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return res.status(200).json({ status: 'ok' });
           }
 
-          console.log('[BOT] ✅ Verification successful, checking phone number...');
+          console.log('[BOT] ✅ Verification successful, sending confirmation to Telegram...');
+          const successText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n✅ <b>Muvaffaqiyatli tasdiqlandi!</b> 🚀\nBrauzeringizdagi Moliya AI ilovasiga avtomatik kirdingiz.\n\n👇 <i>Ilovaga o'tish uchun quyidagi tugmani bosing:</i>`;
+          await sendTelegramMessage(chatId, successText, getCleanInlineKeyboard(requestId));
+          await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
+
+          // Check if phone number is missing to prompt contact sharing
           let userData: any = {};
           try {
             const tgId = String(fromUser?.id);
@@ -1225,9 +1231,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
 
           if (!userData?.phone && !userData?.onboarding?.phone) {
-            const phonePromptText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
-              `✅ <b>Muvaffaqiyatli tasdiqlandi!</b> 🚀\n\n` +
-              `📞 <i>Profilingiz to'liq bo'lishi uchun telefon raqamingizni yuboring (Bu raqam profilingiz uchun saqlanadi):</i>`;
+            const phonePromptText = `📞 <b>Eslatma:</b> <i>Profilingiz to'liq bo'lishi uchun telefon raqamingizni yuboring (Bu raqam profilingiz uchun saqlanadi):</i>`;
             const phoneReplyKeyboard = {
               keyboard: [
                 [{ text: "📞 Telefon raqamini ulashish", request_contact: true }],
@@ -1237,12 +1241,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               one_time_keyboard: true
             };
             await sendTelegramMessage(chatId, phonePromptText, phoneReplyKeyboard);
-            return res.status(200).json({ status: 'ok' });
           }
 
-          const successText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n✅ <b>Muvaffaqiyatli tasdiqlandi!</b> 🚀\nBrauzeringizdagi Moliya AI ilovasiga avtomatik kirdingiz.\n\n👇 <i>Ilovaga o'tish uchun quyidagi tugmani bosing:</i>`;
-          await sendTelegramMessage(chatId, successText, getCleanInlineKeyboard(requestId));
-          await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
           return res.status(200).json({ status: 'ok' });
         }
 
