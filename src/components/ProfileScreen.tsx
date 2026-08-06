@@ -505,6 +505,9 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
   const [editingCardId, setEditingCardId] = useState<string | null>(null)
   
   const [deleteConfirmName, setDeleteConfirmName] = useState('')
+  const [deleteStep, setDeleteStep] = useState<1 | 2 | 3 | 4>(1)
+  const [deleteRandomCode, setDeleteRandomCode] = useState<string>('')
+  const [deleteInputCode, setDeleteInputCode] = useState<string>('')
   const [showMorePlans, setShowMorePlans] = useState(false)
   const [selectedPlan, setSelectedPlan] = useState<{ title: string; price: string; code: string } | null>(null)
 
@@ -1193,7 +1196,13 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
           {/* Clear Account Data */}
           <div 
             id="menu_item_clear"
-            onClick={() => setActiveModal('clearConfirm')}
+            onClick={() => {
+              setDeleteStep(1)
+              setDeleteConfirmName('')
+              setDeleteInputCode('')
+              setDeleteRandomCode(String(Math.floor(1000 + Math.random() * 9000)))
+              setActiveModal('clearConfirm')
+            }}
             style={{
               display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px',
               cursor: 'pointer',
@@ -2547,7 +2556,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
         )}
       </AnimatePresence>
 
-      {/* Clear Data Confirm Modal */}
+      {/* Clear Data / Account Deletion Wizard Modal */}
         {activeModal === 'clearConfirm' && (
           <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
             <motion.div 
@@ -2560,58 +2569,177 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
               style={{
                 position: 'relative',
                 width: '100%', maxWidth: 440, background: '#FFFFFF',
-                borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: '24px 20px',
+                borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: '24px 20px 32px',
                 boxShadow: '0 -10px 30px rgba(0,0,0,0.15)', zIndex: 1001
               }}
             >
-              <h3 style={{ fontSize: 18, fontWeight: 700, color: '#1E1A3C', marginBottom: 12 }}>{t.clearConfirm.title}</h3>
-              
-              <p style={{ fontSize: 14, color: '#DC2626', marginBottom: 16, lineHeight: 1.5 }}>
-                {t.clearConfirm.sub}
-              </p>
-              <div style={{ marginBottom: 24 }}>
-                <label style={{ fontSize: 12, fontWeight: 600, color: '#1E1A3C', display: 'block', marginBottom: 8 }}>
-                  {lang === 'uz' ? `O'chirishni tasdiqlash uchun ismingizni kiriting (${userName}):` : `Enter your name to confirm deletion (${userName}):`}
-                </label>
-                <input 
-                  type="text" 
-                  value={deleteConfirmName} 
-                  onChange={e => setDeleteConfirmName(e.target.value)} 
-                  placeholder={userName}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: '#DC2626', background: '#FEF2F2', padding: '4px 10px', borderRadius: 12 }}>
+                  Qadam {deleteStep} / 4
+                </span>
+                <button
+                  onClick={() => setActiveModal(null)}
                   style={{
-                    width: '100%', padding: '12px 16px', borderRadius: 12, border: '1.5px solid #E4E1F4',
-                    fontSize: 14, outline: 'none'
-                  }}
-                />
-              </div>
-              <div style={{ display: 'flex', gap: 10 }}>
-                <button 
-                  id="btn_cancel_clear"
-                  onClick={() => {
-                    setDeleteConfirmName('')
-                    setActiveModal(null)
-                  }}
-                  style={{
-                    flex: 1, padding: '12px', borderRadius: 12, border: '1.5px solid #E4E1F4',
-                    background: '#FFFFFF', color: '#5C548A', fontSize: 13, fontWeight: 600,
-                    cursor: 'pointer', fontFamily: 'inherit'
+                    width: 28, height: 28, borderRadius: '50%', background: '#F5F4FA', border: 'none',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, color: '#5C548A', cursor: 'pointer', fontWeight: 700
                   }}
                 >
-                  {t.clearConfirm.cancelBtn}
-                </button>
-                <button 
-                  id="btn_submit_clear"
-                  onClick={handleClearAllData}
-                  disabled={deleteConfirmName !== userName}
-                  style={{
-                    flex: 1, padding: '12px', borderRadius: 12, border: 'none',
-                    background: deleteConfirmName !== userName ? '#FCA5A5' : '#DC2626', color: '#FFFFFF', fontSize: 13, fontWeight: 600,
-                    cursor: deleteConfirmName !== userName ? 'not-allowed' : 'pointer', fontFamily: 'inherit'
-                  }}
-                >
-                  {t.clearConfirm.confirmBtn}
+                  ✕
                 </button>
               </div>
+
+              {/* Step 1: Confirmation Dialog */}
+              {deleteStep === 1 && (
+                <div>
+                  <h3 style={{ fontSize: 18, fontWeight: 700, color: '#1E1A3C', marginBottom: 10 }}>⚠️ Hisobni o'chirish</h3>
+                  <p style={{ fontSize: 14, color: '#DC2626', marginBottom: 20, lineHeight: 1.5, fontWeight: 500 }}>
+                    You are about to permanently delete your account. This action cannot be undone.
+                  </p>
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <button 
+                      onClick={() => setActiveModal(null)}
+                      style={{
+                        flex: 1, padding: '12px', borderRadius: 12, border: '1.5px solid #E4E1F4',
+                        background: '#FFFFFF', color: '#5C548A', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit'
+                      }}
+                    >
+                      Bekor qilish
+                    </button>
+                    <button 
+                      onClick={() => setDeleteStep(2)}
+                      style={{
+                        flex: 1, padding: '12px', borderRadius: 12, border: 'none',
+                        background: '#DC2626', color: '#FFFFFF', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit'
+                      }}
+                    >
+                      Davom etish →
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Step 2: Name Verification */}
+              {deleteStep === 2 && (
+                <div>
+                  <h3 style={{ fontSize: 18, fontWeight: 700, color: '#1E1A3C', marginBottom: 10 }}>👤 Ismingizni tasdiqlang</h3>
+                  <p style={{ fontSize: 13, color: '#5C548A', marginBottom: 16 }}>
+                    Hisobingizni o'chirish uchun ismingizni to'liq va aniq kiriting: <b>{userName}</b>
+                  </p>
+                  <input 
+                    type="text" 
+                    value={deleteConfirmName} 
+                    onChange={e => setDeleteConfirmName(e.target.value)} 
+                    placeholder={userName}
+                    style={{
+                      width: '100%', padding: '12px 16px', borderRadius: 12, border: '1.5px solid #E4E1F4',
+                      fontSize: 14, outline: 'none', marginBottom: 20
+                    }}
+                  />
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <button 
+                      onClick={() => setActiveModal(null)}
+                      style={{
+                        flex: 1, padding: '12px', borderRadius: 12, border: '1.5px solid #E4E1F4',
+                        background: '#FFFFFF', color: '#5C548A', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit'
+                      }}
+                    >
+                      Bekor qilish
+                    </button>
+                    <button 
+                      onClick={() => setDeleteStep(3)}
+                      disabled={deleteConfirmName.trim() !== userName.trim()}
+                      style={{
+                        flex: 1, padding: '12px', borderRadius: 12, border: 'none',
+                        background: deleteConfirmName.trim() === userName.trim() ? '#DC2626' : '#FCA5A5',
+                        color: '#FFFFFF', fontSize: 13, fontWeight: 600,
+                        cursor: deleteConfirmName.trim() === userName.trim() ? 'pointer' : 'not-allowed', fontFamily: 'inherit'
+                      }}
+                    >
+                      Keyingisi →
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Step 3: 4-Digit Code Verification */}
+              {deleteStep === 3 && (
+                <div>
+                  <h3 style={{ fontSize: 18, fontWeight: 700, color: '#1E1A3C', marginBottom: 10 }}>🔢 Tasdiqlash kodi</h3>
+                  <p style={{ fontSize: 13, color: '#5C548A', marginBottom: 12 }}>
+                    Quyidagi 4 xonali tasdiqlash kodini pastga kiriting:
+                  </p>
+                  <div style={{ textAlign: 'center', background: '#F5F4FA', padding: '14px', borderRadius: 16, marginBottom: 16, fontSize: 24, fontWeight: 800, letterSpacing: 6, color: '#7C3AED' }}>
+                    {deleteRandomCode}
+                  </div>
+                  <input 
+                    type="text" 
+                    maxLength={4}
+                    value={deleteInputCode} 
+                    onChange={e => setDeleteInputCode(e.target.value)} 
+                    placeholder="4 xonali kod"
+                    style={{
+                      width: '100%', padding: '12px 16px', borderRadius: 12, border: '1.5px solid #E4E1F4',
+                      fontSize: 18, textAlign: 'center', letterSpacing: 4, outline: 'none', marginBottom: 20
+                    }}
+                  />
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <button 
+                      onClick={() => setActiveModal(null)}
+                      style={{
+                        flex: 1, padding: '12px', borderRadius: 12, border: '1.5px solid #E4E1F4',
+                        background: '#FFFFFF', color: '#5C548A', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit'
+                      }}
+                    >
+                      Bekor qilish
+                    </button>
+                    <button 
+                      onClick={() => setDeleteStep(4)}
+                      disabled={deleteInputCode.trim() !== deleteRandomCode}
+                      style={{
+                        flex: 1, padding: '12px', borderRadius: 12, border: 'none',
+                        background: deleteInputCode.trim() === deleteRandomCode ? '#DC2626' : '#FCA5A5',
+                        color: '#FFFFFF', fontSize: 13, fontWeight: 600,
+                        cursor: deleteInputCode.trim() === deleteRandomCode ? 'pointer' : 'not-allowed', fontFamily: 'inherit'
+                      }}
+                    >
+                      Oxirgi tasdiq →
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Step 4: Final Warning & Permanent Delete */}
+              {deleteStep === 4 && (
+                <div>
+                  <h3 style={{ fontSize: 18, fontWeight: 700, color: '#DC2626', marginBottom: 10 }}>🚨 Oxirgi ogohlantirish!</h3>
+                  <div style={{ background: '#FEF2F2', padding: '14px 16px', borderRadius: 16, border: '1px solid #FCA5A5', marginBottom: 20 }}>
+                    <p style={{ fontSize: 13, color: '#991B1B', lineHeight: 1.5, fontWeight: 500 }}>
+                      You are permanently deleting your Moliya AI account. This action permanently removes your account and associated data. Deleted data cannot be recovered. Moliya AI is not responsible for any consequences after the account has been permanently deleted.
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <button 
+                      onClick={handleClearAllData}
+                      style={{
+                        width: '100%', padding: '14px', borderRadius: 14, border: 'none',
+                        background: '#DC2626', color: '#FFFFFF', fontSize: 13, fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit',
+                        boxShadow: '0 4px 14px rgba(220, 38, 38, 0.3)'
+                      }}
+                    >
+                      Hisobni va barcha ma'lumotlarni butunlay o'chirish 🗑
+                    </button>
+                    <button 
+                      onClick={() => setActiveModal(null)}
+                      style={{
+                        width: '100%', padding: '12px', borderRadius: 12, border: '1.5px solid #E4E1F4',
+                        background: '#FFFFFF', color: '#5C548A', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit'
+                      }}
+                    >
+                      Bekor qilish (Orqaga)
+                    </button>
+                  </div>
+                </div>
+              )}
             </motion.div>
           </div>
         )}
