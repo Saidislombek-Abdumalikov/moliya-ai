@@ -212,11 +212,29 @@ async function setUserBudget(fromUser: any, category: string, limitAmt: number) 
   }
 }
 
+async function sendTelegramDocument(chatId: number | string, fileBuffer: Buffer, fileName: string, caption?: string) {
+  try {
+    const formData = new FormData();
+    formData.append('chat_id', String(chatId));
+    formData.append('document', new Blob([fileBuffer], { type: 'text/csv' }), fileName);
+    if (caption) formData.append('caption', caption);
+    formData.append('parse_mode', 'HTML');
+
+    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendDocument`, {
+      method: 'POST',
+      body: formData
+    });
+  } catch (err) {
+    console.error('Failed to send Telegram document:', err);
+  }
+}
+
 const getMainMenuKeyboard = () => {
   return {
     keyboard: [
       [{ text: "📱 Telegram Mini App", web_app: { url: appUrl } }, { text: "🌐 Web App", url: appUrl }],
       [{ text: "📊 Balans va Hisobot" }, { text: "📈 Kategoriyalar va Byudjet" }],
+      [{ text: "📥 Eksport (Excel/CSV)" }, { text: "⏰ Eslatmalar" }],
       [{ text: "❌ Oxirgi operatsiyani o'chirish" }, { text: "💡 Yordam" }]
     ],
     resize_keyboard: true
@@ -240,6 +258,24 @@ async function sendTelegramMessage(chatId: number | string, text: string, replyM
   }
 }
 
+async function editTelegramMessage(chatId: number | string, messageId: number, text: string, replyMarkup?: any) {
+  try {
+    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        message_id: messageId,
+        text,
+        parse_mode: 'HTML',
+        reply_markup: replyMarkup
+      })
+    });
+  } catch (err) {
+    console.error('Failed to edit Telegram message:', err);
+  }
+}
+
 async function answerCallbackQuery(callbackQueryId: string, text: string) {
   try {
     await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
@@ -250,6 +286,99 @@ async function answerCallbackQuery(callbackQueryId: string, text: string) {
   } catch (err) {
     console.error('Failed to answer callback query:', err);
   }
+}
+
+async function buildPeriodReport(fromUser: any, period: 'today' | 'week' | 'month' | 'last_month' = 'month') {
+  const txs = await getBotTransactions(fromUser);
+  const budgets = await getUserBudgets(fromUser);
+
+  const now = new Date();
+  let periodTitle = "Shu oy";
+  let filteredTxs: any[] = [];
+
+  if (period === 'today') {
+    periodTitle = "Bugun";
+    filteredTxs = txs.filter(t => {
+      const d = new Date(t.date || 0);
+      return d.getDate() === now.getDate() && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+    });
+  } else if (period === 'week') {
+    periodTitle = "Shu hafta";
+    const startOfWeek = new Date(now);
+    const day = now.getDay();
+    const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+    startOfWeek.setDate(diff);
+    startOfWeek.setHours(0, 0, 0, 0);
+    filteredTxs = txs.filter(t => new Date(t.date || 0) >= startOfWeek);
+  } else if (period === 'last_month') {
+    periodTitle = "O'tgan oy";
+    const lmDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    filteredTxs = txs.filter(t => {
+      const d = new Date(t.date || 0);
+      return d.getMonth() === lmDate.getMonth() && d.getFullYear() === lmDate.getFullYear();
+    });
+  } else {
+    periodTitle = "Shu oy";
+    filteredTxs = txs.filter(t => {
+      const d = new Date(t.date || 0);
+      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+    });
+  }
+
+  const totalExpense = filteredTxs.filter(t => t.type === 'expense').reduce((acc, t) => acc + Math.abs(Number(t.amount) || 0), 0);
+  const totalIncome = filteredTxs.filter(t => t.type === 'income').reduce((acc, t) => acc + Number(t.amount) || 0, 0);
+
+  const catMap: Record<string, number> = {};
+  filteredTxs.filter(t => t.type === 'expense').forEach(t => {
+    const cat = t.category || 'Boshqa';
+    catMap[cat] = (catMap[cat] || 0) + Math.abs(Number(t.amount) || 0);
+  });
+
+  const fmt = (n: number) => n.toLocaleString('en-US').replace(/,/g, ' ');
+
+  let catReportText = "";
+  const catEntries = Object.entries(catMap).sort((a, b) => b[1] - a[1]);
+
+  if (catEntries.length === 0) {
+    catReportText = `<i>${periodTitle}da hali xarajatlar mavjud emas.</i>`;
+  } else {
+    catReportText = catEntries.map(([cat, amt]) => {
+      const percent = totalExpense > 0 ? Math.round((amt / totalExpense) * 100) : 0;
+      const bar = renderProgressBar(percent / 100, 8);
+      const budgetLimit = budgets[cat];
+      let budgetNotice = "";
+      if (period === 'month' && budgetLimit && budgetLimit > 0) {
+        const bPercent = Math.round((amt / budgetLimit) * 100);
+        const bEmoji = bPercent >= 100 ? '🚨' : bPercent >= 80 ? '⚠️' : '🎯';
+        budgetNotice = `\n   ${bEmoji} <i>Limit: ${fmt(budgetLimit)} so'm (${bPercent}%)</i>`;
+      }
+      return `📂 <b>${cat}</b>: ${fmt(amt)} so'm (${percent}%)\n   <code>[${bar}]</code>${budgetNotice}`;
+    }).join('\n\n');
+  }
+
+  const text = `📈 <b>Tahlil va Statistika (${periodTitle})</b> 📊\n\n` +
+    `🟢 <b>Daromad:</b> ${fmt(totalIncome)} so'm\n` +
+    `🔻 <b>Xarajat:</b> ${fmt(totalExpense)} so'm\n` +
+    `💰 <b>Sof qoldiq:</b> ${fmt(totalIncome - totalExpense)} so'm\n\n` +
+    `━━━━━━━━━━━━━━━━━━\n` +
+    `<b>Kategoriyalar bo'yicha ajratish:</b>\n\n` +
+    `${catReportText}\n\n` +
+    `💡 <i>Vaqt oralig'ini tanlang:</i>`;
+
+  const inlineKeyboard = {
+    inline_keyboard: [
+      [
+        { text: period === 'today' ? "✅ Bugun" : "📅 Bugun", callback_data: "period_today" },
+        { text: period === 'week' ? "✅ Shu hafta" : "🗓 Shu hafta", callback_data: "period_week" }
+      ],
+      [
+        { text: period === 'month' ? "✅ Shu oy" : "📊 Shu oy", callback_data: "period_month" },
+        { text: period === 'last_month' ? "✅ O'tgan oy" : "📆 O'tgan oy", callback_data: "period_last_month" }
+      ]
+    ]
+  };
+
+  return { text, inlineKeyboard };
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -278,6 +407,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         await answerCallbackQuery(cb.id, "🗑 Operatsiya o'chirildi!");
         await sendTelegramMessage(chatId, "🗑 <b>Operatsiya muvaffaqiyatli o'chirildi!</b> ✅", getMainMenuKeyboard());
+      } else if (chatId && data && data.startsWith('period_')) {
+        const periodKey = data.replace('period_', '') as 'today' | 'week' | 'month' | 'last_month';
+        const report = await buildPeriodReport(cb.from, periodKey);
+        await answerCallbackQuery(cb.id, "📊 Tahlil yangilandi");
+        if (cb.message?.message_id) {
+          await editTelegramMessage(chatId, cb.message.message_id, report.text, report.inlineKeyboard);
+        } else {
+          await sendTelegramMessage(chatId, report.text, report.inlineKeyboard);
+        }
       }
       return res.status(200).json({ status: 'ok' });
     }
@@ -324,6 +462,104 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             console.error('Error handling contact share:', contactErr);
           }
         }
+        return res.status(200).json({ status: 'ok' });
+      }
+
+      // Handle Photo (Receipt OCR)
+      const photo = message.photo;
+      if (photo && Array.isArray(photo) && photo.length > 0) {
+        const limitInfo = checkAndIncrementAiLimit(chatId);
+        if (!limitInfo.allowed) {
+          const limitMsg = `⚠️ <b>Oylik Bepul AI Limiti Tugadi! (5/5 ishlatildi)</b>\n\nSiz oylik bepul 5 ta AI so'rov imkoniyatizdan foydalandingiz.\nCheksiz AI tahlili uchun <b>Premium</b> tarifiga o'ting! ⭐`;
+          await sendTelegramMessage(chatId, limitMsg, getCleanInlineKeyboard());
+          return res.status(200).json({ status: 'ok' });
+        }
+
+        try {
+          await sendTelegramMessage(chatId, "🧾 <i>Chek rasmi tahlil qilinmoqda (AI Vision)...</i>");
+          const largestPhoto = photo[photo.length - 1];
+          const fileRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${largestPhoto.file_id}`);
+          const fileData = await fileRes.json();
+          if (fileData.ok && fileData.result?.file_path) {
+            const downloadUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${fileData.result.file_path}`;
+            const imgBufRes = await fetch(downloadUrl);
+            const imgArrayBuffer = await imgBufRes.arrayBuffer();
+            const base64Img = Buffer.from(imgArrayBuffer).toString('base64');
+
+            if (process.env.GEMINI_API_KEY) {
+              const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+              const promptText = `Analyze this Uzbek/Russian store receipt image (Korzinka, Makro, Havas, etc.) and extract JSON:
+- amount: total paid amount in UZS (number)
+- store: merchant/store name (string)
+- category: ('Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\'liq', 'Ta\'lim', 'Boshqa')
+- note: main items purchased summary (string)`;
+
+              const response = await ai.models.generateContent({
+                model: "gemini-3.1-flash-lite",
+                contents: [
+                  {
+                    inlineData: {
+                      mimeType: "image/jpeg",
+                      data: base64Img
+                    }
+                  },
+                  promptText
+                ],
+                config: {
+                  responseMimeType: "application/json",
+                  responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                      amount: { type: Type.NUMBER },
+                      store: { type: Type.STRING },
+                      category: { type: Type.STRING },
+                      note: { type: Type.STRING },
+                    },
+                    required: ["amount", "store", "category", "note"],
+                  }
+                }
+              });
+
+              const parsed = JSON.parse(response.text || '{}');
+              if (parsed && parsed.amount && parsed.amount > 0) {
+                const txId = 'tx_' + Date.now();
+                const txItem = {
+                  id: txId,
+                  type: 'expense',
+                  name: `${parsed.store || "Chek"} - ${parsed.note || "Rasmli operatsiya"}`,
+                  category: parsed.category || 'Oziq-ovqat',
+                  amount: Math.abs(parsed.amount),
+                  date: new Date().toISOString()
+                };
+
+                await saveBotTransaction(fromUser, txItem);
+                const formattedAmt = Math.abs(parsed.amount).toLocaleString('en-US').replace(/,/g, ' ');
+
+                const replyCard = `🧾 <b>Chek tahlil qilindi va saqlandi!</b> 🌟\n\n` +
+                  `🏪 <b>Do'kon:</b> ${parsed.store || "Noma'lum"}\n` +
+                  `💵 <b>Jami summa:</b> ${formattedAmt} so'm\n` +
+                  `📂 <b>Kategoriya:</b> ${parsed.category || 'Oziq-ovqat'}\n` +
+                  `📝 <b>Tafsilot:</b> ${parsed.note || "Chek xaridi"}`;
+
+                const inlineKeyboard = {
+                  inline_keyboard: [
+                    [
+                      { text: "❌ Operatsiyani o'chirish", callback_data: `del_${txId}` },
+                      { text: "📱 Mini App", web_app: { url: appUrl } }
+                    ]
+                  ]
+                };
+
+                await sendTelegramMessage(chatId, replyCard, inlineKeyboard);
+                return res.status(200).json({ status: 'ok' });
+              }
+            }
+          }
+        } catch (photoErr) {
+          console.error("Photo processing error:", photoErr);
+        }
+
+        await sendTelegramMessage(chatId, "⚠️ <i>Chek rasmidagi summani o'qib bo'lmadi. Iltimos rasmni tiniqroq tushirib qayta yuboring.</i>", getMainMenuKeyboard());
         return res.status(200).json({ status: 'ok' });
       }
 
@@ -464,30 +700,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ status: 'ok' });
       }
 
-      // 3. Balance
-      if (text.includes("Balans") || text.includes("balans") || text.startsWith("/balance") || text.includes("Statistika")) {
-        const txs = await getBotTransactions(fromUser);
-        const totalIncome = txs.filter(t => t.type === 'income').reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
-        const totalExpense = txs.filter(t => t.type === 'expense').reduce((acc, t) => acc + Math.abs(Number(t.amount) || 0), 0);
-        const netBalance = totalIncome - totalExpense;
-
-        const fmt = (n: number) => n.toLocaleString('en-US').replace(/,/g, ' ');
-
-        let lastTxsText = "<i>Hozircha tranzaksiyalar yo'q.</i>";
-        if (txs.length > 0) {
-          lastTxsText = txs.slice(0, 3).map((t, idx) => {
-            const icon = t.type === 'income' ? '🟢' : '🔻';
-            return `${idx + 1}. ${icon} <b>${t.category || 'Boshqa'}</b> — ${fmt(t.amount || 0)} so'm <i>(${t.note || t.name || ''})</i>`;
-          }).join('\n');
-        }
-
-        const balText = `📊 <b>Moliyaviy Hisobotingiz:</b> ✨\n\n🟢 <b>Jami Daromad:</b> ${fmt(totalIncome)} so'm\n🔻 <b>Jami Xarajat:</b> ${fmt(totalExpense)} so'm\n💰 <b>Sof Qoldiq:</b> ${fmt(netBalance)} so'm\n\n📋 <b>Oxirgi 3 ta operatsiya:</b>\n${lastTxsText}`;
-        await sendTelegramMessage(chatId, balText, getMainMenuKeyboard());
-        return res.status(200).json({ status: 'ok' });
-      }
-
-      // 4. Category Breakdown & Budget Limits (/stats, /budget)
-      if (text.startsWith("/stats") || text.includes("Kategoriyalar") || text.includes("Byudjet") || text.startsWith("/budget") || text.startsWith("/byudjet")) {
+      // 3. Balance, Stats, and Category Breakdown (/balance, /stats, /budget)
+      if (text.includes("Balans") || text.includes("balans") || text.startsWith("/balance") || text.includes("Statistika") || text.startsWith("/stats") || text.includes("Kategoriyalar") || text.includes("Byudjet") || text.startsWith("/budget") || text.startsWith("/byudjet")) {
         const budgetMatch = text.match(/\/(?:budget|byudjet)\s+(.+?)\s+(\d+[\d\s]*)/i);
         if (budgetMatch) {
           const categoryRaw = budgetMatch[1].trim();
@@ -501,55 +715,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
         }
 
-        const txs = await getBotTransactions(fromUser);
-        const budgets = await getUserBudgets(fromUser);
-
-        const now = new Date();
-        const currentMonthTxs = txs.filter(t => {
-          const d = new Date(t.date || 0);
-          return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-        });
-
-        const totalExpense = currentMonthTxs.filter(t => t.type === 'expense').reduce((acc, t) => acc + Math.abs(Number(t.amount) || 0), 0);
-        const totalIncome = currentMonthTxs.filter(t => t.type === 'income').reduce((acc, t) => acc + Number(t.amount) || 0, 0);
-
-        const catMap: Record<string, number> = {};
-        currentMonthTxs.filter(t => t.type === 'expense').forEach(t => {
-          const cat = t.category || 'Boshqa';
-          catMap[cat] = (catMap[cat] || 0) + Math.abs(Number(t.amount) || 0);
-        });
-
-        const fmt = (n: number) => n.toLocaleString('en-US').replace(/,/g, ' ');
-
-        let catReportText = "";
-        const catEntries = Object.entries(catMap).sort((a, b) => b[1] - a[1]);
-
-        if (catEntries.length === 0) {
-          catReportText = "<i>Ushbu oyda hali xarajatlar yo'q.</i>";
-        } else {
-          catReportText = catEntries.map(([cat, amt]) => {
-            const percent = totalExpense > 0 ? Math.round((amt / totalExpense) * 100) : 0;
-            const bar = renderProgressBar(percent / 100, 8);
-            const budgetLimit = budgets[cat];
-            let budgetNotice = "";
-            if (budgetLimit && budgetLimit > 0) {
-              const bPercent = Math.round((amt / budgetLimit) * 100);
-              const bEmoji = bPercent >= 100 ? '🚨' : bPercent >= 80 ? '⚠️' : '🎯';
-              budgetNotice = `\n   ${bEmoji} <i>Limit: ${fmt(budgetLimit)} so'm (${bPercent}%)</i>`;
-            }
-            return `📂 <b>${cat}</b>: ${fmt(amt)} so'm (${percent}%)\n   <code>[${bar}]</code>${budgetNotice}`;
-          }).join('\n\n');
-        }
-
-        const reportMsg = `📈 <b>Oylik Kategoriyalar va Byudjet Tahlili</b> 📊\n\n` +
-          `💰 <b>Oylik daromad:</b> ${fmt(totalIncome)} so'm\n` +
-          `🛒 <b>Oylik xarajat:</b> ${fmt(totalExpense)} so'm\n\n` +
-          `━━━━━━━━━━━━━━━━━━\n` +
-          `<b>Kategoriyalar bo'yicha ajratish:</b>\n\n` +
-          `${catReportText}\n\n` +
-          `💡 <i>Byudjet o'rnatish uchun:</i>\n<code>/budget Kategoriya Summa</code>\n<i>Masalan: /budget Oziq-ovqat 1500000</i>`;
-
-        await sendTelegramMessage(chatId, reportMsg, getMainMenuKeyboard());
+        const report = await buildPeriodReport(fromUser, 'month');
+        await sendTelegramMessage(chatId, report.text, report.inlineKeyboard);
         return res.status(200).json({ status: 'ok' });
       }
 
@@ -562,6 +729,46 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
         const fmt = (n: number) => n.toLocaleString('en-US').replace(/,/g, ' ');
         await sendTelegramMessage(chatId, `🗑 <b>Oxirgi operatsiya o'chirildi!</b> ✅\n\n❌ <b>O'chirildi:</b> ${fmt(deletedTx.amount)} so'm (${deletedTx.category} - ${deletedTx.name})`, getMainMenuKeyboard());
+        return res.status(200).json({ status: 'ok' });
+      }
+
+      // 6. CSV Export (/export, "Eksport")
+      if (text.startsWith("/export") || text.includes("Eksport") || text.includes("eksport") || text.includes("Excel")) {
+        const txs = await getBotTransactions(fromUser);
+        if (txs.length === 0) {
+          await sendTelegramMessage(chatId, "ℹ️ <i>Eksport qilish uchun tranzaksiyalar mavjud emas.</i>", getMainMenuKeyboard());
+          return res.status(200).json({ status: 'ok' });
+        }
+
+        const csvHeader = "ID,Sana,Turi,Kategoriya,Summa (so'm),Izoh\n";
+        const csvRows = txs.map(t => {
+          const dateStr = t.date ? new Date(t.date).toLocaleString('uz-UZ') : '';
+          const typeStr = t.type === 'income' ? 'Daromad' : 'Xarajat';
+          const catStr = `"${(t.category || 'Boshqa').replace(/"/g, '""')}"`;
+          const amtStr = t.amount || 0;
+          const noteStr = `"${(t.note || t.name || '').replace(/"/g, '""')}"`;
+          return `${t.id},${dateStr},${typeStr},${catStr},${amtStr},${noteStr}`;
+        }).join('\n');
+
+        const csvContent = csvHeader + csvRows;
+        const fileBuffer = Buffer.from(csvContent, 'utf-8');
+        const fileName = `Moliya_AI_Hisobot_${Date.now()}.csv`;
+
+        await sendTelegramDocument(chatId, fileBuffer, fileName, "📊 <b>Barcha moliyaviy tranzaksiyalaringiz fayl shaklida tayyorlandi!</b> 📥");
+        return res.status(200).json({ status: 'ok' });
+      }
+
+      // 7. Reminders (/remind, "Eslatmalar")
+      if (text.startsWith("/remind") || text.includes("Eslatma") || text.includes("eslatma") || text.includes("Eslatmalar")) {
+        try {
+          const tgId = String(fromUser?.id);
+          const userId = `moliya_user_tg_${tgId}`;
+          await setDoc(doc(db, 'users', userId), { remindersEnabled: true, reminderHour: 20 }, { merge: true });
+          const remindMsg = `⏰ <b>Kunlik Eslatmalar Yoqildi!</b> 🔔\n\nHar kuni soat <b>20:00 da</b> bot sizga moliyaviy xarajatlaringizni kiritishni eslatib turadi.\n\n<i>Eslatmani o'chirish uchun botga har qanday vaqtda yangi tranzaksiya yuborishingiz kifoya.</i>`;
+          await sendTelegramMessage(chatId, remindMsg, getMainMenuKeyboard());
+        } catch (e) {
+          console.error('Error enabling reminders:', e);
+        }
         return res.status(200).json({ status: 'ok' });
       }
 
