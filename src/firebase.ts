@@ -3,7 +3,7 @@ import { getFirestore } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 
 const firebaseConfig = {
-  apiKey: import.meta.env?.VITE_FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY || process.env.FIREBASE_API_KEY || "",
+  apiKey: (import.meta.env && import.meta.env.VITE_FIREBASE_API_KEY) ? import.meta.env.VITE_FIREBASE_API_KEY : "AIzaSyD0pzvcVsr_Fh3DxUQLhyKtoUejYtSRRCs",
   authDomain: "arctic-pad-sn56p.firebaseapp.com",
   projectId: "arctic-pad-sn56p",
   storageBucket: "arctic-pad-sn56p.firebasestorage.app",

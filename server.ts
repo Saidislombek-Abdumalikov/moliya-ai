@@ -7,7 +7,7 @@ import { getFirestore, doc, setDoc, getDoc } from "firebase/firestore";
 import crypto from "crypto";
 
 const firebaseConfig = {
-  apiKey: process.env.VITE_FIREBASE_API_KEY || process.env.FIREBASE_API_KEY || "",
+  apiKey: process.env.VITE_FIREBASE_API_KEY || process.env.FIREBASE_API_KEY || "AIzaSyD0pzvcVsr_Fh3DxUQLhyKtoUejYtSRRCs",
   authDomain: "arctic-pad-sn56p.firebaseapp.com",
   projectId: "arctic-pad-sn56p",
   storageBucket: "arctic-pad-sn56p.firebasestorage.app",
