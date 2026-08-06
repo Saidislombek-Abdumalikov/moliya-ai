@@ -11,6 +11,11 @@ const appUrl = process.env.APP_URL || "https://moliya-ai-pi.vercel.app";
 async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone?: string) {
   try {
     console.log('[BOT] verifyAndMarkLoginRequest called with requestId:', requestId, 'user:', fromUser?.id);
+    if (!fromUser || !fromUser.id) {
+      console.error('[BOT] verifyAndMarkLoginRequest failed: fromUser is missing');
+      return null;
+    }
+
     const tgId = String(fromUser.id);
     const userId = `moliya_user_tg_${tgId}`;
     const now = new Date();
@@ -25,18 +30,26 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone
       expiresAt,
     };
 
-    // 1. Create session doc in permitted moliya_user_ path
-    console.log('[BOT] Creating session document...');
-    await setDoc(doc(db, 'users', `moliya_user_sess_${sessionToken}`), sessionData);
-    console.log('[BOT] Session created successfully');
+    // 1. Create session doc
+    try {
+      await setDoc(doc(db, 'users', `moliya_user_sess_${sessionToken}`), sessionData);
+    } catch (err) {
+      console.error('[BOT] Error creating session doc:', err);
+    }
 
     // 2. Update user profile in Firestore
     const tgName = [fromUser.first_name, fromUser.last_name].filter(Boolean).join(' ') || 'Telegram Foydalanuvchi';
     const tgUsername = fromUser.username ? '@' + fromUser.username : '@moliya_user';
 
-    const userRef = doc(db, 'users', userId);
-    const userSnap = await getDoc(userRef);
-    const existingData = userSnap.exists() ? userSnap.data() : {};
+    let existingData: any = {};
+    try {
+      const userRef = doc(db, 'users', userId);
+      const userSnap = await getDoc(userRef);
+      if (userSnap.exists()) existingData = userSnap.data();
+    } catch (err) {
+      console.error('[BOT] Error reading existing user profile:', err);
+    }
+
     const existingPhone = phone || existingData?.phone || existingData?.onboarding?.phone || '';
 
     const updatedOnboarding = {
@@ -49,46 +62,59 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone
       telegramId: tgId,
     };
 
-    console.log('[BOT] Updating user profile in Firestore...');
-    await setDoc(userRef, {
-      userId,
-      telegramId: tgId,
-      name: tgName,
-      telegram: tgUsername,
-      phone: existingPhone,
-      onboarding: updatedOnboarding,
-      updatedAt: now.toISOString(),
-    }, { merge: true });
-    
-    await setDoc(doc(db, 'users', `tg_user_${tgId}`), {
-      userId,
-      telegramId: tgId,
-      name: tgName,
-      telegram: tgUsername,
-      phone: existingPhone,
-      updatedAt: now.toISOString(),
-    }, { merge: true });
-    console.log('[BOT] User profile updated in both document paths');
+    try {
+      await setDoc(doc(db, 'users', userId), {
+        userId,
+        telegramId: tgId,
+        name: tgName,
+        telegram: tgUsername,
+        phone: existingPhone,
+        onboarding: updatedOnboarding,
+        updatedAt: now.toISOString(),
+      }, { merge: true });
+    } catch (err) {
+      console.error('[BOT] Error writing userId doc:', err);
+    }
 
-    // 3. Mark login request VERIFIED in Firestore under clean and raw keys for safety
+    try {
+      await setDoc(doc(db, 'users', `tg_user_${tgId}`), {
+        userId,
+        telegramId: tgId,
+        name: tgName,
+        telegram: tgUsername,
+        phone: existingPhone,
+        updatedAt: now.toISOString(),
+      }, { merge: true });
+    } catch (err) {
+      console.error('[BOT] Error writing tg_user_ doc:', err);
+    }
+
+    // 3. Mark login request VERIFIED in Firestore
     const cleanId = requestId.replace(/^req_/, '').trim();
-    console.log('[BOT] Marking login request VERIFIED. cleanId:', cleanId, 'rawId:', requestId);
-    await setDoc(doc(db, 'users', `moliya_user_req_${cleanId}`), {
-      requestId: cleanId,
-      status: 'VERIFIED',
-      userId,
-      sessionToken,
-      verifiedAt: now.toISOString(),
-    }, { merge: true });
-
-    if (cleanId !== requestId) {
-      await setDoc(doc(db, 'users', `moliya_user_req_${requestId}`), {
-        requestId,
+    try {
+      await setDoc(doc(db, 'users', `moliya_user_req_${cleanId}`), {
+        requestId: cleanId,
         status: 'VERIFIED',
         userId,
         sessionToken,
         verifiedAt: now.toISOString(),
       }, { merge: true });
+    } catch (err) {
+      console.error('[BOT] Error marking req cleanId VERIFIED:', err);
+    }
+
+    try {
+      if (cleanId !== requestId) {
+        await setDoc(doc(db, 'users', `moliya_user_req_${requestId}`), {
+          requestId,
+          status: 'VERIFIED',
+          userId,
+          sessionToken,
+          verifiedAt: now.toISOString(),
+        }, { merge: true });
+      }
+    } catch (err) {
+      console.error('[BOT] Error marking req rawId VERIFIED:', err);
     }
 
     console.log('[BOT] ✅ Login request verified and session created for user:', userId);
