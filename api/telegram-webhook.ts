@@ -374,6 +374,9 @@ async function buildPeriodReport(fromUser: any, period: 'today' | 'week' | 'mont
       [
         { text: period === 'month' ? "✅ Shu oy" : "📊 Shu oy", callback_data: "period_month" },
         { text: period === 'last_month' ? "✅ O'tgan oy" : "📆 O'tgan oy", callback_data: "period_last_month" }
+      ],
+      [
+        { text: "🎯 Byudjet limitlarini boshqarish", callback_data: "set_b_menu" }
       ]
     ]
   };
@@ -415,6 +418,75 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           await editTelegramMessage(chatId, cb.message.message_id, report.text, report.inlineKeyboard);
         } else {
           await sendTelegramMessage(chatId, report.text, report.inlineKeyboard);
+        }
+      } else if (chatId && data === 'set_b_menu') {
+        const menuText = "🎯 <b>Qaysi kategoriya uchun byudjet limitini o'rnatmoqchisiz?</b>";
+        const inlineKeyboard = {
+          inline_keyboard: [
+            [
+              { text: "🛒 Oziq-ovqat", callback_data: "set_b_cat_Oziq-ovqat" },
+              { text: "🚕 Transport", callback_data: "set_b_cat_Transport" }
+            ],
+            [
+              { text: "👕 Kiyim", callback_data: "set_b_cat_Kiyim" },
+              { text: "💡 Kommunal", callback_data: "set_b_cat_Kommunal" }
+            ],
+            [
+              { text: "🏥 Sog'liq", callback_data: "set_b_cat_Sog'liq" },
+              { text: "🎓 Ta'lim", callback_data: "set_b_cat_Ta'lim" }
+            ],
+            [
+              { text: "🔙 Orqaga", callback_data: "period_month" }
+            ]
+          ]
+        };
+        await answerCallbackQuery(cb.id, "🎯 Kategoriya tanlang");
+        if (cb.message?.message_id) {
+          await editTelegramMessage(chatId, cb.message.message_id, menuText, inlineKeyboard);
+        } else {
+          await sendTelegramMessage(chatId, menuText, inlineKeyboard);
+        }
+      } else if (chatId && data && data.startsWith('set_b_cat_')) {
+        const category = data.replace('set_b_cat_', '');
+        const promptText = `🎯 <b>${category}</b> uchun oylik byudjet limitini tanlang:`;
+        const inlineKeyboard = {
+          inline_keyboard: [
+            [
+              { text: "500 ming", callback_data: `save_b_${category}_500000` },
+              { text: "1 mln", callback_data: `save_b_${category}_1000000` },
+              { text: "1.5 mln", callback_data: `save_b_${category}_1500000` }
+            ],
+            [
+              { text: "2 mln", callback_data: `save_b_${category}_2000000` },
+              { text: "3 mln", callback_data: `save_b_${category}_3000000` },
+              { text: "5 mln", callback_data: `save_b_${category}_5000000` }
+            ],
+            [
+              { text: "🔙 Orqaga", callback_data: "set_b_menu" }
+            ]
+          ]
+        };
+        await answerCallbackQuery(cb.id, `🎯 ${category} tanlandi`);
+        if (cb.message?.message_id) {
+          await editTelegramMessage(chatId, cb.message.message_id, promptText, inlineKeyboard);
+        } else {
+          await sendTelegramMessage(chatId, promptText, inlineKeyboard);
+        }
+      } else if (chatId && data && data.startsWith('save_b_')) {
+        const parts = data.replace('save_b_', '').split('_');
+        const category = parts[0];
+        const amount = parseInt(parts[1] || '0', 10);
+
+        if (category && amount > 0) {
+          await setUserBudget(cb.from, category, amount);
+          const fmtAmt = amount.toLocaleString('en-US').replace(/,/g, ' ');
+          await answerCallbackQuery(cb.id, `✅ ${category}: ${fmtAmt} so'm limit!`);
+          const report = await buildPeriodReport(cb.from, 'month');
+          if (cb.message?.message_id) {
+            await editTelegramMessage(chatId, cb.message.message_id, report.text, report.inlineKeyboard);
+          } else {
+            await sendTelegramMessage(chatId, report.text, report.inlineKeyboard);
+          }
         }
       }
       return res.status(200).json({ status: 'ok' });
