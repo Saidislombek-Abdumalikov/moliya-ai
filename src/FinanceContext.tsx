@@ -389,6 +389,10 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           setDeletedTxIds(data.deletedTxIds)
           localStorage.setItem('user_deleted_tx_ids_v1', JSON.stringify(data.deletedTxIds))
         }
+        if (data.hasSampleData !== undefined) {
+          setHasSampleDataState(data.hasSampleData)
+          localStorage.setItem('user_has_sample_v1', String(data.hasSampleData))
+        }
       } else {
         // Seed Firestore if document doesn't exist yet but we have local data
         setDoc(docRef, {

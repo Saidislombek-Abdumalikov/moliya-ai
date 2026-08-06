@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI, Type } from "@google/genai";
 import crypto from "crypto";
-import { doc, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
 import { db } from './_firebaseClient.js';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8955141731:AAGzuBXoKmZii5t_bJcwbJA0Q92gYrFaGnw";
@@ -89,8 +89,61 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone
   }
 }
 
-// In-memory Telegram user stores for speed
-const tgUserTransactions = new Map<number, { id: string; type: string; name: string; category: string; amount: number; date: string }[]>();
+// Firestore Transaction Helpers for Bot-WebApp Sync
+async function saveBotTransaction(fromUser: any, txItem: { id: string; type: string; name: string; category: string; amount: number; date: string }) {
+  try {
+    const tgId = String(fromUser.id);
+    const userId = `moliya_user_tg_${tgId}`;
+    const txRef = doc(db, 'users', userId, 'transactions', txItem.id);
+    await setDoc(txRef, {
+      type: txItem.type,
+      amount: txItem.amount,
+      note: txItem.name,
+      category: txItem.category,
+      date: txItem.date
+    }, { merge: true });
+    console.log(`[BOT] Saved transaction ${txItem.id} to Firestore for user ${userId}`);
+  } catch (err) {
+    console.error('[BOT] Error saving transaction to Firestore:', err);
+  }
+}
+
+async function getBotTransactions(fromUser: any) {
+  try {
+    const tgId = String(fromUser.id);
+    const userId = `moliya_user_tg_${tgId}`;
+    const txRef = collection(db, 'users', userId, 'transactions');
+    const q = query(txRef, orderBy('date', 'desc'), limit(100));
+    const snap = await getDocs(q);
+    const txs: any[] = [];
+    snap.forEach((d) => txs.push({ id: d.id, ...d.data() }));
+    return txs;
+  } catch (err) {
+    console.error('[BOT] Error fetching transactions from Firestore:', err);
+    return [];
+  }
+}
+
+async function deleteLastBotTransaction(fromUser: any) {
+  try {
+    const tgId = String(fromUser.id);
+    const userId = `moliya_user_tg_${tgId}`;
+    const txRef = collection(db, 'users', userId, 'transactions');
+    const q = query(txRef, orderBy('date', 'desc'), limit(1));
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      const docToDelete = snap.docs[0];
+      const data = docToDelete.data();
+      await deleteDoc(docToDelete.ref);
+      return { id: docToDelete.id, amount: data.amount || 0, category: data.category || 'Boshqa', name: data.note || data.name || 'Operatsiya' };
+    }
+    return null;
+  } catch (err) {
+    console.error('[BOT] Error deleting transaction from Firestore:', err);
+    return null;
+  }
+}
+
 const tgUserAiUsage = new Map<number, { firstSeen: number; count: number }>();
 
 const checkAndIncrementAiLimit = (chatId: number): { allowed: boolean; isTrial: boolean; remaining: number } => {
@@ -180,9 +233,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (chatId && data && data.startsWith('del_')) {
         const txId = data.replace('del_', '');
-        const txs = tgUserTransactions.get(chatId) || [];
-        const newTxs = txs.filter(t => t.id !== txId);
-        tgUserTransactions.set(chatId, newTxs);
+        const tgId = String(cb.from?.id || chatId);
+        try {
+          await deleteDoc(doc(db, 'users', `moliya_user_tg_${tgId}`, 'transactions', txId));
+        } catch (e) {
+          console.error('[BOT] Error deleting callback tx:', e);
+        }
 
         await answerCallbackQuery(cb.id, "🗑 Operatsiya o'chirildi!");
         await sendTelegramMessage(chatId, "🗑 <b>Operatsiya muvaffaqiyatli o'chirildi!</b> ✅", getMainMenuKeyboard());
@@ -301,9 +357,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   date: new Date().toISOString()
                 };
 
-                const userList = tgUserTransactions.get(chatId) || [];
-                userList.push(txItem);
-                tgUserTransactions.set(chatId, userList);
+                const userList = await getBotTransactions(fromUser);
+                await saveBotTransaction(fromUser, txItem);
 
                 const typeEmoji = parsed.type === 'income' ? '🟢 Daromad' : '🛒 Xarajat';
                 const formattedAmt = parsed.amount.toLocaleString('en-US').replace(/,/g, ' ');
@@ -375,18 +430,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // 3. Balance
       if (text.includes("Balans") || text.includes("balans") || text.startsWith("/balance") || text.includes("Statistika")) {
-        const txs = tgUserTransactions.get(chatId) || [];
-        const totalIncome = txs.filter(t => t.type === 'income').reduce((acc, t) => acc + t.amount, 0);
-        const totalExpense = txs.filter(t => t.type === 'expense').reduce((acc, t) => acc + Math.abs(t.amount), 0);
+        const txs = await getBotTransactions(fromUser);
+        const totalIncome = txs.filter(t => t.type === 'income').reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
+        const totalExpense = txs.filter(t => t.type === 'expense').reduce((acc, t) => acc + Math.abs(Number(t.amount) || 0), 0);
         const netBalance = totalIncome - totalExpense;
 
         const fmt = (n: number) => n.toLocaleString('en-US').replace(/,/g, ' ');
 
         let lastTxsText = "<i>Hozircha tranzaksiyalar yo'q.</i>";
         if (txs.length > 0) {
-          lastTxsText = txs.slice(-3).reverse().map((t, idx) => {
+          lastTxsText = txs.slice(0, 3).map((t, idx) => {
             const icon = t.type === 'income' ? '🟢' : '🔻';
-            return `${idx + 1}. ${icon} <b>${t.category}</b> — ${fmt(t.amount)} so'm <i>(${t.name})</i>`;
+            return `${idx + 1}. ${icon} <b>${t.category || 'Boshqa'}</b> — ${fmt(t.amount || 0)} so'm <i>(${t.note || t.name || ''})</i>`;
           }).join('\n');
         }
 
@@ -397,15 +452,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // 4. Delete
       if (text.includes("o'chirish") || text.includes("очириш") || text.startsWith("/delete")) {
-        const txs = tgUserTransactions.get(chatId) || [];
-        if (txs.length === 0) {
+        const deletedTx = await deleteLastBotTransaction(fromUser);
+        if (!deletedTx) {
           await sendTelegramMessage(chatId, "ℹ️ <i>O'chirish uchun tranzaksiyalar mavjud emas.</i>", getMainMenuKeyboard());
           return res.status(200).json({ status: 'ok' });
         }
-        const lastTx = txs.pop();
-        tgUserTransactions.set(chatId, txs);
         const fmt = (n: number) => n.toLocaleString('en-US').replace(/,/g, ' ');
-        await sendTelegramMessage(chatId, `🗑 <b>Oxirgi operatsiya o'chirildi!</b> ✅\n\n❌ <b>O'chirildi:</b> ${fmt(lastTx?.amount || 0)} so'm (${lastTx?.category} - ${lastTx?.name})`, getMainMenuKeyboard());
+        await sendTelegramMessage(chatId, `🗑 <b>Oxirgi operatsiya o'chirildi!</b> ✅\n\n❌ <b>O'chirildi:</b> ${fmt(deletedTx.amount)} so'm (${deletedTx.category} - ${deletedTx.name})`, getMainMenuKeyboard());
         return res.status(200).json({ status: 'ok' });
       }
 
@@ -479,9 +532,7 @@ Return JSON object:
           date: new Date().toISOString()
         };
 
-        const userList = tgUserTransactions.get(chatId) || [];
-        userList.push(txItem);
-        tgUserTransactions.set(chatId, userList);
+        await saveBotTransaction(fromUser, txItem);
 
         const typeEmoji = parsed.type === 'income' ? '🟢 Daromad' : '🛒 Xarajat';
         const formattedAmt = parsed.amount.toLocaleString('en-US').replace(/,/g, ' ');
