@@ -144,25 +144,50 @@ async function deleteLastBotTransaction(fromUser: any) {
   }
 }
 
-const tgUserAiUsage = new Map<number, { firstSeen: number; count: number }>();
+async function checkAndIncrementAiLimitAsync(fromUser: any): Promise<{ allowed: boolean; remaining: number; isPremium: boolean }> {
+  try {
+    const tgId = String(fromUser?.id);
+    if (!tgId) return { allowed: true, remaining: 5, isPremium: false };
+    const userId = `moliya_user_tg_${tgId}`;
+    const userRef = doc(db, 'users', userId);
+    const userSnap = await getDoc(userRef);
 
-const checkAndIncrementAiLimit = (chatId: number): { allowed: boolean; isTrial: boolean; remaining: number } => {
-  const now = Date.now();
-  let usage = tgUserAiUsage.get(chatId);
-  if (!usage) {
-    usage = { firstSeen: now, count: 0 };
-    tgUserAiUsage.set(chatId, usage);
+    if (userSnap.exists()) {
+      const data = userSnap.data();
+
+      // 1. Premium subscription check
+      if (data.isPremium === true || data.subscriptionStatus === 'active' || data.plan === 'premium') {
+        return { allowed: true, remaining: 999, isPremium: true };
+      }
+
+      // 2. 24-hour trial period from user creation
+      const createdAt = data.createdAt ? new Date(data.createdAt).getTime() : Date.now();
+      const is24hTrial = (Date.now() - createdAt) < (24 * 3600 * 1000);
+      if (is24hTrial) {
+        return { allowed: true, remaining: 999, isPremium: false };
+      }
+
+      // 3. AI usage limit check (synced with App)
+      const currentCount = Number(data.aiCount || 0);
+      const limit = Number(data.aiLimit || 5);
+
+      if (currentCount >= limit) {
+        return { allowed: false, remaining: 0, isPremium: false };
+      }
+
+      // Increment count in Firestore
+      await setDoc(userRef, { aiCount: currentCount + 1, updatedAt: new Date().toISOString() }, { merge: true });
+      return { allowed: true, remaining: limit - (currentCount + 1), isPremium: false };
+    } else {
+      // First interaction: create user doc with 1 usage
+      await setDoc(userRef, { aiCount: 1, aiLimit: 5, createdAt: new Date().toISOString() }, { merge: true });
+      return { allowed: true, remaining: 4, isPremium: false };
+    }
+  } catch (e) {
+    console.error('Error checking AI limit in Firestore:', e);
+    return { allowed: true, remaining: 5, isPremium: false };
   }
-
-  const isTrial = (now - usage.firstSeen) < (24 * 3600 * 1000);
-  if (isTrial) return { allowed: true, isTrial: true, remaining: 999 };
-
-  if (usage.count >= 5) return { allowed: false, isTrial: false, remaining: 0 };
-
-  usage.count += 1;
-  tgUserAiUsage.set(chatId, usage);
-  return { allowed: true, isTrial: false, remaining: 5 - usage.count };
-};
+}
 
 const getCleanInlineKeyboard = (requestId?: string) => {
   const webUrl = requestId ? `${appUrl}/?req=${requestId}` : appUrl;
@@ -869,9 +894,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // Handle Photo (Receipt OCR)
       const photo = message.photo;
       if (photo && Array.isArray(photo) && photo.length > 0) {
-        const limitInfo = checkAndIncrementAiLimit(chatId);
+        const limitInfo = await checkAndIncrementAiLimitAsync(fromUser);
         if (!limitInfo.allowed) {
-          const limitMsg = `⚠️ <b>Oylik Bepul AI Limiti Tugadi! (5/5 ishlatildi)</b>\n\nSiz oylik bepul 5 ta AI so'rov imkoniyatizdan foydalandingiz.\nCheksiz AI tahlili uchun <b>Premium</b> tarifiga o'ting! ⭐`;
+          const limitMsg = `⚠️ <b>Oylik Bepul AI Limiti Tugadi! (5/5 ishlatildi)</b>\n\nSiz oylik bepul 5 ta AI so'rov imkoniyatizdan foydalandingiz.\nCheksiz AI va chek tahlili uchun <b>Premium</b> tarifiga o'ting! ⭐`;
           await sendTelegramMessage(chatId, limitMsg, getCleanInlineKeyboard());
           return res.status(200).json({ status: 'ok' });
         }
@@ -895,31 +920,50 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 - category: ('Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\'liq', 'Ta\'lim', 'Boshqa')
 - note: main items purchased summary (string)`;
 
-              const response = await ai.models.generateContent({
-                model: "gemini-3.1-flash-lite",
-                contents: [
-                  {
-                    inlineData: {
-                      mimeType: "image/jpeg",
-                      data: base64Img
+              let response;
+              try {
+                response = await ai.models.generateContent({
+                  model: "gemini-2.5-flash",
+                  contents: [
+                    { inlineData: { mimeType: "image/jpeg", data: base64Img } },
+                    promptText
+                  ],
+                  config: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                      type: Type.OBJECT,
+                      properties: {
+                        amount: { type: Type.NUMBER },
+                        store: { type: Type.STRING },
+                        category: { type: Type.STRING },
+                        note: { type: Type.STRING },
+                      },
+                      required: ["amount", "store", "category", "note"],
                     }
-                  },
-                  promptText
-                ],
-                config: {
-                  responseMimeType: "application/json",
-                  responseSchema: {
-                    type: Type.OBJECT,
-                    properties: {
-                      amount: { type: Type.NUMBER },
-                      store: { type: Type.STRING },
-                      category: { type: Type.STRING },
-                      note: { type: Type.STRING },
-                    },
-                    required: ["amount", "store", "category", "note"],
                   }
-                }
-              });
+                });
+              } catch (e1) {
+                response = await ai.models.generateContent({
+                  model: "gemini-1.5-flash",
+                  contents: [
+                    { inlineData: { mimeType: "image/jpeg", data: base64Img } },
+                    promptText
+                  ],
+                  config: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                      type: Type.OBJECT,
+                      properties: {
+                        amount: { type: Type.NUMBER },
+                        store: { type: Type.STRING },
+                        category: { type: Type.STRING },
+                        note: { type: Type.STRING },
+                      },
+                      required: ["amount", "store", "category", "note"],
+                    }
+                  }
+                });
+              }
 
               const parsed = JSON.parse(response.text || '{}');
               if (parsed && parsed.amount && parsed.amount > 0) {
@@ -950,7 +994,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // Handle Voice Note
       if (voice && voice.file_id) {
-        const limitInfo = checkAndIncrementAiLimit(chatId);
+        const limitInfo = await checkAndIncrementAiLimitAsync(fromUser);
         if (!limitInfo.allowed) {
           const limitMsg = `⚠️ <b>Oylik Bepul AI Limiti Tugadi! (5/5 ishlatildi)</b>\n\nSiz oylik bepul 5 ta AI so'rov imkoniyatizdan foydalandingiz.\nCheksiz AI va ovozli tahlil uchun <b>Premium</b> tarifiga o'ting! ⭐`;
           await sendTelegramMessage(chatId, limitMsg, getCleanInlineKeyboard());
@@ -958,7 +1002,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         try {
-          await sendTelegramMessage(chatId, "🎙 <i>Ovozli xabar tahlil qilinmoqda...</i>");
+          await sendTelegramMessage(chatId, "🎙 <i>Ovozli xabar tahlil qilinmoqda (Gemini AI)...</i>");
 
           const fileRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${voice.file_id}`);
           const fileData = await fileRes.json();
@@ -970,37 +1014,67 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             if (process.env.GEMINI_API_KEY) {
               const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-              const promptText = `Listen to this audio financial entry in Uzbek/Russian and parse into JSON:
+              const promptText = `Listen carefully to this spoken Uzbek or Russian voice recording and extract financial transaction info into JSON:
 - type: 'expense' | 'income'
-- amount: number
-- category: string ('Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\'liq', 'Ta\'lim', 'Maosh', 'Boshqa')
-- note: string`;
+- amount: number (total in UZS currency, e.g. 25000, 150000, 4000000)
+- category: string ('Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\'liq', 'Ta\'lim', 'Boshqa', 'Mehnat chiqimlari', 'Daromad')
+- note: string (clear description of transaction in Uzbek)`;
 
-              const response = await ai.models.generateContent({
-                model: "gemini-3.1-flash-lite",
-                contents: [
-                  {
-                    inlineData: {
-                      mimeType: "audio/ogg",
-                      data: base64Audio
-                    }
-                  },
-                  promptText
-                ],
-                config: {
-                  responseMimeType: "application/json",
-                  responseSchema: {
-                    type: Type.OBJECT,
-                    properties: {
-                      type: { type: Type.STRING },
-                      amount: { type: Type.NUMBER },
-                      category: { type: Type.STRING },
-                      note: { type: Type.STRING },
+              let response;
+              try {
+                response = await ai.models.generateContent({
+                  model: "gemini-2.5-flash",
+                  contents: [
+                    {
+                      inlineData: {
+                        mimeType: "audio/ogg",
+                        data: base64Audio
+                      }
                     },
-                    required: ["type", "amount", "category", "note"],
+                    promptText
+                  ],
+                  config: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                      type: Type.OBJECT,
+                      properties: {
+                        type: { type: Type.STRING },
+                        amount: { type: Type.NUMBER },
+                        category: { type: Type.STRING },
+                        note: { type: Type.STRING },
+                      },
+                      required: ["type", "amount", "category", "note"],
+                    }
                   }
-                }
-              });
+                });
+              } catch (e1) {
+                console.log('[BOT] gemini-2.5-flash audio fallback to gemini-1.5-flash');
+                response = await ai.models.generateContent({
+                  model: "gemini-1.5-flash",
+                  contents: [
+                    {
+                      inlineData: {
+                        mimeType: "audio/ogg",
+                        data: base64Audio
+                      }
+                    },
+                    promptText
+                  ],
+                  config: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                      type: Type.OBJECT,
+                      properties: {
+                        type: { type: Type.STRING },
+                        amount: { type: Type.NUMBER },
+                        category: { type: Type.STRING },
+                        note: { type: Type.STRING },
+                      },
+                      required: ["type", "amount", "category", "note"],
+                    }
+                  }
+                });
+              }
 
               const parsed = JSON.parse(response.text || '{}');
               if (parsed && parsed.amount && parsed.amount > 0) {
@@ -1171,7 +1245,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // 5. Parse text expense
-      const limitInfo = checkAndIncrementAiLimit(chatId);
+      const limitInfo = await checkAndIncrementAiLimitAsync(fromUser);
       if (!limitInfo.allowed) {
         const limitMsg = `⚠️ <b>Oylik Bepul AI Limiti Tugadi! (5/5 ishlatildi)</b>\n\nSiz oylik bepul 5 ta AI so'rov imkoniyatizdan foydalandingiz.\nCheksiz AI so'rovlari uchun <b>Premium</b> tarifiga o'ting! ⭐`;
         await sendTelegramMessage(chatId, limitMsg, getCleanInlineKeyboard());
@@ -1191,23 +1265,44 @@ Return JSON object:
 - category: string
 - note: string
 `;
-          const response = await ai.models.generateContent({
-            model: "gemini-3.1-flash-lite",
-            contents: promptText,
-            config: {
-              responseMimeType: "application/json",
-              responseSchema: {
-                type: Type.OBJECT,
-                properties: {
-                  type: { type: Type.STRING },
-                  amount: { type: Type.NUMBER },
-                  category: { type: Type.STRING },
-                  note: { type: Type.STRING },
-                },
-                required: ["type", "amount", "category", "note"],
+          let response;
+          try {
+            response = await ai.models.generateContent({
+              model: "gemini-2.5-flash",
+              contents: promptText,
+              config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                  type: Type.OBJECT,
+                  properties: {
+                    type: { type: Type.STRING },
+                    amount: { type: Type.NUMBER },
+                    category: { type: Type.STRING },
+                    note: { type: Type.STRING },
+                  },
+                  required: ["type", "amount", "category", "note"],
+                }
               }
-            }
-          });
+            });
+          } catch (e1) {
+            response = await ai.models.generateContent({
+              model: "gemini-1.5-flash",
+              contents: promptText,
+              config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                  type: Type.OBJECT,
+                  properties: {
+                    type: { type: Type.STRING },
+                    amount: { type: Type.NUMBER },
+                    category: { type: Type.STRING },
+                    note: { type: Type.STRING },
+                  },
+                  required: ["type", "amount", "category", "note"],
+                }
+              }
+            });
+          }
           parsed = JSON.parse(response.text || '{}');
         } catch (aiErr) {
           console.error('Gemini error in bot:', aiErr);
