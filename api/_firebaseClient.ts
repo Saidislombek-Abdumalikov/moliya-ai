@@ -2,7 +2,7 @@ import { initializeApp, getApps } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
-  apiKey: "AIzaSyD0pzvcVsr_Fh3DxUQLhyKtoUejYtSRRCs",
+  apiKey: process.env.VITE_FIREBASE_API_KEY || process.env.FIREBASE_API_KEY || "",
   authDomain: "arctic-pad-sn56p.firebaseapp.com",
   projectId: "arctic-pad-sn56p",
   storageBucket: "arctic-pad-sn56p.firebasestorage.app",
