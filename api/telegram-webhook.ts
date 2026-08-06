@@ -494,7 +494,22 @@ async function sendTelegramMessage(chatId: number | string, text: string, replyM
     if (data.ok && data.result?.message_id) {
       return data.result.message_id;
     } else if (!data.ok) {
-      console.error('[BOT] Telegram sendMessage API error:', data);
+      console.error('[BOT] Telegram sendMessage HTML API error:', data);
+      // Fallback: Strip HTML tags and retry as plain text if HTML parsing failed
+      const cleanText = text.replace(/<[^>]*>/g, '');
+      const fallbackRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: cleanText,
+          reply_markup: replyMarkup
+        })
+      });
+      const fallbackData = await fallbackRes.json();
+      if (fallbackData.ok && fallbackData.result?.message_id) {
+        return fallbackData.result.message_id;
+      }
     }
   } catch (err) {
     console.error('Failed to send Telegram message:', err);
@@ -504,7 +519,7 @@ async function sendTelegramMessage(chatId: number | string, text: string, replyM
 
 async function editTelegramMessage(chatId: number | string, messageId: number, text: string, replyMarkup?: any) {
   try {
-    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -515,6 +530,21 @@ async function editTelegramMessage(chatId: number | string, messageId: number, t
         reply_markup: replyMarkup
       })
     });
+    const data = await res.json();
+    if (!data.ok) {
+      console.error('[BOT] Telegram editMessageText HTML API error:', data);
+      const cleanText = text.replace(/<[^>]*>/g, '');
+      await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          message_id: messageId,
+          text: cleanText,
+          reply_markup: replyMarkup
+        })
+      });
+    }
   } catch (err) {
     console.error('Failed to edit Telegram message:', err);
   }
@@ -1170,9 +1200,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // Standard /start without request parameter — check if user has phone saved
         console.log('[BOT] Standard /start (no login request)');
-        const tgId = String(fromUser?.id);
-        const userSnap = await getDoc(doc(db, 'users', `moliya_user_tg_${tgId}`));
-        const userData = userSnap.exists() ? userSnap.data() : {};
+        let userData: any = {};
+        try {
+          const tgId = String(fromUser?.id);
+          const userSnap = await getDoc(doc(db, 'users', `moliya_user_tg_${tgId}`));
+          if (userSnap.exists()) userData = userSnap.data();
+        } catch (e) {
+          console.error('[BOT] Error reading user doc on /start:', e);
+        }
 
         const welcomeText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n<b>Moliya AI</b> botiga xush kelibsiz! 🚀\n\nPulingizni oson va aqlli boshqaring.\n\n👇 <b>Ilovani ochish uchun quyidagi tugmani bosing:</b>`;
         
