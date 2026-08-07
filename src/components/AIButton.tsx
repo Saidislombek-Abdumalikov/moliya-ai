@@ -363,8 +363,10 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
         drag
         dragConstraints={{ top: -75, bottom: 75, left: -75, right: 75 }}
         dragElastic={0.15}
-        whileDrag={{ scale: 1.1, cursor: 'grabbing' }}
+        dragMomentum={false}
+        whileDrag={{ scale: 1.08, cursor: 'grabbing' }}
         whileTap={{ scale: 0.92 }}
+        className="gpu-layer"
         style={{
           position: 'fixed',
           bottom: 130,
@@ -397,10 +399,12 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={closeModal}
+            className="gpu-layer"
             style={{
               position: 'fixed',
               inset: 0,
               background: 'rgba(15, 12, 41, 0.45)',
+              WebkitBackdropFilter: 'blur(4px)',
               backdropFilter: 'blur(4px)',
               zIndex: 300,
               display: 'flex',

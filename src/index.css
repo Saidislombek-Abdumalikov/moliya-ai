@@ -32,7 +32,19 @@ html, body {
   font-family: var(--font-sans);
   margin: 0;
   padding: 0;
-  min-height: 100vh;
+  min-height: 100dvh;
+  width: 100%;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  touch-action: manipulation;
+  overscroll-behavior-y: none;
+}
+
+/* GPU hardware acceleration for smooth 60fps mobile transitions */
+.gpu-layer {
+  will-change: transform, opacity;
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 ::-webkit-scrollbar { display: none; }
@@ -42,9 +54,10 @@ html, body {
 /* Smooth transitions for interactive elements */
 button, input, select, textarea {
   font-family: inherit;
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  touch-action: manipulation;
 }
 
 button:active {
-  transform: scale(0.982);
+  transform: scale(0.975);
 }

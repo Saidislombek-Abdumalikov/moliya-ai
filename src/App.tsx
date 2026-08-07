@@ -123,28 +123,49 @@ export default function App() {
     )
   }
 
+  // Telegram Mini App viewport initialization & auto-expand
+  useEffect(() => {
+    const tg = (window as any).Telegram?.WebApp;
+    if (tg) {
+      try {
+        if (typeof tg.ready === 'function') tg.ready();
+        if (typeof tg.expand === 'function') tg.expand();
+        if (typeof tg.enableClosingConfirmation === 'function') tg.enableClosingConfirmation();
+      } catch (e) {
+        console.error('Telegram WebApp init error:', e);
+      }
+    }
+  }, []);
+
   return (
     <div
+      className="gpu-layer"
       style={{
         position: 'relative',
         minHeight: '100dvh',
+        width: '100%',
         maxWidth: 430,
         margin: '0 auto',
         background: '#FAF8FE',
         display: 'flex',
         flexDirection: 'column',
+        overflowX: 'hidden',
+        WebkitOverflowScrolling: 'touch',
       }}
     >
-      <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 80, position: 'relative' }}>
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={activeScreen}
-            initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -15 }}
-            transition={{ duration: 0.22, ease: 'easeOut' }}
-            style={{ width: '100%', height: '100%' }}
-          >
+      <InstallPromptModal />
+
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={activeScreen}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -10 }}
+          transition={{ duration: 0.18, ease: 'easeOut' }}
+          className="gpu-layer"
+          style={{ width: '100%', height: '100%', flex: 1 }}
+        >
+          <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 80, position: 'relative' }}>
             {activeScreen === 'home' && <HomeScreen onboarding={onboarding} onUpdateOnboarding={updateOnboarding} />}
             {activeScreen === 'calendar' && <CalendarScreen onboarding={onboarding} />}
             {activeScreen === 'analytics' && <AnalyticsScreen onboarding={onboarding} onUpdateOnboarding={updateOnboarding} />}
@@ -167,9 +188,9 @@ export default function App() {
                 onStartTour={() => setShowTour(true)}
               />
             )}
-          </motion.div>
-        </AnimatePresence>
-      </div>
+          </div>
+        </motion.div>
+      </AnimatePresence>
 
       <BottomNav active={activeScreen} onChange={setActiveScreen} language={onboarding?.language} />
       <AIButton visible={activeScreen !== 'profile' && activeScreen !== 'admin'} language={onboarding?.language || 'uz'} />

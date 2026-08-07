@@ -93,15 +93,17 @@ export default function BottomNav({ active, onChange, language = 'uz' }: Props) 
 
   return (
     <div
+      className="gpu-layer"
       style={{
         position: 'fixed',
         bottom: 0,
         left: '50%',
-        transform: 'translateX(-50%)',
+        transform: 'translate3d(-50%, 0, 0)',
         width: '100%',
         maxWidth: 430,
-        background: 'rgba(255,255,255,0.95)',
-        backdropFilter: 'blur(16px)',
+        background: 'rgba(255,255,255,0.92)',
+        WebkitBackdropFilter: 'blur(12px)',
+        backdropFilter: 'blur(12px)',
         borderTop: '1px solid #E8E3F8',
         paddingBottom: 'env(safe-area-inset-bottom, 12px)',
         zIndex: 100,
