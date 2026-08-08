@@ -146,48 +146,45 @@ export default function App() {
         maxWidth: 430,
         margin: '0 auto',
         background: '#FAF8FE',
-        display: 'flex',
-        flexDirection: 'column',
-        overflowX: 'hidden',
+        paddingBottom: 95,
+        boxSizing: 'border-box',
       }}
     >
       <InstallPromptModal />
 
-      <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 80, position: 'relative' }}>
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={activeScreen}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.15, ease: 'easeOut' }}
-            style={{ width: '100%', minHeight: '100%' }}
-          >
-            {activeScreen === 'home' && <HomeScreen onboarding={onboarding} onUpdateOnboarding={updateOnboarding} />}
-            {activeScreen === 'calendar' && <CalendarScreen onboarding={onboarding} />}
-            {activeScreen === 'analytics' && <AnalyticsScreen onboarding={onboarding} onUpdateOnboarding={updateOnboarding} />}
-            {activeScreen === 'admin' && <AdminScreen onboarding={onboarding} />}
-            {activeScreen === 'profile' && (
-              <ProfileScreen
-                onLogout={() => {
-                  localStorage.removeItem('user_logged_in_v1')
-                  localStorage.removeItem('user_onboarding_v1')
-                  setStage('onboarding')
-                  setIsLocked(false)
-                }}
-                onboarding={onboarding}
-                onUpdateOnboarding={updateOnboarding}
-                onClearData={() => {
-                  setStage('onboarding')
-                  setActiveScreen('home')
-                  setIsLocked(false)
-                }}
-                onStartTour={() => setShowTour(true)}
-              />
-            )}
-          </motion.div>
-        </AnimatePresence>
-      </div>
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={activeScreen}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.15, ease: 'easeOut' }}
+          style={{ width: '100%' }}
+        >
+          {activeScreen === 'home' && <HomeScreen onboarding={onboarding} onUpdateOnboarding={updateOnboarding} />}
+          {activeScreen === 'calendar' && <CalendarScreen onboarding={onboarding} />}
+          {activeScreen === 'analytics' && <AnalyticsScreen onboarding={onboarding} onUpdateOnboarding={updateOnboarding} />}
+          {activeScreen === 'admin' && <AdminScreen onboarding={onboarding} />}
+          {activeScreen === 'profile' && (
+            <ProfileScreen
+              onLogout={() => {
+                localStorage.removeItem('user_logged_in_v1')
+                localStorage.removeItem('user_onboarding_v1')
+                setStage('onboarding')
+                setIsLocked(false)
+              }}
+              onboarding={onboarding}
+              onUpdateOnboarding={updateOnboarding}
+              onClearData={() => {
+                setStage('onboarding')
+                setActiveScreen('home')
+                setIsLocked(false)
+              }}
+              onStartTour={() => setShowTour(true)}
+            />
+          )}
+        </motion.div>
+      </AnimatePresence>
 
       <BottomNav active={activeScreen} onChange={setActiveScreen} language={onboarding?.language} />
       <AIButton visible={activeScreen !== 'profile' && activeScreen !== 'admin'} language={onboarding?.language || 'uz'} />
