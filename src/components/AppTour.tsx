@@ -271,6 +271,10 @@ export default function AppTour({ isOpen, onClose, language = 'uz', onNavigateSc
   useEffect(() => {
     if (!isOpen) return
 
+    if (step.targetScreen && onNavigateScreen) {
+      onNavigateScreen(step.targetScreen)
+    }
+
     const updateRect = () => {
       const el = document.getElementById(step.targetId)
       if (el) {
@@ -280,19 +284,22 @@ export default function AppTour({ isOpen, onClose, language = 'uz', onNavigateSc
       }
     }
 
-    const el = document.getElementById(step.targetId)
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    }
+    const timer = setTimeout(() => {
+      const el = document.getElementById(step.targetId)
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }
+      updateRect()
+    }, 120)
 
-    updateRect()
-    const timer = setInterval(updateRect, 250)
+    const interval = setInterval(updateRect, 250)
     window.addEventListener('resize', updateRect)
     return () => {
-      clearInterval(timer)
+      clearTimeout(timer)
+      clearInterval(interval)
       window.removeEventListener('resize', updateRect)
     }
-  }, [isOpen, currentStep, step.targetId])
+  }, [isOpen, currentStep, step.targetId, step.targetScreen])
 
   if (!isOpen) return null
 

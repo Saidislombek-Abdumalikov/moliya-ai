@@ -1233,30 +1233,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (requestId && requestId.length >= 8) {
           console.log('[BOT] Processing login request verification...');
-          const result = await verifyAndMarkLoginRequest(requestId, fromUser);
-          
-          if (!result) {
-            console.error('[BOT] ❌ verifyAndMarkLoginRequest returned null — sending error to user');
-            await sendTelegramMessage(chatId, "⚠️ Tasdiqlashda xatolik yuz berdi. Qaytadan urinib ko'ring.", getCleanInlineKeyboard());
-            return res.status(200).json({ status: 'ok' });
-          }
-
-          console.log('[BOT] ✅ Verification successful, sending confirmation to Telegram...');
           const successText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n✅ <b>Muvaffaqiyatli tasdiqlandi!</b> 🚀\nBrauzeringizdagi Moliya AI ilovasiga avtomatik kirdingiz.\n\n👇 <i>Ilovaga o'tish uchun quyidagi tugmani bosing:</i>`;
-          await sendTelegramMessage(chatId, successText, getCleanInlineKeyboard(requestId));
-          await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
 
-          // Check if phone number is missing to prompt contact sharing
-          let userData: any = {};
-          try {
-            const tgId = String(fromUser?.id);
-            const userSnap = await getDoc(doc(db, 'users', `moliya_user_tg_${tgId}`));
-            if (userSnap.exists()) userData = userSnap.data();
-          } catch (e) {
-            console.error('[BOT] Error reading user doc on /start req:', e);
-          }
+          // Execute DB verification and instant message dispatch in parallel for sub-300ms response time
+          const [result] = await Promise.all([
+            verifyAndMarkLoginRequest(requestId, fromUser),
+            sendTelegramMessage(chatId, successText, getCleanInlineKeyboard(requestId))
+          ]);
 
-          if (!userData?.phone && !userData?.onboarding?.phone) {
+          if (result && !result.onboarding?.phone) {
             const phonePromptText = `📞 <b>Eslatma:</b> <i>Profilingiz to'liq bo'lishi uchun telefon raqamingizni yuboring (Bu raqam profilingiz uchun saqlanadi):</i>`;
             const phoneReplyKeyboard = {
               keyboard: [
@@ -1266,13 +1251,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               resize_keyboard: true,
               one_time_keyboard: true
             };
-            await sendTelegramMessage(chatId, phonePromptText, phoneReplyKeyboard);
+            sendTelegramMessage(chatId, phonePromptText, phoneReplyKeyboard).catch(() => {});
           }
 
           return res.status(200).json({ status: 'ok' });
         }
 
-        // Standard /start without request parameter — check if user has phone saved
+        // Standard /start without request parameter
         console.log('[BOT] Standard /start (no login request)');
         let userData: any = {};
         try {
@@ -1283,8 +1268,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           console.error('[BOT] Error reading user doc on /start:', e);
         }
 
-        const welcomeText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n<b>Moliya AI</b> botiga xush kelibsiz! 🚀\n\nPulingizni oson va aqlli boshqaring.\n\n👇 <b>Ilovani ochish uchun quyidagi tugmani bosing:</b>`;
-        
         if (!userData?.phone && !userData?.onboarding?.phone) {
           const phonePromptText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
             `<b>Moliya AI</b> botiga xush kelibsiz! 🚀\n\n` +
@@ -1301,8 +1284,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           return res.status(200).json({ status: 'ok' });
         }
 
-        await sendTelegramMessage(chatId, welcomeText, getCleanInlineKeyboard());
-        await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
+        const welcomeText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n<b>Moliya AI</b> botiga xush kelibsiz! 🚀\nPulingizni oson va aqlli boshqaring.\n\n👇 <b>Kerakli bo'limni tanlang:</b>`;
+        await sendTelegramMessage(chatId, welcomeText, getMainMenuKeyboard());
         return res.status(200).json({ status: 'ok' });
       }
 

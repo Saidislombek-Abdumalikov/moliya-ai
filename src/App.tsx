@@ -139,7 +139,6 @@ export default function App() {
 
   return (
     <div
-      className="gpu-layer"
       style={{
         position: 'relative',
         minHeight: '100dvh',
@@ -150,22 +149,20 @@ export default function App() {
         display: 'flex',
         flexDirection: 'column',
         overflowX: 'hidden',
-        WebkitOverflowScrolling: 'touch',
       }}
     >
       <InstallPromptModal />
 
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={activeScreen}
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -10 }}
-          transition={{ duration: 0.18, ease: 'easeOut' }}
-          className="gpu-layer"
-          style={{ width: '100%', height: '100%', flex: 1 }}
-        >
-          <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 80, position: 'relative' }}>
+      <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 80, position: 'relative' }}>
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeScreen}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15, ease: 'easeOut' }}
+            style={{ width: '100%', minHeight: '100%' }}
+          >
             {activeScreen === 'home' && <HomeScreen onboarding={onboarding} onUpdateOnboarding={updateOnboarding} />}
             {activeScreen === 'calendar' && <CalendarScreen onboarding={onboarding} />}
             {activeScreen === 'analytics' && <AnalyticsScreen onboarding={onboarding} onUpdateOnboarding={updateOnboarding} />}
@@ -188,9 +185,9 @@ export default function App() {
                 onStartTour={() => setShowTour(true)}
               />
             )}
-          </div>
-        </motion.div>
-      </AnimatePresence>
+          </motion.div>
+        </AnimatePresence>
+      </div>
 
       <BottomNav active={activeScreen} onChange={setActiveScreen} language={onboarding?.language} />
       <AIButton visible={activeScreen !== 'profile' && activeScreen !== 'admin'} language={onboarding?.language || 'uz'} />

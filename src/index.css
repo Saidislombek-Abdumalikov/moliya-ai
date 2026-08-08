@@ -40,11 +40,9 @@ html, body {
   overscroll-behavior-y: none;
 }
 
-/* GPU hardware acceleration for smooth 60fps mobile transitions */
+/* Mobile smooth scrolling & rendering optimization */
 .gpu-layer {
-  will-change: transform, opacity;
-  transform: translateZ(0);
-  backface-visibility: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 
 ::-webkit-scrollbar { display: none; }
