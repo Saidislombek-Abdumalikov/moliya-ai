@@ -31,12 +31,7 @@ export default function App() {
     return 'onboarding'
   })
 
-  const [activeScreen, setActiveScreen] = useState<Screen>(() => {
-    if (window.location.pathname === '/admin') {
-      return 'admin'
-    }
-    return 'home'
-  })
+  const [activeScreen, setActiveScreen] = useState<Screen>('home')
 
   // Set lock state if PIN security is enabled
   const [isLocked, setIsLocked] = useState(() => {
