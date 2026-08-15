@@ -276,7 +276,16 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
       rec.onerror = (e: any) => {
         console.error("Speech recognition error:", e)
         stopVoice()
-        runSimulation()
+        setStep('type')
+        setAiError(
+          (language === 'uz' || language === 'uz_cyrl')
+            ? (language === 'uz_cyrl'
+                ? "Овозни таниш бу браузерда ишламади. Илтимос, матн билан ёзинг ёки Telegram Bot-ga овозли хабар юборинг 🎙️"
+                : "Ovozni tanish bu brauzerda ishlamadi. Iltimos, matn bilan yozing yoki Telegram Bot-ga ovozli xabar yuboring 🎙️")
+            : language === 'ru'
+            ? 'Распознавание речи не сработало. Введите текст или отправьте голосовое боту 🎙️'
+            : 'Speech recognition did not work. Please type or send a voice message to Telegram Bot 🎙️'
+        )
       }
 
       rec.onend = () => {
@@ -287,7 +296,17 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
       rec.start()
     } catch (e) {
       console.error(e)
-      runSimulation()
+      setRecording(false)
+      setStep('type')
+      setAiError(
+        (language === 'uz' || language === 'uz_cyrl')
+          ? (language === 'uz_cyrl'
+              ? "Овозни таниш бу браузерда қўллаб-қувватланмайди. Илтимос, матн билан ёзинг ёки Telegram Bot-ga овозли хабар юборинг 🎙️"
+              : "Ovozni tanish bu brauzerda qo'llab-quvvatlanmaydi. Iltimos, matn bilan yozing yoki Telegram Bot-ga ovozli xabar yuboring 🎙️")
+          : language === 'ru'
+          ? 'Распознавание речи не поддерживается. Введите текст или отправьте голосовое боту 🎙️'
+          : 'Speech recognition is not supported. Please type text or send a voice message to Telegram Bot 🎙️'
+      )
     }
   }
 
