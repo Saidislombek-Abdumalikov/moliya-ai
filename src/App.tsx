@@ -14,7 +14,7 @@ import { useFinance } from './FinanceContext'
 
 import InstallPromptModal from './components/InstallPromptModal'
 
-export type Screen = 'home' | 'calendar' | 'analytics' | 'profile' | 'admin'
+export type Screen = 'home' | 'calendar' | 'analytics' | 'profile'
 type Stage = 'onboarding' | 'app'
 
 export default function App() {
@@ -159,7 +159,6 @@ export default function App() {
           {activeScreen === 'home' && <HomeScreen onboarding={onboarding} onUpdateOnboarding={updateOnboarding} />}
           {activeScreen === 'calendar' && <CalendarScreen onboarding={onboarding} />}
           {activeScreen === 'analytics' && <AnalyticsScreen onboarding={onboarding} onUpdateOnboarding={updateOnboarding} />}
-          {activeScreen === 'admin' && <AdminScreen onboarding={onboarding} />}
           {activeScreen === 'profile' && (
             <ProfileScreen
               onLogout={() => {
@@ -182,7 +181,7 @@ export default function App() {
       </AnimatePresence>
 
       <BottomNav active={activeScreen} onChange={setActiveScreen} language={onboarding?.language} />
-      <AIButton visible={activeScreen !== 'profile' && activeScreen !== 'admin'} language={onboarding?.language || 'uz'} />
+      <AIButton visible={activeScreen !== 'profile'} language={onboarding?.language || 'uz'} />
       <InstallPromptModal />
       <AppTour 
         isOpen={showTour} 

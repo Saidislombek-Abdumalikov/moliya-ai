@@ -31,14 +31,6 @@ export default defineConfig({
     hmr: isFigmaSandbox ? { clientPort: 443 } : undefined,
     watch: { ignored: ['**/.figma/**'] },
   },
-  build: {
-    rollupOptions: {
-      input: {
-        main: path.resolve(__dirname, 'index.html'),
-        admin: path.resolve(__dirname, 'admin.html'),
-      },
-    },
-  },
   preview: {
     host: '0.0.0.0',
     port: parseInt(process.env.PORT || '8443'),
