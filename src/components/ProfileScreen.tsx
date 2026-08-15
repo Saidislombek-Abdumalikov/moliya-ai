@@ -2310,32 +2310,105 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                   ✕
                 </button>
               </div>
-              <h3 style={{ fontSize: 18, fontWeight: 700, color: '#1E1A3C', marginBottom: 16 }}>Select Language</h3>
+              <h3 style={{ fontSize: 18, fontWeight: 700, color: '#1E1A3C', marginBottom: 16 }}>{lang === 'uz' || lang === 'uz_cyrl' ? (lang === 'uz_cyrl' ? 'Тилни танланг' : 'Tilni tanlang') : lang === 'ru' ? 'Выберите язык' : 'Select Language'}</h3>
               
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {/* O'zbekcha */}
+                {/* O'zbekcha - with script type sub-options */}
+                {(() => {
+                  const isUzbekSelected = lang === 'uz' || lang === 'uz_cyrl'
+                  return (
+                    <div>
+                      <button
+                        id="btn_lang_uz"
+                        onClick={() => {
+                          if (!isUzbekSelected && onUpdateOnboarding) {
+                            onUpdateOnboarding({ language: 'uz' })
+                            setToastMessage("Muvaffaqiyatli o'rnatildi!")
+                          }
+                        }}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 12, padding: '14px',
+                          borderRadius: 14, border: '1.5px solid',
+                          borderColor: isUzbekSelected ? '#7C3AED' : '#E4E1F4',
+                          background: isUzbekSelected ? '#F5F3FF' : '#FFFFFF',
+                          cursor: 'pointer', fontFamily: 'inherit', width: '100%'
+                        }}
+                      >
+                        <span style={{ fontSize: 20 }}>🇺🇿</span>
+                        <span style={{ fontSize: 14, fontWeight: 600, color: isUzbekSelected ? '#7C3AED' : '#1E1A3C', flex: 1, textAlign: 'left' }}>
+                          O'zbekcha
+                        </span>
+                        {isUzbekSelected && (
+                          <span style={{ color: '#7C3AED', fontWeight: 800 }}>✓</span>
+                        )}
+                      </button>
+
+                      {/* Script type sub-options */}
+                      {isUzbekSelected && (
+                        <div style={{ display: 'flex', gap: 8, marginTop: 8, paddingLeft: 8 }}>
+                          {[
+                            { code: 'uz' as const, label: 'Lotin', sublabel: 'A B C D' },
+                            { code: 'uz_cyrl' as const, label: 'Кирилл', sublabel: 'А Б В Г' },
+                          ].map((st) => {
+                            const stActive = lang === st.code
+                            return (
+                              <button
+                                key={st.code}
+                                id={`btn_lang_${st.code}`}
+                                onClick={() => {
+                                  if (onUpdateOnboarding) {
+                                    onUpdateOnboarding({ language: st.code })
+                                    setToastMessage(st.code === 'uz' ? "Muvaffaqiyatli o'rnatildi!" : "Муваффақиятли ўрнатилди!")
+                                    setActiveModal(null)
+                                  }
+                                }}
+                                style={{
+                                  flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
+                                  gap: 4, padding: '10px 8px', borderRadius: 12,
+                                  border: stActive ? '1.5px solid #7C3AED' : '1px solid #E8E3F8',
+                                  background: stActive ? '#F5F3FF' : '#FFFFFF',
+                                  cursor: 'pointer', fontFamily: 'inherit',
+                                  transition: 'all 0.15s ease',
+                                }}
+                              >
+                                <span style={{ fontSize: 13, fontWeight: 700, color: stActive ? '#7C3AED' : '#1E1A3C' }}>
+                                  {st.label}
+                                </span>
+                                <span style={{ fontSize: 10, color: '#8B82C4', letterSpacing: 1 }}>
+                                  {st.sublabel}
+                                </span>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
+
+                {/* Русский */}
                 <button
-                  id="btn_lang_uz"
+                  id="btn_lang_ru"
                   onClick={() => {
                     if (onUpdateOnboarding) {
-                      onUpdateOnboarding({ language: 'uz' })
-                      setToastMessage("Muvaffaqiyatli o'rnatildi!")
+                      onUpdateOnboarding({ language: 'ru' })
+                      setToastMessage('Успешно установлено!')
                     }
                     setActiveModal(null)
                   }}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 12, padding: '14px',
                     borderRadius: 14, border: '1.5px solid',
-                    borderColor: lang === 'uz' ? '#7C3AED' : '#E4E1F4',
-                    background: lang === 'uz' ? '#F5F3FF' : '#FFFFFF',
+                    borderColor: lang === 'ru' ? '#7C3AED' : '#E4E1F4',
+                    background: lang === 'ru' ? '#F5F3FF' : '#FFFFFF',
                     cursor: 'pointer', fontFamily: 'inherit', width: '100%'
                   }}
                 >
-                  <span style={{ fontSize: 20 }}>🇺🇿</span>
-                  <span style={{ fontSize: 14, fontWeight: 600, color: lang === 'uz' ? '#7C3AED' : '#1E1A3C', flex: 1, textAlign: 'left' }}>
-                    O'zbekcha
+                  <span style={{ fontSize: 20 }}>🇷🇺</span>
+                  <span style={{ fontSize: 14, fontWeight: 600, color: lang === 'ru' ? '#7C3AED' : '#1E1A3C', flex: 1, textAlign: 'left' }}>
+                    Русский
                   </span>
-                  {lang === 'uz' && (
+                  {lang === 'ru' && (
                     <span style={{ color: '#7C3AED', fontWeight: 800 }}>✓</span>
                   )}
                 </button>

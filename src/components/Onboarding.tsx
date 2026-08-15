@@ -21,9 +21,10 @@ interface Props {
 
 type Step = 'language' | 'goal' | 'ai' | 'telegram'
 
-const languages: { code: 'uz' | 'en'; label: string; tag: string }[] = [
+const languages: { code: 'uz' | 'uz_cyrl' | 'ru' | 'en'; label: string; tag: string; isSubOption?: boolean; parentCode?: string }[] = [
   { code: 'uz', label: "O'zbekcha", tag: '🇺🇿' },
-  { code: 'en', label: 'English', tag: '🇬🇧' },
+  { code: 'ru', label: 'Русский', tag: '🇷🇺' },
+  { code: 'en', label: 'English', tag: '🇺🇸' },
 ]
 
 const uzbekScriptTypes: { code: 'uz' | 'uz_cyrl'; label: string; sublabel: string }[] = [
