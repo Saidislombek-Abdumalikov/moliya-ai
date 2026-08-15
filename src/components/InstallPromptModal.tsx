@@ -56,9 +56,11 @@ export default function InstallPromptModal() {
         className="fixed bottom-20 left-4 right-4 z-50 p-4 bg-gradient-to-r from-purple-900 to-indigo-900 text-white rounded-2xl shadow-2xl border border-purple-500/30 flex items-center justify-between gap-3"
       >
         <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-xl bg-purple-600 flex items-center justify-center font-bold text-lg shadow-lg">
-            📲
-          </div>
+          <img 
+            src="/logo.png" 
+            alt="Moliya AI" 
+            className="w-11 h-11 rounded-xl object-cover shadow-lg border border-white/20 overflow-hidden" 
+          />
           <div>
             <h4 className="font-semibold text-sm">Ekranga qo'shish</h4>
             <p className="text-xs text-purple-200">Ilovani brauzersiz, to'g'ridan-to'g'ri ekrandan oching!</p>

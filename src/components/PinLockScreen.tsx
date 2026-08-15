@@ -147,25 +147,21 @@ export default function PinLockScreen({ language, onUnlock, onReset }: Props) {
     >
       {/* Top Header */}
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: 20 }}>
-        {/* Animated App Logo Icon */}
-        <div
+        <img
+          src="/logo.png"
+          alt="Moliya AI"
           style={{
-            width: 70,
-            height: 70,
-            borderRadius: 22,
-            background: 'linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
+            width: 72,
+            height: 72,
+            borderRadius: 20,
+            objectFit: 'cover',
+            boxShadow: '0 10px 28px rgba(124, 58, 237, 0.3)',
+            border: '2px solid rgba(124, 58, 237, 0.2)',
+            overflow: 'hidden',
             marginBottom: 24,
-            boxShadow: '0 8px 24px rgba(124, 58, 237, 0.18)',
+            display: 'block'
           }}
-        >
-          <svg width="34" height="34" viewBox="0 0 40 40" fill="none">
-            <path d="M8 30L17 14L23 23L28 16L34 30H8Z" fill="white" fillOpacity="0.95" />
-            <circle cx="30" cy="11" r="4" fill="white" fillOpacity="0.7" />
-          </svg>
-        </div>
+        />
 
         <h2 style={{ fontSize: 22, fontWeight: 700, color: '#1E1A3C', marginBottom: 8, letterSpacing: -0.4 }}>
           {t.title}

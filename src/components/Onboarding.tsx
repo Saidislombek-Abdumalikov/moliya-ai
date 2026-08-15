@@ -278,8 +278,14 @@ export default function Onboarding({ onComplete }: Props) {
                 src="/logo.png"
                 alt="Moliya AI"
                 style={{
-                  width: 72, height: 72, borderRadius: '50%',
-                  objectFit: 'cover', boxShadow: '0 8px 24px rgba(124, 58, 237, 0.25)'
+                  width: 76,
+                  height: 76,
+                  borderRadius: 20,
+                  objectFit: 'cover',
+                  boxShadow: '0 10px 28px rgba(124, 58, 237, 0.3)',
+                  border: '2px solid rgba(124, 58, 237, 0.2)',
+                  overflow: 'hidden',
+                  display: 'block'
                 }}
               />
             </div>

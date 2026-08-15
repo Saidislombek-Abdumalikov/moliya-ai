@@ -568,9 +568,14 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
             src="/logo.png" 
             alt="Moliya AI" 
             style={{
-              width: 36, height: 36, borderRadius: '50%',
+              width: 36,
+              height: 36,
+              borderRadius: 10,
               objectFit: 'cover',
-              border: 'none'
+              boxShadow: '0 3px 10px rgba(124, 58, 237, 0.25)',
+              border: '1.5px solid rgba(124, 58, 237, 0.18)',
+              overflow: 'hidden',
+              display: 'block'
             }} 
           />
           <span style={{ fontSize: 19, fontWeight: 800, color: '#1E1A3C', letterSpacing: -0.4 }}>Moliya AI</span>
