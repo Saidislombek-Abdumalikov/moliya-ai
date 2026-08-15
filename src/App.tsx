@@ -13,6 +13,7 @@ import AppTour from './components/AppTour'
 import { useFinance } from './FinanceContext'
 
 import InstallPromptModal from './components/InstallPromptModal'
+import OfflineStatusBanner from './components/OfflineStatusBanner'
 
 export type Screen = 'home' | 'calendar' | 'analytics' | 'profile'
 type Stage = 'onboarding' | 'app'
@@ -145,6 +146,7 @@ export default function App() {
         boxSizing: 'border-box',
       }}
     >
+      <OfflineStatusBanner />
       <InstallPromptModal />
 
       <AnimatePresence mode="wait">
