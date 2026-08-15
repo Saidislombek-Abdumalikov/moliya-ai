@@ -73,15 +73,28 @@ export default function AdminApp() {
     localStorage.removeItem('admin_session_auth_v1')
   }
 
-  // Fetch Users from Firestore
+  // Fetch Users from API & Firestore
   const fetchUsers = async () => {
     setLoadingUsers(true)
+    try {
+      const apiRes = await fetch('/api/admin/users')
+      if (apiRes.ok) {
+        const data = await apiRes.json()
+        if (data.success && Array.isArray(data.users)) {
+          setUsers(data.users)
+          setLoadingUsers(false)
+          return
+        }
+      }
+    } catch (e) {
+      console.warn('API fetch users failed, falling back to Firestore client:', e)
+    }
+
     try {
       const snap = await getDocs(collection(db, 'users'))
       const list: UserItem[] = []
       snap.forEach(d => {
         const data = d.data()
-        // Filter out session and request temporary documents
         if (!d.id.startsWith('moliya_user_sess_') && !d.id.startsWith('moliya_user_req_')) {
           list.push({ id: d.id, ...data })
         }
@@ -103,26 +116,32 @@ export default function AdminApp() {
   // Toggle Premium Status for User
   const toggleUserPremium = async (user: UserItem) => {
     const newPremState = !(user.isPremium || user.onboarding?.isPremium)
+    const targetDocId = user.id
+
     try {
-      const targetDocId = user.id
-      const userRef = doc(db, 'users', targetDocId)
-      
-      const updatedOnboarding = {
-        ...(user.onboarding || {}),
-        isPremium: newPremState
+      const res = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: targetDocId, isPremium: newPremState })
+      })
+
+      if (res.ok) {
+        const updatedOnboarding = { ...(user.onboarding || {}), isPremium: newPremState }
+        setUsers(prev => prev.map(u => u.id === user.id ? { ...u, isPremium: newPremState, onboarding: updatedOnboarding } : u))
+        return
       }
+    } catch (e) {
+      console.warn('API toggle premium failed, trying direct Firestore client:', e)
+    }
 
-      await setDoc(userRef, {
-        isPremium: newPremState,
-        onboarding: updatedOnboarding,
-        updatedAt: new Date().toISOString()
-      }, { merge: true })
-
-      // Update local state
+    try {
+      const userRef = doc(db, 'users', targetDocId)
+      const updatedOnboarding = { ...(user.onboarding || {}), isPremium: newPremState }
+      await setDoc(userRef, { isPremium: newPremState, onboarding: updatedOnboarding, updatedAt: new Date().toISOString() }, { merge: true })
       setUsers(prev => prev.map(u => u.id === user.id ? { ...u, isPremium: newPremState, onboarding: updatedOnboarding } : u))
     } catch (e) {
       console.error('Error toggling premium:', e)
-      alert('Premium maqomini o\'zgartirishda xatolik yuz berdi')
+      alert("Premium maqomini o'zgartirishda xatolik yuz berdi")
     }
   }
 
