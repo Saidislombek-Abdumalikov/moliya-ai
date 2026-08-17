@@ -490,7 +490,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
   const [editPhone, setEditPhone] = useState(userPhone)
   const [editTelegram, setEditTelegram] = useState(userTelegram)
 
-  const { cards: rawCards, saveCards, security: contextSecurity, updateSecurity, clearAllData, clearOnlyFinancialData, customTransactions, addTransaction } = useFinance()
+  const { cards: rawCards, saveCards, clearAllData, clearOnlyFinancialData, customTransactions, addTransaction } = useFinance()
   const cards = Array.isArray(rawCards) ? rawCards : []
 
   const getCardBalance = (cardId: string) => {
@@ -520,15 +520,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
   const [selectedPlan, setSelectedPlan] = useState<{ title: string; price: string; code: string } | null>(null)
 
   // Notifications states
-  const [notifOpts, setNotifOpts] = useState(() => onboarding?.notifications || { opt1: true, opt2: true, opt3: false })
-
-  // Security states
-  const [securityOpts, setSecurityOpts] = useState(() => contextSecurity)
-  const [tempPin, setTempPin] = useState('')
-
-  useEffect(() => {
-    setSecurityOpts(contextSecurity)
-  }, [contextSecurity])
+  const [notifOpts, setNotifOpts] = useState<any>(() => onboarding?.notifications || { opt1: true, opt2: true, opt3: false })
 
   // Export states
   const [exportFormat, setExportFormat] = useState<'PDF' | 'Excel' | 'CSV'>('PDF')
@@ -1786,7 +1778,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                   <span style={{ fontSize: 13.5, fontWeight: 500, color: '#1E1A3C' }}>{t.notifModal.opt1}</span>
                   <button 
                     id="toggle_notif_opt1"
-                    onClick={() => setNotifOpts(p => ({ ...p, opt1: !p.opt1 }))}
+                    onClick={() => setNotifOpts((p: any) => ({ ...p, opt1: !p.opt1 }))}
                     style={{
                       width: 48, height: 26, borderRadius: 15, border: 'none',
                       background: notifOpts.opt1 ? '#7C3AED' : '#E4E1F4', position: 'relative',
@@ -1806,7 +1798,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                   <span style={{ fontSize: 13.5, fontWeight: 500, color: '#1E1A3C' }}>{t.notifModal.opt2}</span>
                   <button 
                     id="toggle_notif_opt2"
-                    onClick={() => setNotifOpts(p => ({ ...p, opt2: !p.opt2 }))}
+                    onClick={() => setNotifOpts((p: any) => ({ ...p, opt2: !p.opt2 }))}
                     style={{
                       width: 48, height: 26, borderRadius: 15, border: 'none',
                       background: notifOpts.opt2 ? '#7C3AED' : '#E4E1F4', position: 'relative',
@@ -1826,7 +1818,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                   <span style={{ fontSize: 13.5, fontWeight: 500, color: '#1E1A3C' }}>{t.notifModal.opt3}</span>
                   <button 
                     id="toggle_notif_opt3"
-                    onClick={() => setNotifOpts(p => ({ ...p, opt3: !p.opt3 }))}
+                    onClick={() => setNotifOpts((p: any) => ({ ...p, opt3: !p.opt3 }))}
                     style={{
                       width: 48, height: 26, borderRadius: 15, border: 'none',
                       background: notifOpts.opt3 ? '#7C3AED' : '#E4E1F4', position: 'relative',

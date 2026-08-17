@@ -1,7 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import crypto from 'crypto';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db } from '../_firebaseClient.js';
+import { supabase } from '../_supabaseClient.js';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 
@@ -62,70 +61,77 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const { initData, initDataUnsafe } = req.body || {};
-    let verification = verifyTelegramInitData(initData || '', BOT_TOKEN);
 
-    if (!verification.isValid && initDataUnsafe?.user?.id) {
-      console.log('[BOT AUTH] Using initDataUnsafe user fallback for user:', initDataUnsafe.user.id);
-      verification = { isValid: true, user: initDataUnsafe.user };
+    let tgUser: any = null;
+
+    if (initData && BOT_TOKEN) {
+      const verification = verifyTelegramInitData(initData, BOT_TOKEN);
+      if (verification.isValid && verification.user) {
+        tgUser = verification.user;
+      }
     }
 
-    if (!verification.isValid || !verification.user?.id) {
-      return res.status(401).json({ error: 'Invalid Telegram initData signature' });
+    if (!tgUser && initDataUnsafe?.user) {
+      tgUser = initDataUnsafe.user;
     }
 
-    const tgUser = verification.user;
-    const userId = `moliya_user_tg_${tgUser.id}`;
+    if (!tgUser || !tgUser.id) {
+      return res.status(400).json({ error: "Invalid Telegram authentication data" });
+    }
 
-    // Create 60-day Session Token
-    const sessionToken = 'sess_' + crypto.randomBytes(32).toString('hex');
+    const tgId = String(tgUser.id);
+    const userId = `moliya_user_tg_${tgId}`;
+
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString();
-
-    const sessionData = {
-      sessionToken,
-      userId,
-      createdAt: now.toISOString(),
-      expiresAt,
-    };
-
-    // Save session in permitted moliya_user_ document path
-    await setDoc(doc(db, 'users', `moliya_user_sess_${sessionToken}`), sessionData);
+    const randomHex = Array.from({ length: 32 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
+    const sessionToken = 'sess_' + randomHex;
 
     const tgName = [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') || 'Telegram Foydalanuvchi';
     const tgUsername = tgUser.username ? '@' + tgUser.username : '@moliya_user';
 
-    const userRef = doc(db, 'users', userId);
-    const userSnap = await getDoc(userRef);
-    const existingData = userSnap.exists() ? userSnap.data() : {};
+    // 1. Fetch existing user from Supabase
+    const { data: existingUser } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', userId)
+      .maybeSingle();
 
     const updatedOnboarding = {
-      ...(existingData?.onboarding || {}),
+      ...(existingUser?.onboarding || {}),
       completed: true,
-      language: existingData?.onboarding?.language || 'uz',
+      language: existingUser?.language || tgUser.language_code || 'uz',
       name: tgName,
+      phone: existingUser?.phone || '',
       telegram: tgUsername,
-      telegramId: String(tgUser.id),
-      phone: existingData?.phone || existingData?.onboarding?.phone || '',
+      telegramId: tgId,
     };
 
-    await setDoc(userRef, {
-      userId,
-      telegramId: String(tgUser.id),
+    // 2. Upsert user in Supabase
+    await supabase.from('users').upsert({
+      id: userId,
       name: tgName,
       telegram: tgUsername,
+      telegram_id: tgId,
+      phone: existingUser?.phone || null,
+      language: updatedOnboarding.language,
+      is_premium: existingUser?.is_premium || false,
+      session_token: sessionToken,
+      session_expires_at: expiresAt,
       onboarding: updatedOnboarding,
-      updatedAt: now.toISOString(),
-    }, { merge: true });
+      updated_at: now.toISOString()
+    }, { onConflict: 'id' });
 
     return res.status(200).json({
-      success: true,
       userId,
       sessionToken,
       onboarding: updatedOnboarding,
-      user: tgUser,
+      cards: existingUser?.cards || [],
+      transactions: existingUser?.transactions || [],
+      isPremium: existingUser?.is_premium || false
     });
   } catch (error: any) {
-    console.error('Telegram authentication error:', error);
-    return res.status(500).json({ error: error.message || 'Internal Server Error' });
+    console.error('Error in /api/auth/telegram:', error);
+    return res.status(500).json({ error: error.message });
   }
 }

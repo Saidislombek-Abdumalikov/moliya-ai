@@ -1,14 +1,12 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI, Type } from "@google/genai";
 import crypto from "crypto";
-import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
-import { db } from './_firebaseClient.js';
 import { supabase } from './_supabaseClient.js';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const appUrl = process.env.APP_URL || "https://moliya-ai-pi.vercel.app";
 
-// Helper: Create 60-day Session Token & Mark Login Request VERIFIED in Firestore
+// Helper: Create 60-day Session Token & Mark Login Request VERIFIED in Supabase
 async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone?: string) {
   try {
     console.log('[BOT] verifyAndMarkLoginRequest called with requestId:', requestId, 'user:', fromUser?.id);
@@ -24,121 +22,56 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone
 
     const randomHex = Array.from({ length: 32 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
     const sessionToken = 'sess_' + randomHex;
-    const sessionData = {
-      sessionToken,
-      userId,
-      createdAt: now.toISOString(),
-      expiresAt,
-    };
 
-    // 1. Create session doc
-    try {
-      await setDoc(doc(db, 'users', `moliya_user_sess_${sessionToken}`), sessionData);
-    } catch (err) {
-      console.error('[BOT] Error creating session doc:', err);
-    }
-
-    // 2. Update user profile in Firestore
     const tgName = [fromUser.first_name, fromUser.last_name].filter(Boolean).join(' ') || 'Telegram Foydalanuvchi';
     const tgUsername = fromUser.username ? '@' + fromUser.username : '@moliya_user';
 
-    let existingData: any = {};
-    try {
-      const userRef = doc(db, 'users', userId);
-      const userSnap = await getDoc(userRef);
-      if (userSnap.exists()) existingData = userSnap.data();
-    } catch (err) {
-      console.error('[BOT] Error reading existing user profile:', err);
-    }
+    // 1. Fetch existing user from Supabase
+    const { data: existingUser } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', userId)
+      .maybeSingle();
 
-    const existingPhone = phone || existingData?.phone || existingData?.onboarding?.phone || '';
+    const existingPhone = phone || existingUser?.phone || existingUser?.onboarding?.phone || '';
 
     const updatedOnboarding = {
-      ...(existingData?.onboarding || {}),
+      ...(existingUser?.onboarding || {}),
       completed: true,
-      language: existingData?.onboarding?.language || 'uz',
+      language: existingUser?.language || existingUser?.onboarding?.language || 'uz',
       name: tgName,
       phone: existingPhone,
       telegram: tgUsername,
       telegramId: tgId,
     };
 
-    try {
-      await setDoc(doc(db, 'users', userId), {
-        userId,
-        telegramId: tgId,
-        name: tgName,
-        telegram: tgUsername,
-        phone: existingPhone,
-        onboarding: updatedOnboarding,
-        updatedAt: now.toISOString(),
-      }, { merge: true });
-    } catch (err) {
-      console.error('[BOT] Error writing userId doc:', err);
-    }
+    // 2. Upsert user in Supabase users table
+    await supabase.from('users').upsert({
+      id: userId,
+      name: tgName,
+      telegram: tgUsername,
+      telegram_id: tgId,
+      phone: existingPhone || null,
+      language: updatedOnboarding.language,
+      is_premium: existingUser?.is_premium || false,
+      session_token: sessionToken,
+      session_expires_at: expiresAt,
+      onboarding: updatedOnboarding,
+      updated_at: now.toISOString()
+    }, { onConflict: 'id' });
 
-    try {
-      await setDoc(doc(db, 'users', `tg_user_${tgId}`), {
-        userId,
-        telegramId: tgId,
-        name: tgName,
-        telegram: tgUsername,
-        phone: existingPhone,
-        updatedAt: now.toISOString(),
-      }, { merge: true });
-    } catch (err) {
-      console.error('[BOT] Error writing tg_user_ doc:', err);
-    }
-
-    // 2.5. Sync User Profile to Supabase users Table in Real-Time
-    try {
-      supabase.from('users').upsert({
-        id: userId,
-        name: tgName,
-        telegram: tgUsername,
-        telegram_id: String(tgId),
-        phone: existingPhone || null,
-        language: existingData?.onboarding?.language || 'uz',
-        is_premium: existingData?.isPremium || false,
-        onboarding: updatedOnboarding,
-        updated_at: now.toISOString()
-      }, { onConflict: 'id' }).then(({ error }) => {
-        if (error) console.error('[BOT] Supabase user upsert error:', error.message);
-        else console.log('[BOT] ✅ User synced to Supabase users table:', userId);
-      });
-    } catch (suErr) {
-      console.error('[BOT] Supabase sync exception:', suErr);
-    }
-
-    // 3. Mark login request VERIFIED in Firestore
+    // 3. Mark login request VERIFIED in Supabase
     const cleanId = requestId.replace(/^req_/, '').trim();
-    try {
-      await setDoc(doc(db, 'users', `moliya_user_req_${cleanId}`), {
-        requestId: cleanId,
-        status: 'VERIFIED',
-        userId,
-        sessionToken,
-        verifiedAt: now.toISOString(),
-      }, { merge: true });
-    } catch (err) {
-      console.error('[BOT] Error marking req cleanId VERIFIED:', err);
-    }
+    await supabase.from('users').upsert({
+      id: `req_${cleanId}`,
+      login_request_id: cleanId,
+      login_request_status: 'VERIFIED',
+      telegram_id: tgId,
+      session_token: sessionToken,
+      updated_at: now.toISOString()
+    }, { onConflict: 'id' });
 
-    try {
-      if (cleanId !== requestId) {
-        await setDoc(doc(db, 'users', `moliya_user_req_${requestId}`), {
-          requestId,
-          status: 'VERIFIED',
-          userId,
-          sessionToken,
-          verifiedAt: now.toISOString(),
-        }, { merge: true });
-      }
-    } catch (err) {
-      console.error('[BOT] Error marking req rawId VERIFIED:', err);
-    }
-
-    console.log('[BOT] ✅ Login request verified and session created for user:', userId);
+    console.log('[BOT] ✅ Login request verified in Supabase for user:', userId);
     return { sessionToken, userId, onboarding: updatedOnboarding };
   } catch (err) {
     console.error('[BOT] ❌ Error verifying login request:', err);
@@ -146,22 +79,18 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone
   }
 }
 
-// Firestore Transaction Helpers for Bot-WebApp Sync
+// Transaction Helpers via Supabase users.transactions JSON Array
 async function saveBotTransaction(fromUser: any, txItem: { id: string; type: string; name: string; category: string; amount: number; date: string }) {
   try {
     const tgId = String(fromUser.id);
     const userId = `moliya_user_tg_${tgId}`;
-    const txRef = doc(db, 'users', userId, 'transactions', txItem.id);
-    await setDoc(txRef, {
-      type: txItem.type,
-      amount: txItem.amount,
-      note: txItem.name,
-      category: txItem.category,
-      date: txItem.date
-    }, { merge: true });
-    console.log(`[BOT] Saved transaction ${txItem.id} to Firestore for user ${userId}`);
+    const { data: user } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
+    const currentTxs = Array.isArray(user?.transactions) ? user.transactions : [];
+    const updated = [txItem, ...currentTxs.filter((t: any) => t.id !== txItem.id)];
+    await supabase.from('users').update({ transactions: updated, updated_at: new Date().toISOString() }).eq('id', userId);
+    console.log(`[BOT] Saved transaction ${txItem.id} to Supabase for user ${userId}`);
   } catch (err) {
-    console.error('[BOT] Error saving transaction to Firestore:', err);
+    console.error('[BOT] Error saving transaction to Supabase:', err);
   }
 }
 
@@ -169,14 +98,10 @@ async function getBotTransactions(fromUser: any) {
   try {
     const tgId = String(fromUser.id);
     const userId = `moliya_user_tg_${tgId}`;
-    const txRef = collection(db, 'users', userId, 'transactions');
-    const q = query(txRef, orderBy('date', 'desc'), limit(100));
-    const snap = await getDocs(q);
-    const txs: any[] = [];
-    snap.forEach((d) => txs.push({ id: d.id, ...d.data() }));
-    return txs;
+    const { data: user } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
+    return Array.isArray(user?.transactions) ? user.transactions : [];
   } catch (err) {
-    console.error('[BOT] Error fetching transactions from Firestore:', err);
+    console.error('[BOT] Error fetching transactions from Supabase:', err);
     return [];
   }
 }
@@ -185,18 +110,17 @@ async function deleteLastBotTransaction(fromUser: any) {
   try {
     const tgId = String(fromUser.id);
     const userId = `moliya_user_tg_${tgId}`;
-    const txRef = collection(db, 'users', userId, 'transactions');
-    const q = query(txRef, orderBy('date', 'desc'), limit(1));
-    const snap = await getDocs(q);
-    if (!snap.empty) {
-      const docToDelete = snap.docs[0];
-      const data = docToDelete.data();
-      await deleteDoc(docToDelete.ref);
-      return { id: docToDelete.id, amount: data.amount || 0, category: data.category || 'Boshqa', name: data.note || data.name || 'Operatsiya' };
+    const { data: user } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
+    const currentTxs = Array.isArray(user?.transactions) ? user.transactions : [];
+    if (currentTxs.length > 0) {
+      const deleted = currentTxs[0];
+      const updated = currentTxs.slice(1);
+      await supabase.from('users').update({ transactions: updated, updated_at: new Date().toISOString() }).eq('id', userId);
+      return deleted;
     }
     return null;
   } catch (err) {
-    console.error('[BOT] Error deleting transaction from Firestore:', err);
+    console.error('[BOT] Error deleting transaction from Supabase:', err);
     return null;
   }
 }
@@ -206,42 +130,40 @@ async function checkAndIncrementAiLimitAsync(fromUser: any): Promise<{ allowed: 
     const tgId = String(fromUser?.id);
     if (!tgId) return { allowed: true, remaining: 5, isPremium: false };
     const userId = `moliya_user_tg_${tgId}`;
-    const userRef = doc(db, 'users', userId);
-    const userSnap = await getDoc(userRef);
+    const { data: user } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
 
-    if (userSnap.exists()) {
-      const data = userSnap.data();
-
-      // 1. Premium subscription check
-      if (data.isPremium === true || data.subscriptionStatus === 'active' || data.plan === 'premium') {
+    if (user) {
+      if (user.is_premium) {
         return { allowed: true, remaining: 999, isPremium: true };
       }
 
-      // 2. 24-hour trial period from user creation
-      const createdAt = data.createdAt ? new Date(data.createdAt).getTime() : Date.now();
-      const is24hTrial = (Date.now() - createdAt) < (24 * 3600 * 1000);
-      if (is24hTrial) {
-        return { allowed: true, remaining: 999, isPremium: false };
-      }
-
-      // 3. AI usage limit check (synced with App)
-      const currentCount = Number(data.aiCount || 0);
-      const limit = Number(data.aiLimit || 5);
+      const currentCount = Number(user.ai_query_count || 0);
+      const limit = 5;
 
       if (currentCount >= limit) {
         return { allowed: false, remaining: 0, isPremium: false };
       }
 
-      // Increment count in Firestore
-      await setDoc(userRef, { aiCount: currentCount + 1, updatedAt: new Date().toISOString() }, { merge: true });
-      return { allowed: true, remaining: limit - (currentCount + 1), isPremium: false };
+      const newCount = currentCount + 1;
+      await supabase.from('users').update({
+        ai_query_count: newCount,
+        last_ai_query_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }).eq('id', userId);
+
+      return { allowed: true, remaining: limit - newCount, isPremium: false };
     } else {
-      // First interaction: create user doc with 1 usage
-      await setDoc(userRef, { aiCount: 1, aiLimit: 5, createdAt: new Date().toISOString() }, { merge: true });
+      await supabase.from('users').upsert({
+        id: userId,
+        telegram_id: tgId,
+        ai_query_count: 1,
+        last_ai_query_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'id' });
       return { allowed: true, remaining: 4, isPremium: false };
     }
   } catch (e) {
-    console.error('Error checking AI limit in Firestore:', e);
+    console.error('Error checking AI limit in Supabase:', e);
     return { allowed: true, remaining: 5, isPremium: false };
   }
 }
@@ -268,10 +190,8 @@ async function getUserBudgets(fromUser: any) {
     const tgId = String(fromUser?.id);
     if (!tgId) return {};
     const userId = `moliya_user_tg_${tgId}`;
-    const userSnap = await getDoc(doc(db, 'users', userId));
-    if (userSnap.exists()) {
-      return userSnap.data()?.budgets || {};
-    }
+    const { data: user } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
+    return user?.onboarding?.budgets || {};
   } catch (e) {
     console.error('Error fetching user budgets:', e);
   }
@@ -285,7 +205,9 @@ async function setUserBudget(fromUser: any, category: string, limitAmt: number) 
     const userId = `moliya_user_tg_${tgId}`;
     const existing = await getUserBudgets(fromUser);
     const updated = { ...existing, [category]: limitAmt };
-    await setDoc(doc(db, 'users', userId), { budgets: updated }, { merge: true });
+    const { data: user } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
+    const newOnboarding = { ...(user?.onboarding || {}), budgets: updated };
+    await supabase.from('users').update({ onboarding: newOnboarding, updated_at: new Date().toISOString() }).eq('id', userId);
     return updated;
   } catch (e) {
     console.error('Error setting user budget:', e);
@@ -310,13 +232,14 @@ async function sendTelegramDocument(chatId: number | string, fileBuffer: Buffer,
   }
 }
 
+// In-memory pending draft cache for fast Telegram callbacks
+const pendingDraftsCache = new Map<string, any>();
+
 async function savePendingDraftTx(fromUser: any, draftTx: any) {
   try {
     const tgId = String(fromUser?.id);
     if (!tgId) return null;
-    const userId = `moliya_user_tg_${tgId}`;
-    const draftRef = doc(db, 'users', userId, 'pending_txs', draftTx.id);
-    await setDoc(draftRef, draftTx, { merge: true });
+    pendingDraftsCache.set(`${tgId}_${draftTx.id}`, draftTx);
     return draftTx;
   } catch (e) {
     console.error('Error saving pending draft tx:', e);
@@ -328,10 +251,7 @@ async function getPendingDraftTx(fromUser: any, txId: string) {
   try {
     const tgId = String(fromUser?.id);
     if (!tgId) return null;
-    const userId = `moliya_user_tg_${tgId}`;
-    const draftRef = doc(db, 'users', userId, 'pending_txs', txId);
-    const snap = await getDoc(draftRef);
-    if (snap.exists()) return snap.data();
+    return pendingDraftsCache.get(`${tgId}_${txId}`) || null;
   } catch (e) {
     console.error('Error fetching pending draft tx:', e);
   }
@@ -342,11 +262,8 @@ async function confirmPendingDraftTx(fromUser: any, txId: string) {
   try {
     const tgId = String(fromUser?.id);
     if (!tgId) return null;
-    const userId = `moliya_user_tg_${tgId}`;
-    const draftRef = doc(db, 'users', userId, 'pending_txs', txId);
-    const snap = await getDoc(draftRef);
-    if (snap.exists()) {
-      const draftData = snap.data();
+    const draftData = pendingDraftsCache.get(`${tgId}_${txId}`);
+    if (draftData) {
       await saveBotTransaction(fromUser, {
         id: draftData.id,
         type: draftData.type,
@@ -355,7 +272,7 @@ async function confirmPendingDraftTx(fromUser: any, txId: string) {
         amount: draftData.amount,
         date: draftData.date || new Date().toISOString()
       });
-      await deleteDoc(draftRef);
+      pendingDraftsCache.delete(`${tgId}_${txId}`);
       return draftData;
     }
   } catch (e) {
@@ -368,9 +285,7 @@ async function cancelPendingDraftTx(fromUser: any, txId: string) {
   try {
     const tgId = String(fromUser?.id);
     if (!tgId) return null;
-    const userId = `moliya_user_tg_${tgId}`;
-    const draftRef = doc(db, 'users', userId, 'pending_txs', txId);
-    await deleteDoc(draftRef);
+    pendingDraftsCache.delete(`${tgId}_${txId}`);
     return true;
   } catch (e) {
     console.error('Error cancelling pending draft tx:', e);
@@ -448,37 +363,39 @@ async function renderRichTransactionCard(fromUser: any, tx: any, isPending: bool
       `💵 UY-Ro'zg'or: ${fmtAmt(netBalance + (isPending ? Math.abs(Number(tx.amount) || 0) : 0))} UZS`;
   }
 
-  let inlineKeyboard: any = null;
-  if (isPending) {
-    inlineKeyboard = {
-      inline_keyboard: [
-        [
-          { text: "✅ Saqlash", callback_data: `tx_confirm_${tx.id}` },
-          { text: "✏️ Tahrirlash", callback_data: `tx_edit_${tx.id}` },
-          { text: "❌ Bekor qilish", callback_data: `tx_cancel_${tx.id}` }
+  const inlineKeyboard = isPending
+    ? {
+        inline_keyboard: [
+          [
+            { text: "✅ Ha, to'g'ri", callback_data: `tx_confirm_${tx.id}` },
+            { text: "🔄 Turini o'zgartirish", callback_data: `tx_toggle_type_${tx.id}` }
+          ],
+          [
+            { text: "📂 Kategoriyani tanlash", callback_data: `tx_edit_cat_${tx.id}` },
+            { text: "✏️ Tahrirlash", callback_data: `tx_edit_${tx.id}` }
+          ],
+          [
+            { text: "❌ Bekor qilish", callback_data: `tx_cancel_${tx.id}` }
+          ]
         ]
-      ]
-    };
-  } else {
-    inlineKeyboard = {
-      inline_keyboard: [
-        [
-          { text: "❌ Bekor qilish", callback_data: `del_${tx.id}` },
-          { text: "📱 Mini App", web_app: { url: appUrl } }
+      }
+    : {
+        inline_keyboard: [
+          [
+            { text: "🗑 O'chirish", callback_data: `del_${tx.id}` },
+            { text: "📱 Mini App", web_app: { url: appUrl } }
+          ]
         ]
-      ]
-    };
-  }
+      };
 
   return { text, inlineKeyboard };
 }
 
-async function buildGoalBudgetReport(fromUser: any) {
-  const txs = await getBotTransactions(fromUser);
+async function renderUserReportSummary(fromUser: any) {
   const tgId = String(fromUser?.id);
-  const userSnap = await getDoc(doc(db, 'users', `moliya_user_tg_${tgId}`));
-  const userData = userSnap.exists() ? userSnap.data() : {};
-  const goal = userData?.onboarding?.goal || userData?.goal || 2000000;
+  const userId = `moliya_user_tg_${tgId}`;
+  const { data: user } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
+  const txs: any[] = Array.isArray(user?.transactions) ? user.transactions : [];
 
   const now = new Date();
   const currentMonthTxs = txs.filter(t => {
@@ -486,33 +403,36 @@ async function buildGoalBudgetReport(fromUser: any) {
     return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
   });
 
-  const totalExpense = currentMonthTxs.filter(t => t.type === 'expense').reduce((acc, t) => acc + Math.abs(Number(t.amount) || 0), 0);
-  const fmt = (n: number) => n.toLocaleString('en-US').replace(/,/g, ' ');
+  const totalIncome = txs.filter(t => t.type === 'income').reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
+  const totalExpense = txs.filter(t => t.type === 'expense').reduce((acc, t) => acc + Math.abs(Number(t.amount) || 0), 0);
+  const netBalance = totalIncome - totalExpense;
 
-  const percent = goal > 0 ? Math.min(100, Math.round((totalExpense / goal) * 100)) : 0;
-  const bar = renderProgressBar(percent / 100, 10);
-  const remaining = Math.max(0, goal - totalExpense);
+  const monthlyExpense = currentMonthTxs.filter(t => t.type === 'expense').reduce((acc, t) => acc + Math.abs(Number(t.amount) || 0), 0);
+  const monthlyIncome = currentMonthTxs.filter(t => t.type === 'income').reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
 
-  const text = `🎯 <b>Oylik Byudjet Rejasi</b> 📊\n\n` +
-    `💰 <b>Oylik belgilangan byudjet:</b> ${fmt(goal)} UZS\n` +
-    `🛒 <b>Shu oygi jami xarajat:</b> ${fmt(totalExpense)} UZS\n` +
-    `📊 <b>Byudjet bajarilishi:</b> ${percent}% <code>[${bar}]</code>\n` +
-    `💵 <b>Qolgan limit:</b> ${fmt(remaining)} UZS\n\n` +
-    `💡 <i>Oylik byudjetingizni o'zgartirish uchun pastdagi tugmalardan tanlang:</i>`;
+  const fmt = (n: number) => Math.abs(n || 0).toLocaleString('en-US').replace(/,/g, ' ');
+
+  const goal = Number(user?.onboarding?.monthlyGoal || user?.goal || 0);
+  let goalText = "";
+  if (goal > 0) {
+    const pct = Math.min(100, Math.round((monthlyExpense / goal) * 100));
+    goalText = `\n🎯 <b>Oylik limit:</b> ${fmt(goal)} so'm (${pct}% sarflandi)\n${renderProgressBar(monthlyExpense / goal)}`;
+  }
+
+  const text = `📊 <b>Moliya AI — Hisobot & Balans</b> ✨\n\n` +
+    `👤 <b>Foydalanuvchi:</b> ${fromUser?.first_name || 'Hurmatli foydalanuvchi'}\n` +
+    `💵 <b>Umumiy Sof Balans:</b> ${netBalance >= 0 ? '+' : ''}${fmt(netBalance)} so'm\n\n` +
+    `📅 <b>Joriy oy ko'rsatkichlari:</b>\n` +
+    `🟢 <b>Daromad:</b> +${fmt(monthlyIncome)} so'm\n` +
+    `🔴 <b>Xarajat:</b> -${fmt(monthlyExpense)} so'm` +
+    goalText + `\n\n` +
+    `👇 <i>Batafsil grafiklar va tahlil ilovada mavjud:</i>`;
 
   const inlineKeyboard = {
     inline_keyboard: [
       [
-        { text: "🎯 1 mln", callback_data: "save_goal_1000000" },
-        { text: "🎯 2 mln", callback_data: "save_goal_2000000" },
-        { text: "🎯 3 mln", callback_data: "save_goal_3000000" }
-      ],
-      [
-        { text: "🎯 5 mln", callback_data: "save_goal_5000000" },
-        { text: "🎯 10 mln", callback_data: "save_goal_10000000" }
-      ],
-      [
-        { text: "📊 Statistika va Tahlil", callback_data: "period_month" }
+        { text: "📱 Mini App-da ko'rish", web_app: { url: appUrl } },
+        { text: "🌐 Web App", url: appUrl }
       ]
     ]
   };
@@ -548,8 +468,6 @@ async function sendTelegramMessage(chatId: number | string, text: string, replyM
     if (data.ok && data.result?.message_id) {
       return data.result.message_id;
     } else if (!data.ok) {
-      console.error('[BOT] Telegram sendMessage HTML API error:', data);
-      // Fallback: Strip HTML tags and retry as plain text if HTML parsing failed
       const cleanText = text.replace(/<[^>]*>/g, '');
       const fallbackRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
         method: 'POST',
@@ -573,7 +491,7 @@ async function sendTelegramMessage(chatId: number | string, text: string, replyM
 
 async function editTelegramMessage(chatId: number | string, messageId: number, text: string, replyMarkup?: any) {
   try {
-    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
+    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -584,936 +502,217 @@ async function editTelegramMessage(chatId: number | string, messageId: number, t
         reply_markup: replyMarkup
       })
     });
-    const data = await res.json();
-    if (!data.ok) {
-      console.error('[BOT] Telegram editMessageText HTML API error:', data);
-      const cleanText = text.replace(/<[^>]*>/g, '');
-      await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: chatId,
-          message_id: messageId,
-          text: cleanText,
-          reply_markup: replyMarkup
-        })
-      });
-    }
   } catch (err) {
     console.error('Failed to edit Telegram message:', err);
   }
 }
 
-async function answerCallbackQuery(callbackQueryId: string, text: string) {
+async function answerCallbackQuery(callbackQueryId: string, text?: string) {
   try {
     await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ callback_query_id: callbackQueryId, text })
+      body: JSON.stringify({
+        callback_query_id: callbackQueryId,
+        text
+      })
     });
   } catch (err) {
     console.error('Failed to answer callback query:', err);
   }
 }
 
-async function buildPeriodReport(fromUser: any, period: 'today' | 'week' | 'month' | 'last_month' = 'month') {
-  const txs = await getBotTransactions(fromUser);
-  const budgets = await getUserBudgets(fromUser);
-
-  const now = new Date();
-  let periodTitle = "Shu oy";
-  let filteredTxs: any[] = [];
-
-  if (period === 'today') {
-    periodTitle = "Bugun";
-    filteredTxs = txs.filter(t => {
-      const d = new Date(t.date || 0);
-      return d.getDate() === now.getDate() && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-    });
-  } else if (period === 'week') {
-    periodTitle = "Shu hafta";
-    const startOfWeek = new Date(now);
-    const day = now.getDay();
-    const diff = now.getDate() - day + (day === 0 ? -6 : 1);
-    startOfWeek.setDate(diff);
-    startOfWeek.setHours(0, 0, 0, 0);
-    filteredTxs = txs.filter(t => new Date(t.date || 0) >= startOfWeek);
-  } else if (period === 'last_month') {
-    periodTitle = "O'tgan oy";
-    const lmDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    filteredTxs = txs.filter(t => {
-      const d = new Date(t.date || 0);
-      return d.getMonth() === lmDate.getMonth() && d.getFullYear() === lmDate.getFullYear();
-    });
-  } else {
-    periodTitle = "Shu oy";
-    filteredTxs = txs.filter(t => {
-      const d = new Date(t.date || 0);
-      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-    });
-  }
-
-  const totalExpense = filteredTxs.filter(t => t.type === 'expense').reduce((acc, t) => acc + Math.abs(Number(t.amount) || 0), 0);
-  const totalIncome = filteredTxs.filter(t => t.type === 'income').reduce((acc, t) => acc + Number(t.amount) || 0, 0);
-
-  const catMap: Record<string, number> = {};
-  filteredTxs.filter(t => t.type === 'expense').forEach(t => {
-    const cat = t.category || 'Boshqa';
-    catMap[cat] = (catMap[cat] || 0) + Math.abs(Number(t.amount) || 0);
-  });
-
-  const fmt = (n: number) => n.toLocaleString('en-US').replace(/,/g, ' ');
-
-  let catReportText = "";
-  const catEntries = Object.entries(catMap).sort((a, b) => b[1] - a[1]);
-
-  if (catEntries.length === 0) {
-    catReportText = `<i>${periodTitle}da hali xarajatlar mavjud emas.</i>`;
-  } else {
-    catReportText = catEntries.map(([cat, amt]) => {
-      const percent = totalExpense > 0 ? Math.round((amt / totalExpense) * 100) : 0;
-      const bar = renderProgressBar(percent / 100, 8);
-      const budgetLimit = budgets[cat];
-      let budgetNotice = "";
-      if (period === 'month' && budgetLimit && budgetLimit > 0) {
-        const bPercent = Math.round((amt / budgetLimit) * 100);
-        const bEmoji = bPercent >= 100 ? '🚨' : bPercent >= 80 ? '⚠️' : '🎯';
-        budgetNotice = `\n   ${bEmoji} <i>Limit: ${fmt(budgetLimit)} so'm (${bPercent}%)</i>`;
-      }
-      return `📂 <b>${cat}</b>: ${fmt(amt)} so'm (${percent}%)\n   <code>[${bar}]</code>${budgetNotice}`;
-    }).join('\n\n');
-  }
-
-  const text = `📈 <b>Tahlil va Statistika (${periodTitle})</b> 📊\n\n` +
-    `🟢 <b>Daromad:</b> ${fmt(totalIncome)} so'm\n` +
-    `🔻 <b>Xarajat:</b> ${fmt(totalExpense)} so'm\n` +
-    `💰 <b>Sof qoldiq:</b> ${fmt(totalIncome - totalExpense)} so'm\n\n` +
-    `━━━━━━━━━━━━━━━━━━\n` +
-    `<b>Kategoriyalar bo'yicha ajratish:</b>\n\n` +
-    `${catReportText}\n\n` +
-    `💡 <i>Vaqt oralig'ini tanlang:</i>`;
-
-  const inlineKeyboard = {
-    inline_keyboard: [
-      [
-        { text: period === 'today' ? "✅ Bugun" : "📅 Bugun", callback_data: "period_today" },
-        { text: period === 'week' ? "✅ Shu hafta" : "🗓 Shu hafta", callback_data: "period_week" }
-      ],
-      [
-        { text: period === 'month' ? "✅ Shu oy" : "📊 Shu oy", callback_data: "period_month" },
-        { text: period === 'last_month' ? "✅ O'tgan oy" : "📆 O'tgan oy", callback_data: "period_last_month" }
-      ],
-      [
-        { text: "🎯 Byudjet limitlarini boshqarish", callback_data: "set_b_menu" }
-      ]
-    ]
-  };
-
-  return { text, inlineKeyboard };
-}
-
-let commandsSet = false;
-async function setBotCommands() {
-  if (commandsSet) return;
-  commandsSet = true;
-  try {
-    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setMyCommands`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        commands: [
-          { command: "start", description: "🚀 Botni ishga tushirish va menyu" }
-        ]
-      })
-    });
-  } catch (e) {
-    console.error('Error setting bot commands:', e);
-  }
-}
-
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (req.method === 'GET') {
+    return res.status(200).json({ status: 'Moliya AI Telegram Webhook Live (Supabase)' });
+  }
+
   if (req.method !== 'POST') {
-    return res.status(200).send('Telegram Webhook Active');
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
     const update = req.body;
-    if (!update) return res.status(200).json({ status: 'ok' });
+    if (!update) return res.status(200).json({ status: 'no_body' });
 
-    setBotCommands().catch(e => console.error('setBotCommands error:', e));
-
-    // A) Callback Query
+    // Handle Inline Callbacks
     if (update.callback_query) {
       const cb = update.callback_query;
-      const chatId = cb.message?.chat?.id;
       const data = cb.data;
+      const chatId = cb.message?.chat?.id;
 
       if (chatId && data && data.startsWith('tx_confirm_')) {
         const txId = data.replace('tx_confirm_', '');
         const confirmed = await confirmPendingDraftTx(cb.from, txId);
         if (confirmed) {
-          await answerCallbackQuery(cb.id, "✅ Operatsiya saqlandi!");
-          const richCard = await renderRichTransactionCard(cb.from, confirmed, false);
+          await answerCallbackQuery(cb.id, "✅ Operatsiya muvaffaqiyatli saqlandi!");
+          const card = await renderRichTransactionCard(cb.from, confirmed, false);
           if (cb.message?.message_id) {
-            await editTelegramMessage(chatId, cb.message.message_id, richCard.text, richCard.inlineKeyboard);
-          } else {
-            await sendTelegramMessage(chatId, richCard.text, richCard.inlineKeyboard);
+            await editTelegramMessage(chatId, cb.message.message_id, card.text, card.inlineKeyboard);
           }
         } else {
-          await answerCallbackQuery(cb.id, "⚠️ Operatsiya topilmadi!");
-        }
-      } else if (chatId && data && data.startsWith('save_goal_')) {
-        const newGoal = parseInt(data.replace('save_goal_', ''), 10);
-        if (newGoal > 0) {
-          const tgId = String(cb.from?.id);
-          const userId = `moliya_user_tg_${tgId}`;
-          await setDoc(doc(db, 'users', userId), { goal: newGoal, 'onboarding.goal': newGoal }, { merge: true });
-          const fmtGoal = newGoal.toLocaleString('en-US').replace(/,/g, ' ');
-          await answerCallbackQuery(cb.id, `🎯 Byudjet: ${fmtGoal} UZS`);
-          const goalReport = await buildGoalBudgetReport(cb.from);
-          if (cb.message?.message_id) {
-            await editTelegramMessage(chatId, cb.message.message_id, goalReport.text, goalReport.inlineKeyboard);
-          } else {
-            await sendTelegramMessage(chatId, goalReport.text, goalReport.inlineKeyboard);
-          }
+          await answerCallbackQuery(cb.id, "⚠️ Operatsiya allaqachon tasdiqlangan");
         }
       } else if (chatId && data && data.startsWith('tx_cancel_')) {
         const txId = data.replace('tx_cancel_', '');
         await cancelPendingDraftTx(cb.from, txId);
-        await answerCallbackQuery(cb.id, "❌ Operatsiya bekor qilindi!");
-        const cancelMsg = "❌ <b>Operatsiya bekor qilindi.</b> <i>(Tizimga saqlanmadi)</i>";
+        await answerCallbackQuery(cb.id, "❌ Operatsiya bekor qilindi");
         if (cb.message?.message_id) {
-          await editTelegramMessage(chatId, cb.message.message_id, cancelMsg, undefined);
-        } else {
-          await sendTelegramMessage(chatId, cancelMsg);
-        }
-      } else if (chatId && data && data.startsWith('tx_edit_')) {
-        const txId = data.replace('tx_edit_', '');
-        const draft = await getPendingDraftTx(cb.from, txId);
-        if (draft) {
-          const typeEmoji = draft.type === 'income' ? '🟢 Daromad' : '🛒 Xarajat';
-          const editMsg = `✏️ <b>Operatsiyani tahrirlash:</b>\n\n📌 <b>Hozirgi tur:</b> ${typeEmoji}\n📂 <b>Hozirgi kategoriya:</b> ${draft.category}`;
-          const inlineKeyboard = {
-            inline_keyboard: [
-              [
-                { text: draft.type === 'income' ? "🔄 Xarajatga o'tkazish" : "🔄 Daromadga o'tkazish", callback_data: `tx_toggle_type_${txId}` }
-              ],
-              [
-                { text: "📂 Kategoriyani tanlash", callback_data: `tx_edit_cat_${txId}` }
-              ],
-              [
-                { text: "✅ Saqlash (Tayyor)", callback_data: `tx_confirm_${txId}` },
-                { text: "❌ Bekor qilish", callback_data: `tx_cancel_${txId}` }
-              ]
-            ]
-          };
-          await answerCallbackQuery(cb.id, "✏️ Tahrirlash rejimi");
-          if (cb.message?.message_id) {
-            await editTelegramMessage(chatId, cb.message.message_id, editMsg, inlineKeyboard);
-          }
-        }
-      } else if (chatId && data && data.startsWith('tx_toggle_type_')) {
-        const txId = data.replace('tx_toggle_type_', '');
-        const draft = await getPendingDraftTx(cb.from, txId);
-        if (draft) {
-          const newType = draft.type === 'income' ? 'expense' : 'income';
-          draft.type = newType;
-          await savePendingDraftTx(cb.from, draft);
-          await answerCallbackQuery(cb.id, `🔄 Tur o'zgartirildi: ${newType === 'income' ? 'Daromad' : 'Xarajat'}`);
-          const card = await renderRichTransactionCard(cb.from, draft, true);
-          if (cb.message?.message_id) {
-            await editTelegramMessage(chatId, cb.message.message_id, card.text, card.inlineKeyboard);
-          }
-        }
-      } else if (chatId && data && data.startsWith('tx_edit_cat_')) {
-        const txId = data.replace('tx_edit_cat_', '');
-        const catMsg = "📂 <b>Qaysi kategoriyaga o'zgartirmoqchisiz?</b>";
-        const inlineKeyboard = {
-          inline_keyboard: [
-            [
-              { text: "🛒 Oziq-ovqat", callback_data: `tx_save_cat_${txId}_Oziq-ovqat` },
-              { text: "🚕 Transport", callback_data: `tx_save_cat_${txId}_Transport` }
-            ],
-            [
-              { text: "👕 Kiyim", callback_data: `tx_save_cat_${txId}_Kiyim` },
-              { text: "💡 Kommunal", callback_data: `tx_save_cat_${txId}_Kommunal` }
-            ],
-            [
-              { text: "🏥 Sog'liq", callback_data: `tx_save_cat_${txId}_Sog'liq` },
-              { text: "🎓 Ta'lim", callback_data: `tx_save_cat_${txId}_Ta'lim` }
-            ],
-            [
-              { text: "💲 Mehnat chiqimlari", callback_data: `tx_save_cat_${txId}_Mehnat chiqimlari` }
-            ]
-          ]
-        };
-        await answerCallbackQuery(cb.id, "📂 Kategoriya tanlang");
-        if (cb.message?.message_id) {
-          await editTelegramMessage(chatId, cb.message.message_id, catMsg, inlineKeyboard);
-        }
-      } else if (chatId && data && data.startsWith('tx_save_cat_')) {
-        const rest = data.replace('tx_save_cat_', '');
-        const firstUnderscore = rest.indexOf('_');
-        const txId = rest.substring(0, firstUnderscore);
-        const newCat = rest.substring(firstUnderscore + 1);
-
-        const draft = await getPendingDraftTx(cb.from, txId);
-        if (draft && newCat) {
-          draft.category = newCat;
-          await savePendingDraftTx(cb.from, draft);
-          await answerCallbackQuery(cb.id, `📂 Kategoriya: ${newCat}`);
-          const card = await renderRichTransactionCard(cb.from, draft, true);
-          if (cb.message?.message_id) {
-            await editTelegramMessage(chatId, cb.message.message_id, card.text, card.inlineKeyboard);
-          }
+          await editTelegramMessage(chatId, cb.message.message_id, "❌ <b>Operatsiya bekor qilindi.</b>", getMainMenuKeyboard());
         }
       } else if (chatId && data && data.startsWith('del_')) {
         const txId = data.replace('del_', '');
         const tgId = String(cb.from?.id || chatId);
-        try {
-          await deleteDoc(doc(db, 'users', `moliya_user_tg_${tgId}`, 'transactions', txId));
-        } catch (e) {
-          console.error('[BOT] Error deleting callback tx:', e);
-        }
+        const userId = `moliya_user_tg_${tgId}`;
+        const { data: user } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
+        const txs = Array.isArray(user?.transactions) ? user.transactions : [];
+        const updated = txs.filter((t: any) => String(t.id) !== String(txId));
+        await supabase.from('users').update({ transactions: updated, updated_at: new Date().toISOString() }).eq('id', userId);
 
         await answerCallbackQuery(cb.id, "🗑 Operatsiya o'chirildi!");
         await sendTelegramMessage(chatId, "🗑 <b>Operatsiya muvaffaqiyatli o'chirildi!</b> ✅", getMainMenuKeyboard());
-      } else if (chatId && data && data.startsWith('period_')) {
-        const periodKey = data.replace('period_', '') as 'today' | 'week' | 'month' | 'last_month';
-        const report = await buildPeriodReport(cb.from, periodKey);
-        await answerCallbackQuery(cb.id, "📊 Tahlil yangilandi");
-        if (cb.message?.message_id) {
-          await editTelegramMessage(chatId, cb.message.message_id, report.text, report.inlineKeyboard);
-        } else {
-          await sendTelegramMessage(chatId, report.text, report.inlineKeyboard);
-        }
-      } else if (chatId && data === 'set_b_menu') {
-        const menuText = "🎯 <b>Qaysi kategoriya uchun byudjet limitini o'rnatmoqchisiz?</b>";
-        const inlineKeyboard = {
-          inline_keyboard: [
-            [
-              { text: "🛒 Oziq-ovqat", callback_data: "set_b_cat_Oziq-ovqat" },
-              { text: "🚕 Transport", callback_data: "set_b_cat_Transport" }
-            ],
-            [
-              { text: "👕 Kiyim", callback_data: "set_b_cat_Kiyim" },
-              { text: "💡 Kommunal", callback_data: "set_b_cat_Kommunal" }
-            ],
-            [
-              { text: "🏥 Sog'liq", callback_data: "set_b_cat_Sog'liq" },
-              { text: "🎓 Ta'lim", callback_data: "set_b_cat_Ta'lim" }
-            ],
-            [
-              { text: "🔙 Orqaga", callback_data: "period_month" }
-            ]
-          ]
-        };
-        await answerCallbackQuery(cb.id, "🎯 Kategoriya tanlang");
-        if (cb.message?.message_id) {
-          await editTelegramMessage(chatId, cb.message.message_id, menuText, inlineKeyboard);
-        } else {
-          await sendTelegramMessage(chatId, menuText, inlineKeyboard);
-        }
-      } else if (chatId && data && data.startsWith('set_b_cat_')) {
-        const category = data.replace('set_b_cat_', '');
-        const promptText = `🎯 <b>${category}</b> uchun oylik byudjet limitini tanlang:`;
-        const inlineKeyboard = {
-          inline_keyboard: [
-            [
-              { text: "500 ming", callback_data: `save_b_${category}_500000` },
-              { text: "1 mln", callback_data: `save_b_${category}_1000000` },
-              { text: "1.5 mln", callback_data: `save_b_${category}_1500000` }
-            ],
-            [
-              { text: "2 mln", callback_data: `save_b_${category}_2000000` },
-              { text: "3 mln", callback_data: `save_b_${category}_3000000` },
-              { text: "5 mln", callback_data: `save_b_${category}_5000000` }
-            ],
-            [
-              { text: "🔙 Orqaga", callback_data: "set_b_menu" }
-            ]
-          ]
-        };
-        await answerCallbackQuery(cb.id, `🎯 ${category} tanlandi`);
-        if (cb.message?.message_id) {
-          await editTelegramMessage(chatId, cb.message.message_id, promptText, inlineKeyboard);
-        } else {
-          await sendTelegramMessage(chatId, promptText, inlineKeyboard);
-        }
-      } else if (chatId && data && data.startsWith('save_b_')) {
-        const parts = data.replace('save_b_', '').split('_');
-        const category = parts[0];
-        const amount = parseInt(parts[1] || '0', 10);
-
-        if (category && amount > 0) {
-          await setUserBudget(cb.from, category, amount);
-          const fmtAmt = amount.toLocaleString('en-US').replace(/,/g, ' ');
-          await answerCallbackQuery(cb.id, `✅ ${category}: ${fmtAmt} so'm limit!`);
-          const report = await buildPeriodReport(cb.from, 'month');
-          if (cb.message?.message_id) {
-            await editTelegramMessage(chatId, cb.message.message_id, report.text, report.inlineKeyboard);
-          } else {
-            await sendTelegramMessage(chatId, report.text, report.inlineKeyboard);
-          }
-        }
       }
       return res.status(200).json({ status: 'ok' });
     }
 
-    // B) Text or Voice Message
-    if (update.message) {
-      const message = update.message;
-      const chatId = message.chat?.id;
-      const text = message.text;
-      const voice = message.voice || message.audio;
-      const fromUser = message.from;
+    const message = update.message || update.edited_message;
+    if (!message) return res.status(200).json({ status: 'no_message' });
 
-      if (!chatId) return res.status(200).json({ status: 'ok' });
+    const chatId = message.chat?.id;
+    const fromUser = message.from;
+    const text = (message.text || "").trim();
 
-      // Handle Contact (phone number shared)
-      if (message.contact) {
-        const phone = message.contact.phone_number;
-        if (phone) {
-          try {
-            const tgId = String(fromUser.id);
-            const fullName = [fromUser.first_name, fromUser.last_name].filter(Boolean).join(' ') || 'Foydalanuvchi';
-            const username = fromUser.username ? `@${fromUser.username}` : '';
-            
-            const profileData = {
-              phone,
-              name: fullName,
-              telegram: username,
-              telegramId: tgId,
-              updatedAt: new Date().toISOString()
-            };
+    // Handle Contact Share (Phone Number)
+    if (message.contact) {
+      const contact = message.contact;
+      const phone = contact.phone_number?.startsWith('+') ? contact.phone_number : `+${contact.phone_number}`;
+      const tgId = String(contact.user_id || fromUser.id);
+      const fullName = [fromUser.first_name, fromUser.last_name].filter(Boolean).join(' ') || contact.first_name || 'Foydalanuvchi';
+      const username = fromUser.username ? `@${fromUser.username}` : '';
+      const userId = `moliya_user_tg_${tgId}`;
 
-            // Save phone and profile data to both user document paths
-            await setDoc(doc(db, 'users', `moliya_user_tg_${tgId}`), {
-              ...profileData,
-              onboarding: {
-                name: fullName,
-                phone,
-                telegram: username,
-                telegramId: tgId
-              }
-            }, { merge: true });
-            
-            await setDoc(doc(db, 'users', `tg_user_${tgId}`), profileData, { merge: true });
+      await supabase.from('users').upsert({
+        id: userId,
+        name: fullName,
+        phone,
+        telegram: username,
+        telegram_id: tgId,
+        language: 'uz',
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'id' });
 
-            // Check if there is a pending login request for this chat
-            const pendingRef = doc(db, 'login_requests', `pending_${chatId}`);
-            const pendingSnap = await getDoc(pendingRef);
-            if (pendingSnap.exists()) {
-              const pendingData = pendingSnap.data();
-              if (pendingData?.requestId) {
-                await verifyAndMarkLoginRequest(pendingData.requestId, fromUser, phone);
-                await deleteDoc(pendingRef);
-              }
-            }
-
-            const successText = `✅ <b>Telefon raqamingiz saqlandi va hisobingiz tasdiqlandi!</b> 🎉\n\n📞 <b>Raqam:</b> ${phone}\n\n👇 Brauzeringizga qaytib ilovadan foydalanishingiz mumkin:`;
-            await sendTelegramMessage(chatId, successText, getCleanInlineKeyboard());
-            await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
-          } catch (contactErr) {
-            console.error('Error handling contact share:', contactErr);
-          }
-        }
-        return res.status(200).json({ status: 'ok' });
-      }
-
-      // Handle Photo (Receipt OCR)
-      const photo = message.photo;
-      if (photo && Array.isArray(photo) && photo.length > 0) {
-        const limitInfo = await checkAndIncrementAiLimitAsync(fromUser);
-        if (!limitInfo.allowed) {
-          const limitMsg = `⚠️ <b>Chek skanerlash AI faqat Premium tarifda! (5/5 ishlatildi)</b>\n\nSiz oylik bepul 5 ta AI so'rov imkoniyatizdan foydalandingiz.\nCheksiz AI chek tahlili va ovozli xabar uchun <b>Premium</b> tarifiga o'ting! ⭐`;
-          await sendTelegramMessage(chatId, limitMsg, getCleanInlineKeyboard());
-          return res.status(200).json({ status: 'ok' });
-        }
-
-        try {
-          await sendTelegramMessage(chatId, "🧾 <i>Chek rasmi tahlil qilinmoqda (AI Vision)...</i>");
-          const largestPhoto = photo[photo.length - 1];
-          const fileRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${largestPhoto.file_id}`);
-          const fileData = await fileRes.json();
-          if (fileData.ok && fileData.result?.file_path) {
-            const downloadUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${fileData.result.file_path}`;
-            const imgBufRes = await fetch(downloadUrl);
-            const imgArrayBuffer = await imgBufRes.arrayBuffer();
-            const base64Img = Buffer.from(imgArrayBuffer).toString('base64');
-
-            if (process.env.GEMINI_API_KEY) {
-              const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-              const promptText = `Analyze this Uzbek/Russian store receipt image (Korzinka, Makro, Havas, etc.) and extract JSON:
-- amount: total paid amount in UZS (number)
-- store: merchant/store name (string)
-- category: ('Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\'liq', 'Ta\'lim', 'Boshqa')
-- note: main items purchased summary (string)`;
-
-              let response;
-              try {
-                response = await ai.models.generateContent({
-                  model: "gemini-2.5-flash",
-                  contents: [
-                    { inlineData: { mimeType: "image/jpeg", data: base64Img } },
-                    promptText
-                  ],
-                  config: {
-                    responseMimeType: "application/json",
-                    responseSchema: {
-                      type: Type.OBJECT,
-                      properties: {
-                        amount: { type: Type.NUMBER },
-                        store: { type: Type.STRING },
-                        category: { type: Type.STRING },
-                        note: { type: Type.STRING },
-                      },
-                      required: ["amount", "store", "category", "note"],
-                    }
-                  }
-                });
-              } catch (e1) {
-                response = await ai.models.generateContent({
-                  model: "gemini-1.5-flash",
-                  contents: [
-                    { inlineData: { mimeType: "image/jpeg", data: base64Img } },
-                    promptText
-                  ],
-                  config: {
-                    responseMimeType: "application/json",
-                    responseSchema: {
-                      type: Type.OBJECT,
-                      properties: {
-                        amount: { type: Type.NUMBER },
-                        store: { type: Type.STRING },
-                        category: { type: Type.STRING },
-                        note: { type: Type.STRING },
-                      },
-                      required: ["amount", "store", "category", "note"],
-                    }
-                  }
-                });
-              }
-
-              const parsed = JSON.parse(response.text || '{}');
-              if (parsed && parsed.amount && parsed.amount > 0) {
-                const txId = 'tx_' + Date.now();
-                const draftTx = {
-                  id: txId,
-                  type: 'expense',
-                  name: `${parsed.store || "Chek"} - ${parsed.note || "Rasmli operatsiya"}`,
-                  category: parsed.category || 'Oziq-ovqat',
-                  amount: Math.abs(parsed.amount),
-                  date: new Date().toISOString()
-                };
-
-                await savePendingDraftTx(fromUser, draftTx);
-                const card = await renderRichTransactionCard(fromUser, draftTx, true);
-                await sendTelegramMessage(chatId, card.text, card.inlineKeyboard);
-                return res.status(200).json({ status: 'ok' });
-              }
-            }
-          }
-        } catch (photoErr) {
-          console.error("Photo processing error:", photoErr);
-        }
-
-        await sendTelegramMessage(chatId, "⚠️ <i>Chek rasmidagi summani o'qib bo'lmadi. Iltimos rasmni tiniqroq tushirib qayta yuboring.</i>", getMainMenuKeyboard());
-        return res.status(200).json({ status: 'ok' });
-      }
-
-      // Handle Voice Note
-      if (voice && voice.file_id) {
-        const limitInfo = await checkAndIncrementAiLimitAsync(fromUser);
-        if (!limitInfo.allowed) {
-          const limitMsg = `⚠️ <b>Oylik Bepul AI Limiti Tugadi! (5/5 ishlatildi)</b>\n\nSiz oylik bepul 5 ta AI so'rov imkoniyatizdan foydalandingiz.\nCheksiz AI va ovozli tahlil uchun <b>Premium</b> tarifiga o'ting! ⭐`;
-          await sendTelegramMessage(chatId, limitMsg, getCleanInlineKeyboard());
-          return res.status(200).json({ status: 'ok' });
-        }
-
-        let statusMsgId: number | null = null;
-        try {
-          statusMsgId = await sendTelegramMessage(chatId, "🎙 <i>Ovozli xabar tahlil qilinmoqda (Moliya AI)...</i>");
-
-          const fileRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${voice.file_id}`);
-          const fileData = await fileRes.json();
-          if (fileData.ok && fileData.result?.file_path) {
-            const downloadUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${fileData.result.file_path}`;
-            const audioBufRes = await fetch(downloadUrl);
-            const audioArrayBuffer = await audioBufRes.arrayBuffer();
-            const base64Audio = Buffer.from(audioArrayBuffer).toString('base64');
-
-            if (process.env.GEMINI_API_KEY) {
-              const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-              const promptText = `Listen carefully to this spoken Uzbek or Russian voice recording and extract financial transaction info into JSON:
-- type: 'expense' | 'income'
-- amount: number (total in UZS currency, e.g. 25000, 150000, 4000000)
-- category: string ('Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\'liq', 'Ta\'lim', 'Boshqa', 'Mehnat chiqimlari', 'Daromad')
-- note: string (clear description of transaction in Uzbek)`;
-
-              let response;
-              try {
-                response = await ai.models.generateContent({
-                  model: "gemini-2.5-flash",
-                  contents: [
-                    {
-                      inlineData: {
-                        mimeType: "audio/ogg",
-                        data: base64Audio
-                      }
-                    },
-                    promptText
-                  ],
-                  config: {
-                    responseMimeType: "application/json",
-                    responseSchema: {
-                      type: Type.OBJECT,
-                      properties: {
-                        type: { type: Type.STRING },
-                        amount: { type: Type.NUMBER },
-                        category: { type: Type.STRING },
-                        note: { type: Type.STRING },
-                      },
-                      required: ["type", "amount", "category", "note"],
-                    }
-                  }
-                });
-              } catch (e1) {
-                console.log('[BOT] gemini-2.5-flash audio fallback to gemini-1.5-flash');
-                response = await ai.models.generateContent({
-                  model: "gemini-1.5-flash",
-                  contents: [
-                    {
-                      inlineData: {
-                        mimeType: "audio/ogg",
-                        data: base64Audio
-                      }
-                    },
-                    promptText
-                  ],
-                  config: {
-                    responseMimeType: "application/json",
-                    responseSchema: {
-                      type: Type.OBJECT,
-                      properties: {
-                        type: { type: Type.STRING },
-                        amount: { type: Type.NUMBER },
-                        category: { type: Type.STRING },
-                        note: { type: Type.STRING },
-                      },
-                      required: ["type", "amount", "category", "note"],
-                    }
-                  }
-                });
-              }
-
-              const parsed = JSON.parse(response.text || '{}');
-              if (parsed && parsed.amount && parsed.amount > 0) {
-                const txId = 'tx_' + Date.now();
-                const draftTx = {
-                  id: txId,
-                  type: parsed.type || 'expense',
-                  name: parsed.note || "Ovozli xabar",
-                  category: parsed.category || 'Boshqa',
-                  amount: Math.abs(parsed.amount),
-                  date: new Date().toISOString()
-                };
-
-                await savePendingDraftTx(fromUser, draftTx);
-                const card = await renderRichTransactionCard(fromUser, draftTx, true);
-                if (statusMsgId) {
-                  await editTelegramMessage(chatId, statusMsgId, card.text, card.inlineKeyboard);
-                } else {
-                  await sendTelegramMessage(chatId, card.text, card.inlineKeyboard);
-                }
-                return res.status(200).json({ status: 'ok' });
-              }
-            }
-          }
-        } catch (voiceErr) {
-          console.error("Voice processing error:", voiceErr);
-        }
-
-        const failText = "⚠️ <i>Ovozli xabarni tushunib bo'lmadi. Qaytadan aniqroq gapirib ko'ring (Masalan: \"Taksi uchun 25000 so'm ishlatdim\").</i>";
-        if (statusMsgId) {
-          await editTelegramMessage(chatId, statusMsgId, failText, getMainMenuKeyboard());
-        } else {
-          await sendTelegramMessage(chatId, failText, getMainMenuKeyboard());
-        }
-        return res.status(200).json({ status: 'ok' });
-      }
-
-      if (!text) return res.status(200).json({ status: 'ok' });
-
-      // 1. /start command (Handles Login Request UUID e.g. /start req_UUID or standard /start)
-      if (text.startsWith("/start")) {
-        const rawArg = text.replace('/start', '').trim();
-        const requestId = rawArg.replace('req_', '').trim();
-        console.log('[BOT] /start received. rawArg:', rawArg, 'requestId:', requestId, 'from user:', fromUser?.id);
-
-        if (requestId && requestId.length >= 8) {
-          console.log('[BOT] Processing login request verification...');
-          const successText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n✅ <b>Profilingiz muvaffaqiyatli tasdiqlandi!</b> 🚀\nBrauzeringizdagi Moliya AI sahifasiga qaytsangiz, profilingiz avtomatik ochiladi.\n\n👇 <i>Ilovani to'g'ridan-to'g'ri ochish:</i>`;
-
-          // Execute DB verification and instant message dispatch in parallel for sub-300ms response time
-          const [result] = await Promise.all([
-            verifyAndMarkLoginRequest(requestId, fromUser),
-            sendTelegramMessage(chatId, successText, getCleanInlineKeyboard())
-          ]);
-
-          if (result && !result.onboarding?.phone) {
-            const phonePromptText = `📞 <b>Eslatma:</b> <i>Profilingiz to'liq bo'lishi uchun telefon raqamingizni yuboring (Bu raqam profilingiz uchun saqlanadi):</i>`;
-            const phoneReplyKeyboard = {
-              keyboard: [
-                [{ text: "📞 Telefon raqamini ulashish", request_contact: true }],
-                [{ text: "📱 Mini App", web_app: { url: appUrl } }, { text: "🌐 Web App", url: appUrl }]
-              ],
-              resize_keyboard: true,
-              one_time_keyboard: true
-            };
-            sendTelegramMessage(chatId, phonePromptText, phoneReplyKeyboard).catch(() => {});
-          }
-
-          return res.status(200).json({ status: 'ok' });
-        }
-
-        // Standard /start without request parameter
-        console.log('[BOT] Standard /start (no login request)');
-        let userData: any = {};
-        try {
-          const tgId = String(fromUser?.id);
-          const userSnap = await getDoc(doc(db, 'users', `moliya_user_tg_${tgId}`));
-          if (userSnap.exists()) userData = userSnap.data();
-        } catch (e) {
-          console.error('[BOT] Error reading user doc on /start:', e);
-        }
-
-        if (!userData?.phone && !userData?.onboarding?.phone) {
-          const phonePromptText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
-            `<b>Moliya AI</b> botiga xush kelibsiz! 🚀\n\n` +
-            `📞 <i>Profilingiz to'liq bo'lishi uchun telefon raqamingizni yuboring (Bu raqam profilingiz uchun saqlanadi):</i>`;
-          const phoneReplyKeyboard = {
-            keyboard: [
-              [{ text: "📞 Telefon raqamini ulashish", request_contact: true }],
-              [{ text: "📱 Mini App", web_app: { url: appUrl } }, { text: "🌐 Web App", url: appUrl }]
-            ],
-            resize_keyboard: true,
-            one_time_keyboard: true
-          };
-          await sendTelegramMessage(chatId, phonePromptText, phoneReplyKeyboard);
-          return res.status(200).json({ status: 'ok' });
-        }
-
-        const welcomeText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n<b>Moliya AI</b> botiga xush kelibsiz! 🚀\nPulingizni oson va aqlli boshqaring.\n\n👇 <b>Kerakli bo'limni tanlang:</b>`;
-        await sendTelegramMessage(chatId, welcomeText, getMainMenuKeyboard());
-        return res.status(200).json({ status: 'ok' });
-      }
-
-      // 1.5. Web App Link command ("🌐 Web App")
-      if (text.includes("Web App") || text.includes("web app") || text.includes("Web app") || text.startsWith("/webapp") || text.includes("🌐 Web App")) {
-        const webAppText = `🌐 <b>Moliya AI Web App:</b>\n\n👇 <i>Brauzerda kirish uchun quyidagi tugmani bosing:</i>`;
-        const inlineKeyboard = {
-          inline_keyboard: [
-            [
-              { text: "🌐 Web App-ni brauzerda ochish 🚀", url: appUrl }
-            ],
-            [
-              { text: "📱 Telegram Mini App", web_app: { url: appUrl } }
-            ]
-          ]
-        };
-        await sendTelegramMessage(chatId, webAppText, inlineKeyboard);
-        return res.status(200).json({ status: 'ok' });
-      }
-
-      // 2. Help command ("💡 Yordam")
-      if (text.startsWith("/help") || text.includes("Yordam") || text.includes("yordam")) {
-        const helpText = `💡 <b>Moliya AI Boti Yordam Markazi</b> ✨\n\n` +
-          `• 🎙 <b>Ovozli xabar:</b> Xarajat va daromadlarni ovozli yuboring\n` +
-          `• 🧾 <b>Chek skanerlash:</b> Chek rasmini yuboring (AI Vision)\n` +
-          `• 📝 <b>Matn:</b> "Taksi 25000" deb yozib yuboring\n` +
-          `• 📊 <b>Balans & Hisobot:</b> Kunlik va oylik statistika\n` +
-          `• 🎯 <b>Byudjet & Limitlar:</b> Oylik moliyaviy reja\n` +
-          `• 📥 <b>Eksport:</b> Tranzaksiyalarni Excel/CSV shaklida yuklab olish\n\n` +
-          `👨‍💻 <b>Admin bilan bog'lanish:</b> @saidislombek_abdumalikov`;
-
-        const helpKeyboard = {
-          inline_keyboard: [
-            [
-              { text: "💬 Admin bilan bog'lanish", url: "https://t.me/saidislombek_abdumalikov" }
-            ],
-            [
-              { text: "📱 Mini App", web_app: { url: appUrl } },
-              { text: "🌐 Web App", url: appUrl }
-            ]
-          ]
-        };
-        await sendTelegramMessage(chatId, helpText, helpKeyboard);
-        return res.status(200).json({ status: 'ok' });
-      }
-
-      // 3. Balance & Stats (/balance, /stats, "Balans & Hisobot")
-      if (text.includes("Balans") || text.includes("balans") || text.startsWith("/balance") || text.includes("Statistika") || text.startsWith("/stats")) {
-        const report = await buildPeriodReport(fromUser, 'month');
-        await sendTelegramMessage(chatId, report.text, report.inlineKeyboard);
-        return res.status(200).json({ status: 'ok' });
-      }
-
-      // 4. Budget & Goal (/budget, /byudjet, "Byudjet & Limitlar")
-      if (text.includes("Byudjet") || text.includes("byudjet") || text.startsWith("/budget") || text.startsWith("/byudjet") || text.includes("Limitlar")) {
-        const goalReport = await buildGoalBudgetReport(fromUser);
-        await sendTelegramMessage(chatId, goalReport.text, goalReport.inlineKeyboard);
-        return res.status(200).json({ status: 'ok' });
-      }
-
-      // 5. Check Scanner Prompt ("🧾 Chek Skanner")
-      if (text.includes("Chek") || text.includes("chek") || text.includes("Skanner")) {
-        const checkPrompt = `🧾 <b>Chek skanerlash (AI Vision)</b> 📸\n\nDo'kon chekini (Korzinka, Makro, Havas va boshqalar) rasmga olib shu yerga yuboring!\nSun'iy intellekt chekdagi summani avtomatik o'qiydi va hisobotga kiritadi. 🚀`;
-        await sendTelegramMessage(chatId, checkPrompt, getMainMenuKeyboard());
-        return res.status(200).json({ status: 'ok' });
-      }
-
-      // 6. CSV Export (/export, "Eksport")
-      if (text.startsWith("/export") || text.includes("Eksport") || text.includes("eksport") || text.includes("Excel")) {
-        const txs = await getBotTransactions(fromUser);
-        if (txs.length === 0) {
-          await sendTelegramMessage(chatId, "ℹ️ <i>Eksport qilish uchun tranzaksiyalar mavjud emas.</i>", getMainMenuKeyboard());
-          return res.status(200).json({ status: 'ok' });
-        }
-
-        const csvHeader = "ID,Sana,Turi,Kategoriya,Summa (so'm),Izoh\n";
-        const csvRows = txs.map(t => {
-          const dateStr = t.date ? new Date(t.date).toLocaleString('uz-UZ') : '';
-          const typeStr = t.type === 'income' ? 'Daromad' : 'Xarajat';
-          const catStr = `"${(t.category || 'Boshqa').replace(/"/g, '""')}"`;
-          const amtStr = t.amount || 0;
-          const noteStr = `"${(t.note || t.name || '').replace(/"/g, '""')}"`;
-          return `${t.id},${dateStr},${typeStr},${catStr},${amtStr},${noteStr}`;
-        }).join('\n');
-
-        const csvContent = csvHeader + csvRows;
-        const fileBuffer = Buffer.from(csvContent, 'utf-8');
-        const fileName = `Moliya_AI_Hisobot_${Date.now()}.csv`;
-
-        await sendTelegramDocument(chatId, fileBuffer, fileName, "📊 <b>Barcha moliyaviy tranzaksiyalaringiz fayl shaklida tayyorlandi!</b> 📥");
-        return res.status(200).json({ status: 'ok' });
-      }
-
-      // 7. Reminders (/remind, "Eslatmalar")
-      if (text.startsWith("/remind") || text.includes("Eslatma") || text.includes("eslatma") || text.includes("Eslatmalar")) {
-        try {
-          const tgId = String(fromUser?.id);
-          const userId = `moliya_user_tg_${tgId}`;
-          await setDoc(doc(db, 'users', userId), { remindersEnabled: true, reminderHour: 20 }, { merge: true });
-          const remindMsg = `⏰ <b>Kunlik Eslatmalar Yoqildi!</b> 🔔\n\nHar kuni soat <b>20:00 da</b> bot sizga moliyaviy xarajatlaringizni kiritishni eslatib turadi.\n\n<i>Eslatmani o'chirish uchun botga har qanday vaqtda yangi tranzaksiya yuborishingiz kifoya.</i>`;
-          await sendTelegramMessage(chatId, remindMsg, getMainMenuKeyboard());
-        } catch (e) {
-          console.error('Error enabling reminders:', e);
-        }
-        return res.status(200).json({ status: 'ok' });
-      }
-
-      // 5. Parse text expense
-      const limitInfo = await checkAndIncrementAiLimitAsync(fromUser);
-      if (!limitInfo.allowed) {
-        const limitMsg = `⚠️ <b>Oylik Bepul AI Limiti Tugadi! (5/5 ishlatildi)</b>\n\nSiz oylik bepul 5 ta AI so'rov imkoniyatizdan foydalandingiz.\nCheksiz AI so'rovlari uchun <b>Premium</b> tarifiga o'ting! ⭐`;
-        await sendTelegramMessage(chatId, limitMsg, getCleanInlineKeyboard());
-        return res.status(200).json({ status: 'ok' });
-      }
-
-      let parsed: { type: string; amount: number; category: string; note: string } | null = null;
-      if (process.env.GEMINI_API_KEY) {
-        try {
-          const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-          const promptText = `
-You are a financial parsing assistant for an Uzbek Telegram Bot.
-Parse input: "${text.replace(/[\r\n\t]/g, ' ').slice(0, 300)}"
-Return JSON object:
-- type: 'expense' | 'income'
-- amount: number
-- category: string
-- note: string
-`;
-          let response;
-          try {
-            response = await ai.models.generateContent({
-              model: "gemini-2.5-flash",
-              contents: promptText,
-              config: {
-                responseMimeType: "application/json",
-                responseSchema: {
-                  type: Type.OBJECT,
-                  properties: {
-                    type: { type: Type.STRING },
-                    amount: { type: Type.NUMBER },
-                    category: { type: Type.STRING },
-                    note: { type: Type.STRING },
-                  },
-                  required: ["type", "amount", "category", "note"],
-                }
-              }
-            });
-          } catch (e1) {
-            response = await ai.models.generateContent({
-              model: "gemini-1.5-flash",
-              contents: promptText,
-              config: {
-                responseMimeType: "application/json",
-                responseSchema: {
-                  type: Type.OBJECT,
-                  properties: {
-                    type: { type: Type.STRING },
-                    amount: { type: Type.NUMBER },
-                    category: { type: Type.STRING },
-                    note: { type: Type.STRING },
-                  },
-                  required: ["type", "amount", "category", "note"],
-                }
-              }
-            });
-          }
-          parsed = JSON.parse(response.text || '{}');
-        } catch (aiErr) {
-          console.error('Gemini error in bot:', aiErr);
-        }
-      }
-
-      if (!parsed || !parsed.amount) {
-        const lower = text.toLowerCase();
-        let amount = 0;
-        const numMatch = lower.match(/(\d+(?:[\.,]\d+)?)\s*(?:ming|k|mln|million)?/i);
-        if (numMatch) {
-          let val = parseFloat(numMatch[1].replace(',', '.'));
-          if (lower.includes('mln') || lower.includes('million')) val *= 1000000;
-          else if (lower.includes('ming') || lower.includes('k') || val < 1000) val *= 1000;
-          amount = Math.round(val);
-        }
-        let type = lower.includes('maosh') || lower.includes('tushdi') ? 'income' : 'expense';
-        let category = lower.includes('taksi') ? 'Transport' : lower.includes('ovqat') ? 'Oziq-ovqat' : 'Boshqa';
-        if (amount > 0) parsed = { type, amount, category, note: text };
-      }
-
-      if (parsed && parsed.amount && parsed.amount > 0) {
-        const txId = 'tx_' + Date.now();
-        const draftTx = {
-          id: txId,
-          type: parsed.type || 'expense',
-          name: parsed.note || text,
-          category: parsed.category || 'Boshqa',
-          amount: Math.abs(parsed.amount),
-          date: new Date().toISOString()
-        };
-
-        await savePendingDraftTx(fromUser, draftTx);
-        const card = await renderRichTransactionCard(fromUser, draftTx, true);
-        await sendTelegramMessage(chatId, card.text, card.inlineKeyboard);
-        return res.status(200).json({ status: 'ok' });
-      }
-
-      await sendTelegramMessage(chatId, `👍 Xabaringiz qabul qilindi.`, getMainMenuKeyboard());
+      const successText = `✅ <b>Telefon raqamingiz saqlandi va hisobingiz tasdiqlandi!</b> 🎉\n\n📞 <b>Raqam:</b> ${phone}\n\n👇 Brauzeringizga qaytib ilovadan foydalanishingiz mumkin:`;
+      await sendTelegramMessage(chatId, successText, getCleanInlineKeyboard());
+      await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
+      return res.status(200).json({ status: 'ok' });
     }
-  } catch (err) {
-    console.error('Error processing Telegram webhook:', err);
+
+    // Handle /start command
+    if (text.startsWith("/start")) {
+      const rawArg = text.replace('/start', '').trim();
+      const requestId = rawArg.replace('req_', '').trim();
+
+      if (requestId && requestId.length >= 8) {
+        const successText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n✅ <b>Profilingiz muvaffaqiyatli tasdiqlandi!</b> 🚀\nBrauzeringizdagi Moliya AI sahifasiga qaytsangiz, profilingiz avtomatik ochiladi.\n\n👇 <i>Ilovani to'g'ridan-to'g'ri ochish:</i>`;
+
+        await Promise.all([
+          verifyAndMarkLoginRequest(requestId, fromUser),
+          sendTelegramMessage(chatId, successText, getCleanInlineKeyboard())
+        ]);
+        return res.status(200).json({ status: 'ok' });
+      }
+
+      // Standard /start
+      const tgId = String(fromUser?.id);
+      const { data: userDoc } = await supabase.from('users').select('*').eq('id', `moliya_user_tg_${tgId}`).maybeSingle();
+
+      if (!userDoc?.phone && !userDoc?.onboarding?.phone) {
+        const phonePromptText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
+          `<b>Moliya AI</b> botiga xush kelibsiz! 🚀\n\n` +
+          `📞 <i>Profilingiz to'liq bo'lishi uchun telefon raqamingizni yuboring:</i>`;
+        const phoneReplyKeyboard = {
+          keyboard: [
+            [{ text: "📞 Telefon raqamini ulashish", request_contact: true }],
+            [{ text: "📱 Mini App", web_app: { url: appUrl } }, { text: "🌐 Web App", url: appUrl }]
+          ],
+          resize_keyboard: true,
+          one_time_keyboard: true
+        };
+        await sendTelegramMessage(chatId, phonePromptText, phoneReplyKeyboard);
+        return res.status(200).json({ status: 'ok' });
+      }
+
+      const welcomeText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n<b>Moliya AI</b> botiga xush kelibsiz! 🚀\nPulingizni oson va aqlli boshqaring.\n\n👇 <b>Kerakli bo'limni tanlang:</b>`;
+      await sendTelegramMessage(chatId, welcomeText, getMainMenuKeyboard());
+      return res.status(200).json({ status: 'ok' });
+    }
+
+    // Balans & Hisobot
+    if (text.includes("Balans & Hisobot") || text.startsWith("/report") || text.startsWith("/balans")) {
+      const summary = await renderUserReportSummary(fromUser);
+      await sendTelegramMessage(chatId, summary.text, summary.inlineKeyboard);
+      return res.status(200).json({ status: 'ok' });
+    }
+
+    // Web App Link
+    if (text.includes("Web App") || text.startsWith("/webapp")) {
+      await sendTelegramMessage(chatId, `🌐 <b>Moliya AI Web App:</b>\n\n👇 <i>Brauzerda kirish uchun tugmani bosing:</i>`, {
+        inline_keyboard: [
+          [{ text: "🌐 Web App-ni ochish 🚀", url: appUrl }],
+          [{ text: "📱 Telegram Mini App", web_app: { url: appUrl } }]
+        ]
+      });
+      return res.status(200).json({ status: 'ok' });
+    }
+
+    // Default: AI Expense/Income Parsing for text inputs
+    if (text.length > 2) {
+      const aiLimit = await checkAndIncrementAiLimitAsync(fromUser);
+      if (!aiLimit.allowed) {
+        await sendTelegramMessage(chatId, "⚠️ <b>Bepul AI limitingiz tugadi!</b> Cheksiz ishlatish uchun Premium oling.", getCleanInlineKeyboard());
+        return res.status(200).json({ status: 'ok' });
+      }
+
+      const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || "";
+      if (apiKey) {
+        try {
+          const ai = new GoogleGenAI({ apiKey });
+          const prompt = `Parse this financial text: "${text}". Return JSON: { type: 'expense'|'income', amount: number, category: string, note: string }`;
+          const result = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: { responseMimeType: "application/json" }
+          });
+
+          if (result && result.text) {
+            const parsed = JSON.parse(result.text);
+            if (parsed.amount) {
+              const draftTx = {
+                id: Date.now().toString() + Math.random().toString(36).substring(2, 6),
+                type: parsed.type || 'expense',
+                amount: parsed.amount,
+                name: parsed.note || text,
+                category: parsed.category || 'Boshqa',
+                date: new Date().toISOString()
+              };
+
+              await savePendingDraftTx(fromUser, draftTx);
+              const card = await renderRichTransactionCard(fromUser, draftTx, true);
+              await sendTelegramMessage(chatId, card.text, card.inlineKeyboard);
+              return res.status(200).json({ status: 'ok' });
+            }
+          }
+        } catch (aiErr) {
+          console.error('AI parse error:', aiErr);
+        }
+      }
+    }
+
+    // Default fallback
+    await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
+    return res.status(200).json({ status: 'ok' });
+  } catch (err: any) {
+    console.error('Telegram Webhook error:', err);
+    return res.status(200).json({ status: 'error_handled' });
   }
-  return res.status(200).json({ status: 'ok' });
 }

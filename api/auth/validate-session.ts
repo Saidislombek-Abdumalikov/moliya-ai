@@ -1,6 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../_firebaseClient.js';
+import { supabase } from '../_supabaseClient.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -22,33 +21,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ valid: false, reason: 'Missing sessionToken' });
     }
 
-    const sessionSnap = await getDoc(doc(db, 'users', `moliya_user_sess_${sessionToken}`));
-    if (!sessionSnap.exists()) {
-      return res.status(200).json({ valid: false, reason: 'Session not found' });
+    // Find user in Supabase with matching session_token
+    const { data: userDoc, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('session_token', sessionToken)
+      .maybeSingle();
+
+    if (!error && userDoc) {
+      if (userDoc.session_expires_at && new Date(userDoc.session_expires_at).getTime() < Date.now()) {
+        return res.status(200).json({ valid: false, reason: 'Session expired' });
+      }
+
+      return res.status(200).json({
+        valid: true,
+        userId: userDoc.id,
+        onboarding: userDoc.onboarding || null,
+        cards: userDoc.cards || [],
+        transactions: userDoc.transactions || [],
+        isPremium: userDoc.is_premium || false
+      });
     }
 
-    const sessionData = sessionSnap.data();
-    if (!sessionData?.expiresAt || new Date(sessionData.expiresAt).getTime() < Date.now()) {
-      return res.status(200).json({ valid: false, reason: 'Session expired' });
-    }
-
-    const userId = sessionData.userId;
-    if (!userId) {
-      return res.status(200).json({ valid: false, reason: 'Orphaned session' });
-    }
-
-    const userSnap = await getDoc(doc(db, 'users', userId));
-    const userData = userSnap.exists() ? userSnap.data() : null;
-
-    return res.status(200).json({
-      valid: true,
-      userId,
-      onboarding: userData?.onboarding || null,
-      cards: userData?.cards || [],
-      security: userData?.security || null,
-    });
+    return res.status(200).json({ valid: false, reason: 'Session not found' });
   } catch (error: any) {
-    console.error('Error validating session:', error);
+    console.error('Error validating session in Supabase:', error);
     return res.status(200).json({ valid: false, error: error.message });
   }
 }

@@ -1,6 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { doc, setDoc } from 'firebase/firestore';
-import { db } from '../_firebaseClient.js';
+import { supabase } from '../_supabaseClient.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -19,23 +18,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const cleanId = requestId.replace(/^req_/, '').trim();
-    await setDoc(doc(db, 'users', `moliya_user_req_${cleanId}`), {
-      requestId: cleanId,
-      status: 'PENDING',
-      createdAt: new Date().toISOString(),
-    });
+    const nowIso = new Date().toISOString();
 
-    if (cleanId !== requestId) {
-      await setDoc(doc(db, 'users', `moliya_user_req_${requestId}`), {
-        requestId,
-        status: 'PENDING',
-        createdAt: new Date().toISOString(),
-      });
-    }
+    // Upsert pending login request to Supabase users table
+    await supabase.from('users').upsert({
+      id: `req_${cleanId}`,
+      login_request_id: cleanId,
+      login_request_status: 'PENDING',
+      updated_at: nowIso
+    }, { onConflict: 'id' });
 
     return res.status(200).json({ success: true, requestId });
   } catch (error: any) {
-    console.error('Error creating login request:', error);
+    console.error('Error creating login request in Supabase:', error);
     return res.status(200).json({ success: true, requestId: req.body?.requestId || 'fallback' });
   }
 }

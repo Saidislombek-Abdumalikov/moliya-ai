@@ -526,8 +526,8 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
   const sortedPastTransactions = [...pastTransactions].sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())
   
   const filteredPastTransactions = sortedPastTransactions.filter(tx => {
-    const txNote = (tx as any).note || ''
-    const matchesSearch = !searchQuery || tx.name.toLowerCase().includes(searchQuery.toLowerCase()) || txNote.toLowerCase().includes(searchQuery.toLowerCase())
+    const txNote = (tx as any).note || (tx as any).name || ''
+    const matchesSearch = !searchQuery || txNote.toLowerCase().includes(searchQuery.toLowerCase())
     const matchesCategory = selectedCategoryFilter === 'all' || tx.category === selectedCategoryFilter
     return matchesSearch && matchesCategory
   })
@@ -544,12 +544,12 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
     if (!c) return 0
     const initial = Number(String(c.balance).replace(/\s/g, '').replace(/,/g, '')) || 0
     const cardTxs = pastTransactions.filter(t => (t as Transaction).cardId === cardId)
-    const cardIncome = cardTxs.filter(t => t.amount > 0).reduce((acc, t) => acc + Number(t.amount), 0)
-    const cardExpense = cardTxs.filter(t => t.amount < 0).reduce((acc, t) => acc + Math.abs(Number(t.amount)), 0)
+    const cardIncome = cardTxs.filter(t => Number(t.amount) > 0).reduce((acc, t) => acc + Number(t.amount), 0)
+    const cardExpense = cardTxs.filter(t => Number(t.amount) < 0).reduce((acc, t) => acc + Math.abs(Number(t.amount)), 0)
     return initial + cardIncome - cardExpense
   }
-  const totalExpense = pastTransactions.filter((t) => t.amount < 0).reduce((sum, t) => sum + Math.abs(Number(t.amount)), 0)
-  const totalIncome = pastTransactions.filter((t) => t.amount > 0).reduce((sum, t) => sum + t.amount, 0)
+  const totalExpense = pastTransactions.filter((t) => Number(t.amount) < 0).reduce((sum, t) => sum + Math.abs(Number(t.amount)), 0)
+  const totalIncome = pastTransactions.filter((t) => Number(t.amount) > 0).reduce((sum, t) => sum + Number(t.amount), 0)
   const initialCash = onboarding?.baseBalance || 0
   const cardsTotal = cards.reduce((sum, c) => {
     const val = Number(String(c.balance).replace(/\s/g, '').replace(/,/g, '')) || 0
@@ -834,8 +834,9 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
               overflow: 'hidden',
             }}
           >
-            {upcomingTransactions.map((tx, i) => {
-              const rawName = t.transactionNames[tx.name as keyof typeof t.transactionNames] || tx.name; const txName = rawName.length > 25 ? rawName.slice(0, 25) + '...' : rawName;
+            {upcomingTransactions.map((tx: any, i) => {
+              const nameProp = tx.name || tx.note || 'Operatsiya'
+              const rawName = t.transactionNames[nameProp as keyof typeof t.transactionNames] || nameProp; const txName = rawName.length > 25 ? rawName.slice(0, 25) + '...' : rawName;
               const txCat = t.categories[tx.category as keyof typeof t.categories] || tx.category
               return (
                 <motion.div
@@ -850,17 +851,17 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                   }}
                 >
                   <div style={{
-                    width: 42, height: 42, borderRadius: 13, background: tx.color,
+                    width: 42, height: 42, borderRadius: 13, background: tx.color || '#E8E5F8',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     fontSize: 18, flexShrink: 0,
                   }}>
-                    {tx.emoji}
+                    {tx.emoji || '💳'}
                   </div>
                   <div style={{ flex: 1 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
                       <p style={{ fontSize: 15, fontWeight: 600, color: '#1E1A3C' }}>{txName}</p>
-                      <p style={{ fontSize: 15, fontWeight: 700, color: tx.amount > 0 ? '#16A34A' : '#DC2626' }}>
-                        {fmt(tx.amount)} {t.currency}
+                      <p style={{ fontSize: 15, fontWeight: 700, color: Number(tx.amount) > 0 ? '#16A34A' : '#DC2626' }}>
+                        {fmt(Number(tx.amount))} {t.currency}
                       </p>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -953,8 +954,9 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                   overflow: 'hidden',
                 }}
               >
-                {txs.map((tx, i) => {
-                  const rawName = t.transactionNames[tx.name as keyof typeof t.transactionNames] || tx.name; const txName = rawName.length > 25 ? rawName.slice(0, 25) + '...' : rawName;
+                {txs.map((tx: any, i) => {
+                  const nameProp = tx.name || tx.note || 'Operatsiya'
+                  const rawName = t.transactionNames[nameProp as keyof typeof t.transactionNames] || nameProp; const txName = rawName.length > 25 ? rawName.slice(0, 25) + '...' : rawName;
                   const txCat = t.categories[tx.category as keyof typeof t.categories] || tx.category
                   
                   return (
@@ -970,19 +972,19 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                       }}
                     >
                       <div style={{
-                        width: 42, height: 42, borderRadius: 13, background: tx.color,
+                        width: 42, height: 42, borderRadius: 13, background: tx.color || '#E8E5F8',
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                         fontSize: 18, flexShrink: 0,
                       }}>
-                        {tx.emoji}
+                        {tx.emoji || '💳'}
                       </div>
                       <div style={{ flex: 1 }}>
                         <p style={{ fontSize: 14, fontWeight: 600, color: '#1E1A3C', marginBottom: 2 }}>{txName}</p>
                         <p style={{ fontSize: 12, color: '#8B82C4' }}>{getTxTime(tx)}</p>
                       </div>
                       <div style={{ textAlign: 'right' }}>
-                        <p style={{ fontSize: 14, fontWeight: 700, color: tx.amount > 0 ? '#16A34A' : '#1E1A3C' }}>
-                          {fmt(tx.amount)}
+                        <p style={{ fontSize: 14, fontWeight: 700, color: Number(tx.amount) > 0 ? '#16A34A' : '#1E1A3C' }}>
+                          {fmt(Number(tx.amount))}
                         </p>
                         <p style={{ fontSize: 11, color: '#B8B0DC' }}>{txCat}</p>
                       </div>

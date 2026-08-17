@@ -317,23 +317,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
     }
   }
 
-  const runSimulation = () => {
-    setStep('voice')
-    setRecording(true)
-    timerRef.current = setTimeout(() => {
-      setRecording(false)
-      // Simulate voice-to-text result
-      const demos: Record<EntryType, Partial<Entry>> = {
-        expense: { amount: '85 000', note: 'Korzinka supermarket', category: 'Oziq-ovqat' },
-        income: { amount: '4 500 000', note: 'Oylik maosh', category: 'Maosh' },
-        debt: { amount: '500 000', note: "Sherzoddan olindi", category: "Do'st" },
-        lending: { amount: '200 000', note: "Bobur'ga berildi", category: "Do'st" },
-      }
-      const localISOTime = (new Date(Date.now() - new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 16)
-      setEntry((e) => ({ ...e, ...demos[selectedType], date: localISOTime }))
-      setStep('form')
-    }, 2500)
-  }
+
   const handleSave = () => {
     // Save transaction to context and Firestore
     let finalDate = new Date().toISOString()
