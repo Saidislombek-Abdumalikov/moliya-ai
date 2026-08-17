@@ -225,13 +225,12 @@ async function checkAndIncrementAiLimitAsync(fromUser: any): Promise<{ allowed: 
   }
 }
 
-const getCleanInlineKeyboard = (requestId?: string) => {
-  const webUrl = requestId ? `${appUrl}/?req=${requestId}` : appUrl;
+const getCleanInlineKeyboard = () => {
   return {
     inline_keyboard: [
       [
         { text: "📱 Telegram Mini App", web_app: { url: appUrl } },
-        { text: "🌐 Web App-ga o'tish", url: webUrl }
+        { text: "🌐 Saytga o'tish", url: appUrl }
       ]
     ]
   };
@@ -1233,12 +1232,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (requestId && requestId.length >= 8) {
           console.log('[BOT] Processing login request verification...');
-          const successText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n✅ <b>Muvaffaqiyatli tasdiqlandi!</b> 🚀\nBrauzeringizdagi Moliya AI ilovasiga avtomatik kirdingiz.\n\n👇 <i>Ilovaga o'tish uchun quyidagi tugmani bosing:</i>`;
+          const successText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n✅ <b>Profilingiz muvaffaqiyatli tasdiqlandi!</b> 🚀\nBrauzeringizdagi Moliya AI sahifasiga qaytsangiz, profilingiz avtomatik ochiladi.\n\n👇 <i>Ilovani to'g'ridan-to'g'ri ochish:</i>`;
 
           // Execute DB verification and instant message dispatch in parallel for sub-300ms response time
           const [result] = await Promise.all([
             verifyAndMarkLoginRequest(requestId, fromUser),
-            sendTelegramMessage(chatId, successText, getCleanInlineKeyboard(requestId))
+            sendTelegramMessage(chatId, successText, getCleanInlineKeyboard())
           ]);
 
           if (result && !result.onboarding?.phone) {

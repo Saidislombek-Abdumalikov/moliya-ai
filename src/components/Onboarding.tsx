@@ -571,18 +571,6 @@ export default function Onboarding({ onComplete }: Props) {
                   >
                     <span>{t.loginTelegramBtn}</span>
                   </button>
-
-                  <button
-                    onClick={finish}
-                    style={{
-                      width: '100%', padding: '13px', borderRadius: 16,
-                      border: '1.5px solid #E8E3F8', background: '#FFFFFF',
-                      color: '#8B82C4', fontSize: 13, fontWeight: 600,
-                      cursor: 'pointer', fontFamily: 'inherit',
-                    }}
-                  >
-                    <span>{t.skipTelegramBtn}</span>
-                  </button>
                 </div>
               </>
             ) : (

@@ -331,18 +331,20 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     // 3. Start Auto-Polling backend for verification
     let intervalId: any = null;
-    const cancel = () => {
-      if (intervalId) clearInterval(intervalId);
-    };
+    let isFinished = false;
 
-    console.log('[AUTH] Starting verification polling...');
-    intervalId = setInterval(async () => {
+    const checkVerification = async () => {
+      if (isFinished) return;
       try {
         const res = await fetch(`/api/auth/check-login-request?requestId=${requestId}`);
         if (res.ok) {
           const data = await res.json();
           if (data.status === 'VERIFIED' && data.userId && data.sessionToken) {
-            clearInterval(intervalId);
+            isFinished = true;
+            if (intervalId) clearInterval(intervalId);
+            window.removeEventListener('focus', onTabActive);
+            document.removeEventListener('visibilitychange', onTabActive);
+
             console.log('[AUTH] ✅ Verification confirmed! userId:', data.userId);
 
             setUserId(data.userId);
@@ -371,7 +373,26 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       } catch (err) {
         console.error('[AUTH] Polling error:', err);
       }
-    }, 1500);
+    };
+
+    const onTabActive = () => {
+      if (document.visibilityState === 'visible' || document.hasFocus()) {
+        checkVerification();
+      }
+    };
+
+    window.addEventListener('focus', onTabActive);
+    document.addEventListener('visibilitychange', onTabActive);
+
+    console.log('[AUTH] Starting verification polling...');
+    intervalId = setInterval(checkVerification, 1000);
+
+    const cancel = () => {
+      isFinished = true;
+      if (intervalId) clearInterval(intervalId);
+      window.removeEventListener('focus', onTabActive);
+      document.removeEventListener('visibilitychange', onTabActive);
+    };
 
     // Auto-timeout after 2 minutes
     setTimeout(() => {
