@@ -48,6 +48,7 @@ interface FinanceContextType {
   deleteTransaction: (id: string | number) => Promise<void>
   clearAllData: () => Promise<void>
   clearOnlyFinancialData: () => Promise<void>
+  logout: () => void
   setDateRange: (range: { start: Date; end: Date }) => void
   startTelegramLogin: (onVerified?: () => void) => Promise<{ requestId: string; cancel: () => void }>
 }
@@ -668,6 +669,19 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   }
 
+  const logout = () => {
+    localStorage.removeItem('user_logged_in_v1')
+    localStorage.removeItem('user_session_token_v1')
+    localStorage.removeItem('user_id_v1')
+    localStorage.removeItem('user_onboarding_v1')
+    setUserId(null)
+    setOnboarding(null)
+    setCards([])
+    setCustomTransactions([])
+    setDeletedTxIds([])
+    window.dispatchEvent(new Event('user_logged_in_updated'))
+  }
+
   if (!isAuthReady) {
     return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100dvh', background: '#FFFFFF' }}><p>Loading...</p></div>
   }
@@ -691,6 +705,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         deleteTransaction,
         clearAllData,
         clearOnlyFinancialData,
+        logout,
         setDateRange,
         startTelegramLogin,
       }}

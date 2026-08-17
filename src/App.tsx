@@ -17,7 +17,7 @@ export type Screen = 'home' | 'calendar' | 'analytics' | 'profile'
 type Stage = 'onboarding' | 'app'
 
 export default function App() {
-  const { onboarding, updateOnboarding, setHasSampleData } = useFinance()
+  const { onboarding, updateOnboarding, setHasSampleData, logout } = useFinance()
 
   const [showTour, setShowTour] = useState(false)
 
@@ -131,17 +131,16 @@ export default function App() {
           {activeScreen === 'profile' && (
             <ProfileScreen
               onLogout={() => {
-                localStorage.removeItem('user_logged_in_v1')
-                localStorage.removeItem('user_onboarding_v1')
+                logout()
                 setStage('onboarding')
-                setIsLocked(false)
+                setActiveScreen('home')
               }}
               onboarding={onboarding}
               onUpdateOnboarding={updateOnboarding}
               onClearData={() => {
+                logout()
                 setStage('onboarding')
                 setActiveScreen('home')
-                setIsLocked(false)
               }}
               onStartTour={() => setShowTour(true)}
             />
