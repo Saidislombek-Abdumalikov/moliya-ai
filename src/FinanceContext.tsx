@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react'
 import { doc, onSnapshot, setDoc, collection, query, where, getDocs, deleteDoc } from 'firebase/firestore'
 import { db } from './firebase'
+import { supabase } from './supabase'
 import type { OnboardingResult } from './components/Onboarding'
 
 export interface Card {
@@ -514,7 +515,24 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     localStorage.setItem('user_onboarding_v1', JSON.stringify(updated))
 
     try {
-      await setDoc(doc(db, 'users', userId!), { onboarding: updated }, { merge: true })
+      if (userId) {
+        await setDoc(doc(db, 'users', userId), { onboarding: updated }, { merge: true })
+
+        // Real-Time Supabase Sync
+        supabase.from('users').upsert({
+          id: userId,
+          name: updated.name || '—',
+          phone: updated.phone || null,
+          telegram: updated.telegram || '—',
+          telegram_id: updated.telegramId || null,
+          language: updated.language || 'uz',
+          is_premium: !!updated.isPremium,
+          onboarding: updated,
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'id' }).then(({ error }) => {
+          if (error) console.error('[SUPABASE] user sync error:', error.message);
+        });
+      }
     } catch (e) {
       console.error('Failed to update onboarding in Firestore:', e)
     }

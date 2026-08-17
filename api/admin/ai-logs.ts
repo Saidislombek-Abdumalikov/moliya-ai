@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { supabase } from '../_supabaseClient.js';
 
 const PROJECT_ID = "arctic-pad-sn56p";
 const DATABASE_ID = "ai-studio-moliyav2-593a4147-5cc2-4aec-9b0e-422088ddb24a";
@@ -15,33 +16,51 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // GET: Fetch AI usage logs for Admin Dashboard analytics
   if (req.method === 'GET') {
     try {
+      // 1. Fetch from Supabase
+      const { data: suLogs, error } = await supabase
+        .from('ai_logs')
+        .select('*')
+        .order('timestamp', { ascending: false })
+        .limit(100);
+
+      if (!error && Array.isArray(suLogs) && suLogs.length > 0) {
+        const formatted = suLogs.map(l => ({
+          id: l.id,
+          userId: l.user_id,
+          queryType: l.query_type,
+          promptSummary: l.prompt_summary,
+          isPremium: l.is_premium,
+          timestamp: l.timestamp
+        }));
+        return res.status(200).json({ success: true, count: formatted.length, logs: formatted, source: 'supabase' });
+      }
+
+      // 2. Fallback to Firestore
       const restUrl = `${REST_BASE_URL}/ai_global_logs?pageSize=100`;
       const restRes = await fetch(restUrl);
+      if (restRes.ok) {
+        const json: any = await restRes.json();
+        const documents = json.documents || [];
+        const logsList: any[] = [];
 
-      if (!restRes.ok) {
-        return res.status(200).json({ success: true, logs: [] });
+        for (const docObj of documents) {
+          const nameParts = (docObj.name || '').split('/');
+          const logId = nameParts[nameParts.length - 1];
+          const fields = docObj.fields || {};
+
+          logsList.push({
+            id: logId,
+            userId: fields.userId?.stringValue || 'guest',
+            queryType: fields.queryType?.stringValue || 'text',
+            promptSummary: fields.promptSummary?.stringValue || '',
+            isPremium: fields.isPremium?.booleanValue || false,
+            timestamp: fields.timestamp?.stringValue || new Date().toISOString()
+          });
+        }
+        return res.status(200).json({ success: true, count: logsList.length, logs: logsList, source: 'firestore_fallback' });
       }
 
-      const json: any = await restRes.json();
-      const documents = json.documents || [];
-      const logsList: any[] = [];
-
-      for (const docObj of documents) {
-        const nameParts = (docObj.name || '').split('/');
-        const logId = nameParts[nameParts.length - 1];
-        const fields = docObj.fields || {};
-
-        logsList.push({
-          id: logId,
-          userId: fields.userId?.stringValue || 'guest',
-          queryType: fields.queryType?.stringValue || 'text',
-          promptSummary: fields.promptSummary?.stringValue || '',
-          isPremium: fields.isPremium?.booleanValue || false,
-          timestamp: fields.timestamp?.stringValue || new Date().toISOString()
-        });
-      }
-
-      return res.status(200).json({ success: true, count: logsList.length, logs: logsList });
+      return res.status(200).json({ success: true, count: 0, logs: [] });
     } catch (e: any) {
       console.error('Error fetching AI logs:', e);
       return res.status(500).json({ error: 'Failed to fetch AI logs', details: e?.message });

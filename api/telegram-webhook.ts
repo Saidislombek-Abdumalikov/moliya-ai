@@ -3,6 +3,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import crypto from "crypto";
 import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
 import { db } from './_firebaseClient.js';
+import { supabase } from './_supabaseClient.js';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const appUrl = process.env.APP_URL || "https://moliya-ai-pi.vercel.app";
@@ -87,6 +88,26 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone
       }, { merge: true });
     } catch (err) {
       console.error('[BOT] Error writing tg_user_ doc:', err);
+    }
+
+    // 2.5. Sync User Profile to Supabase users Table in Real-Time
+    try {
+      supabase.from('users').upsert({
+        id: userId,
+        name: tgName,
+        telegram: tgUsername,
+        telegram_id: String(tgId),
+        phone: existingPhone || null,
+        language: existingData?.onboarding?.language || 'uz',
+        is_premium: existingData?.isPremium || false,
+        onboarding: updatedOnboarding,
+        updated_at: now.toISOString()
+      }, { onConflict: 'id' }).then(({ error }) => {
+        if (error) console.error('[BOT] Supabase user upsert error:', error.message);
+        else console.log('[BOT] ✅ User synced to Supabase users table:', userId);
+      });
+    } catch (suErr) {
+      console.error('[BOT] Supabase sync exception:', suErr);
     }
 
     // 3. Mark login request VERIFIED in Firestore
