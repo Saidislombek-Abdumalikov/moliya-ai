@@ -5,10 +5,8 @@ import HomeScreen from './components/HomeScreen'
 import CalendarScreen from './components/CalendarScreen'
 import AnalyticsScreen from './components/AnalyticsScreen'
 import ProfileScreen from './components/ProfileScreen'
-import AdminScreen from './components/AdminScreen'
 import BottomNav from './components/BottomNav'
 import AIButton from './components/AIButton'
-import PinLockScreen from './components/PinLockScreen'
 import AppTour from './components/AppTour'
 import { useFinance } from './FinanceContext'
 
@@ -19,7 +17,7 @@ export type Screen = 'home' | 'calendar' | 'analytics' | 'profile'
 type Stage = 'onboarding' | 'app'
 
 export default function App() {
-  const { onboarding, updateOnboarding, security, setHasSampleData } = useFinance()
+  const { onboarding, updateOnboarding, setHasSampleData } = useFinance()
 
   const [showTour, setShowTour] = useState(false)
 
@@ -33,20 +31,6 @@ export default function App() {
   })
 
   const [activeScreen, setActiveScreen] = useState<Screen>('home')
-
-  // Set lock state if PIN security is enabled
-  const [isLocked, setIsLocked] = useState(() => {
-    const savedSec = localStorage.getItem('user_security_v1')
-    if (savedSec) {
-      try {
-        const parsed = JSON.parse(savedSec)
-        return !!parsed.pinEnabled && !!parsed.pinCode
-      } catch {
-        return false
-      }
-    }
-    return false
-  })
 
   // Trigger tour on first visit to main page
   useEffect(() => {
@@ -96,24 +80,7 @@ export default function App() {
           setHasSampleData(false)
           localStorage.setItem('user_logged_in_v1', 'true')
           setStage('app')
-          const pinEnabled = security ? security.pinEnabled : false
-          setIsLocked(!!pinEnabled)
           setShowTour(true)
-        }}
-      />
-    )
-  }
-
-  if (isLocked) {
-    return (
-      <PinLockScreen
-        language={onboarding?.language || 'uz'}
-        onUnlock={() => setIsLocked(false)}
-        onReset={() => {
-          localStorage.removeItem('user_logged_in_v1')
-          localStorage.removeItem('user_onboarding_v1')
-          setStage('onboarding')
-          setIsLocked(false)
         }}
       />
     )
