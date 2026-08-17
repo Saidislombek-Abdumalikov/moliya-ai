@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI, Type } from "@google/genai";
+import { checkAndRecordAiUsage } from './_aiQuotaHelper.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -11,11 +12,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
-    const { text } = req.body || {};
+    const { text, userId } = req.body || {};
     if (!text || typeof text !== 'string') {
       return res.status(400).json({ error: 'Missing text' });
     }
 
+    // 1. Quota Check & Enforcement for Free users
+    const quota = await checkAndRecordAiUsage(userId, 'text', text);
+    if (!quota.allowed) {
+      return res.status(429).json({
+        success: false,
+        error: 'quota_exceeded',
+        limit: quota.limit,
+        usedCount: quota.usedCount,
+        message: quota.message || 'Bepul AI so\'rov limiti tugadi. Davom etish uchun VIP Premium obunasini faollashtiring!'
+      });
+    }
+
+    // 2. Gemini AI Parsing Execution
     const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || "";
     if (apiKey) {
       const ai = new GoogleGenAI({ apiKey });
@@ -77,6 +91,7 @@ Return JSON object:
         if (parsed.amount) {
           const fmtAmt = parsed.amount.toLocaleString('en-US').replace(/,/g, ' ');
           return res.status(200).json({
+            success: true,
             type: parsed.type || 'expense',
             amount: fmtAmt,
             category: parsed.category || 'Boshqa',

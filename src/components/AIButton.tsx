@@ -38,20 +38,27 @@ const voicePrompts: Record<EntryType, string> = {
   lending: "Kimga qancha pul berdingiz?",
 }
 
-async function parseAIText(text: string, cardsList: any[] = []): Promise<{ type: EntryType; amount: string; category: string; note: string; title?: string; debtWho?: string; date?: string; cardId?: string }> {
+async function parseAIText(text: string, cardsList: any[] = [], userId?: string): Promise<{ type: EntryType; amount: string; category: string; note: string; title?: string; debtWho?: string; date?: string; cardId?: string }> {
   try {
     const res = await fetch('/api/parse-expense', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, cards: cardsList })
+      body: JSON.stringify({ text, cards: cardsList, userId })
     });
+    if (res.status === 429) {
+      const errData = await res.json();
+      throw new Error(errData.message || 'Bepul AI so\'rov limiti tugadi. Davom etish uchun VIP Premium obunasini faollashtiring!');
+    }
     if (res.ok) {
       const data = await res.json();
       if (data.amount && data.category) {
         return { type: data.type || 'expense', amount: data.amount, category: data.category, note: data.note || text, title: data.title, debtWho: data.debtWho, date: data.date, cardId: data.cardId };
       }
     }
-  } catch {
+  } catch (err: any) {
+    if (err.message && (err.message.includes('limiti tugadi') || err.message.includes('Premium'))) {
+      throw err;
+    }
     // API endpoint unavailable in dev server, fall back to smart local NLP parser
   }
 
@@ -60,7 +67,7 @@ async function parseAIText(text: string, cardsList: any[] = []): Promise<{ type:
 }
 
 export default function AIButton({ visible = true, language = 'uz' }: { visible?: boolean; language?: 'uz' | 'uz_cyrl' | 'ru' | 'en' }) {
-  const { addTransaction, hasSampleData, setHasSampleData, cards, onboarding } = useFinance()
+  const { addTransaction, hasSampleData, setHasSampleData, cards, onboarding, userId } = useFinance()
   const [open, setOpen] = useState(false)
   const [step, setStep] = useState<'type' | 'form' | 'voice' | 'done' | 'removeSamples'>('type')
   const [selectedType, setSelectedType] = useState<EntryType>('expense')
@@ -187,7 +194,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
     setIsProcessing(true)
     setAiError('')
     try {
-      const parsed = await parseAIText(aiText, cards)
+      const parsed = await parseAIText(aiText, cards, userId || undefined)
       setSelectedType(parsed.type)
       const localISOTime = (new Date(Date.now() - new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 16)
       setEntry(prev => ({

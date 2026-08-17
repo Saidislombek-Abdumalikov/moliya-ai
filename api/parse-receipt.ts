@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI, Type } from "@google/genai";
+import { checkAndRecordAiUsage } from './_aiQuotaHelper.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -11,11 +12,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
-    const { base64Image, mimeType } = req.body || {};
+    const { base64Image, mimeType, userId } = req.body || {};
     if (!base64Image) {
       return res.status(400).json({ error: 'Missing base64Image' });
     }
 
+    // 1. Quota Check & Enforcement for Free users
+    const quota = await checkAndRecordAiUsage(userId, 'receipt', 'Receipt OCR Scan');
+    if (!quota.allowed) {
+      return res.status(429).json({
+        success: false,
+        error: 'quota_exceeded',
+        limit: quota.limit,
+        usedCount: quota.usedCount,
+        message: quota.message || 'Bepul AI chek skanerlash limiti tugadi. VIP Premium obunasini faollashtiring!'
+      });
+    }
+
+    // 2. Gemini Vision Receipt Parsing Execution
     const cleanBase64 = base64Image.replace(/^data:image\/\w+;base64,/, '');
     const imageMime = mimeType || 'image/jpeg';
 
@@ -92,6 +106,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (parsed.amount) {
           const fmtAmt = parsed.amount.toLocaleString('en-US').replace(/,/g, ' ');
           return res.status(200).json({
+            success: true,
             type: parsed.type || 'expense',
             amount: fmtAmt,
             category: parsed.category || 'Oziq-ovqat',
@@ -105,5 +120,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.error('Error in /api/parse-receipt:', e);
   }
 
-  return res.status(500).json({ error: 'Receipt parsing failed' });
+  return res.status(500).json({ error: 'AI receipt parsing failed' });
 }
