@@ -9,47 +9,27 @@ interface Props {
 const translations = {
   uz: {
     title: "PIN-kodni kiriting",
-    subtitle: "Ilovaga xavfsiz kirish uchun 4 xonali PIN-kodni kiriting",
+    subtitle: "Ilovaga maxfiy kirish uchun 4 xonali PIN-kodni tering",
     incorrect: "PIN-kod noto'g'ri, qayta urinib ko'ring",
-    faceIdScan: "Biometriya / Face ID tekshirilmoqda...",
-    faceIdSuccess: "Muvaffaqiyatli aniqlandi!",
-    faceIdFail: "Aniqlanmadi, qayta urinib ko'ring",
     reset: "PIN-kodni unutdingizmi? (Qayta kirish)",
-    forgot: "PIN-kodni unutdingizmi?",
-    pasted: "Nusxalangan kod kiritildi",
   },
   uz_cyrl: {
     title: "PIN-кодни киритинг",
-    subtitle: "Иловага хавфсиз кириш учун 4 хонали PIN-кодни киритинг",
+    subtitle: "Иловага махфий кириш учун 4 хонали PIN-кодни теринг",
     incorrect: "PIN-код нотўғри, қайта уриниб кўринг",
-    faceIdScan: "Биометрия / Face ID текширилмоқда...",
-    faceIdSuccess: "Муваффақиятли аниқланди!",
-    faceIdFail: "Аниқланмади, қайта уриниб кўринг",
     reset: "PIN-кодни унутдингизми? (Қайта кириш)",
-    forgot: "PIN-кодни унутдингизми?",
-    pasted: "Нусхаланган код киритилди",
   },
   ru: {
     title: "Введите PIN-код",
-    subtitle: "Введите 4-значный PIN-код для безопасного входа",
+    subtitle: "Введите 4-значный PIN-код для конфиденциального входа",
     incorrect: "Неверный PIN-код, попробуйте еще раз",
-    faceIdScan: "Проверка биометрии / Face ID...",
-    faceIdSuccess: "Успешно распознано!",
-    faceIdFail: "Не распознано, попробуйте еще раз",
     reset: "Забыли PIN-код? (Сброс через Telegram)",
-    forgot: "Забыли PIN-код?",
-    pasted: "Вставлен скопированный код",
   },
   en: {
     title: "Enter PIN Code",
-    subtitle: "Enter the 4-digit PIN code for secure access",
+    subtitle: "Enter 4-digit PIN code for private access",
     incorrect: "Incorrect PIN code, please try again",
-    faceIdScan: "Verifying biometrics / Face ID...",
-    faceIdSuccess: "Successfully recognized!",
-    faceIdFail: "Not recognized, please try again",
     reset: "Forgot PIN code? (Reset via Telegram)",
-    forgot: "Forgot PIN code?",
-    pasted: "Pasted code inserted",
   }
 }
 
@@ -57,7 +37,6 @@ export default function PinLockScreen({ language = 'uz', onUnlock, onReset }: Pr
   const t = translations[language] || translations.uz
   const [pin, setPin] = useState('')
   const [error, setError] = useState(false)
-  const [faceScanning, setFaceScanning] = useState(false)
   const [shake, setShake] = useState(false)
   const hiddenInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -65,25 +44,14 @@ export default function PinLockScreen({ language = 'uz', onUnlock, onReset }: Pr
   const getSecurityPrefs = () => {
     try {
       const saved = localStorage.getItem('user_security_v1')
-      return saved ? JSON.parse(saved) : { pinEnabled: false, faceIdEnabled: false, pinCode: '' }
+      return saved ? JSON.parse(saved) : { pinEnabled: false, pinCode: '' }
     } catch {
-      return { pinEnabled: false, faceIdEnabled: false, pinCode: '' }
+      return { pinEnabled: false, pinCode: '' }
     }
   }
 
   const prefs = getSecurityPrefs()
   const correctPin = prefs.pinCode || '2580'
-  const isFaceIdEnabled = !!prefs.pinEnabled && prefs.faceIdEnabled !== false
-
-  // Trigger auto Face ID / Biometric check simulation if enabled
-  useEffect(() => {
-    if (isFaceIdEnabled) {
-      const timer = setTimeout(() => {
-        handleFaceIdAuth()
-      }, 700)
-      return () => clearTimeout(timer)
-    }
-  }, [])
 
   // Auto-focus hidden input for physical keyboard / clipboard paste support
   useEffect(() => {
@@ -118,7 +86,7 @@ export default function PinLockScreen({ language = 'uz', onUnlock, onReset }: Pr
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [pin, error, faceScanning, correctPin])
+  }, [pin, error, correctPin])
 
   const verifyPin = (inputPin: string) => {
     setPin(inputPin)
@@ -138,7 +106,7 @@ export default function PinLockScreen({ language = 'uz', onUnlock, onReset }: Pr
   }
 
   const handleKeyPress = (num: string) => {
-    if (pin.length >= 4 || faceScanning) return
+    if (pin.length >= 4) return
 
     let currentPin = pin
     if (error) {
@@ -155,7 +123,6 @@ export default function PinLockScreen({ language = 'uz', onUnlock, onReset }: Pr
   }
 
   const handleBackspace = () => {
-    if (faceScanning) return
     if (error) {
       setError(false)
       setPin('')
@@ -163,18 +130,6 @@ export default function PinLockScreen({ language = 'uz', onUnlock, onReset }: Pr
     }
     if (pin.length === 0) return
     setPin(pin.slice(0, -1))
-  }
-
-  const handleFaceIdAuth = () => {
-    if (faceScanning) return
-    setFaceScanning(true)
-    setError(false)
-
-    // Simulate standard biometric feedback
-    setTimeout(() => {
-      setFaceScanning(false)
-      onUnlock()
-    }, 1500)
   }
 
   return (
@@ -269,16 +224,11 @@ export default function PinLockScreen({ language = 'uz', onUnlock, onReset }: Pr
           })}
         </div>
 
-        {/* Dynamic Error or Scan State Message */}
+        {/* Dynamic Error Message */}
         <div style={{ height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           {error && (
             <p style={{ fontSize: 13, fontWeight: 600, color: '#DC2626', animation: 'fadeIn 0.2s' }}>
               ⚠️ {t.incorrect}
-            </p>
-          )}
-          {faceScanning && (
-            <p style={{ fontSize: 13, fontWeight: 600, color: '#7C3AED', animation: 'pulseText 1s infinite alternate' }}>
-              👤 {t.faceIdScan}
             </p>
           )}
         </div>
@@ -320,30 +270,24 @@ export default function PinLockScreen({ language = 'uz', onUnlock, onReset }: Pr
           ))}
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 14, alignItems: 'center' }}>
-          {/* Face ID trigger or spacer */}
-          {isFaceIdEnabled ? (
-            <button
-              onClick={(e) => { e.stopPropagation(); handleFaceIdAuth() }}
-              style={{
-                ...keyStyles,
-                background: 'transparent',
-                border: 'none',
-              }}
-            >
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M8 3H5a2 2 0 0 0-2 2v3" />
-                <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
-                <path d="M3 16v3a2 2 0 0 0 2 2h3" />
-                <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
-                <path d="M8 14s1.5 2 4 2 4-2 4-2" />
-                <line x1="9" y1="9" x2="9.01" y2="9" />
-                <line x1="15" y1="9" x2="15.01" y2="9" />
-                <line x1="12" y1="9" x2="12" y2="13" />
-              </svg>
-            </button>
-          ) : (
-            <div style={{ flex: 1, minHeight: 60 }} />
-          )}
+          {/* Clear button (C) */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              setPin('')
+              setError(false)
+            }}
+            style={{
+              ...keyStyles,
+              background: 'transparent',
+              border: 'none',
+              fontSize: 16,
+              fontWeight: 600,
+              color: '#8B82C4',
+            }}
+          >
+            C
+          </button>
 
           <button
             onClick={(e) => { e.stopPropagation(); handleKeyPress('0') }}
@@ -390,77 +334,12 @@ export default function PinLockScreen({ language = 'uz', onUnlock, onReset }: Pr
         </button>
       </div>
 
-      {/* Face ID Scanning Animated Overlay */}
-      {faceScanning && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(26, 21, 48, 0.95)',
-            zIndex: 10000,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: '#FFFFFF',
-          }}
-        >
-          {/* Scanning Box */}
-          <div style={{ position: 'relative', width: 190, height: 190, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div style={{ position: 'absolute', top: 0, left: 0, width: 24, height: 24, borderTop: '4px solid #7C3AED', borderLeft: '4px solid #7C3AED', borderRadius: '4px 0 0 0' }} />
-            <div style={{ position: 'absolute', top: 0, right: 0, width: 24, height: 24, borderTop: '4px solid #7C3AED', borderRight: '4px solid #7C3AED', borderRadius: '0 4px 0 0' }} />
-            <div style={{ position: 'absolute', bottom: 0, left: 0, width: 24, height: 24, borderBottom: '4px solid #7C3AED', borderLeft: '4px solid #7C3AED', borderRadius: '0 0 0 4px' }} />
-            <div style={{ position: 'absolute', bottom: 0, right: 0, width: 24, height: 24, borderBottom: '4px solid #7C3AED', borderRight: '4px solid #7C3AED', borderRadius: '0 0 4px 0' }} />
-
-            <div
-              style={{
-                position: 'absolute',
-                left: 12,
-                right: 12,
-                height: 3,
-                background: 'linear-gradient(90deg, rgba(124,58,237,0) 0%, #7C3AED 50%, rgba(124,58,237,0) 100%)',
-                boxShadow: '0 0 12px #7C3AED',
-                animation: 'scanLine 2s linear infinite',
-              }}
-            />
-
-            <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" strokeWidth="1.5" style={{ animation: 'pulseIcon 1.5s ease-in-out infinite alternate' }}>
-              <path d="M8 3H5a2 2 0 0 0-2 2v3" />
-              <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
-              <path d="M3 16v3a2 2 0 0 0 2 2h3" />
-              <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
-              <path d="M8 14s1.5 2 4 2 4-2 4-2" />
-              <line x1="9" y1="9" x2="9.01" y2="9" />
-              <line x1="15" y1="9" x2="15.01" y2="9" />
-              <line x1="12" y1="9" x2="12" y2="13" />
-            </svg>
-          </div>
-
-          <p style={{ marginTop: 26, fontSize: 15, fontWeight: 600, letterSpacing: 0.3, color: '#A78BFA' }}>
-            {t.faceIdScan}
-          </p>
-        </div>
-      )}
-
       {/* Embedded local CSS Animations */}
       <style>{`
         @keyframes shake_dots {
           0%, 100% { transform: translateX(0); }
           20%, 60% { transform: translateX(-8px); }
           40%, 80% { transform: translateX(8px); }
-        }
-        @keyframes scanLine {
-          0% { top: 12px; }
-          50% { top: 178px; }
-          100% { top: 12px; }
-        }
-        @keyframes pulseIcon {
-          0% { transform: scale(0.96); opacity: 0.85; }
-          100% { transform: scale(1.04); opacity: 1; }
-        }
-        @keyframes pulseText {
-          0% { opacity: 0.6; }
-          100% { opacity: 1; }
         }
         @keyframes fadeIn {
           from { opacity: 0; transform: translateY(4px); }

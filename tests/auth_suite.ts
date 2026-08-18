@@ -1,5 +1,6 @@
 import { supabase } from '../api/_supabaseClient';
 import { createSupabaseAuthSession } from '../api/_authHelper';
+import { parseAITransaction } from '../src/utils/aiParser';
 
 async function runAuthAuditSuite() {
   console.log('====================================================');
@@ -336,7 +337,7 @@ async function runAuthAuditSuite() {
       platform: 'android_apk',
       model: 'Samsung Galaxy S24',
       os: 'Android 14',
-      app_version: 'v3.13.0',
+      app_version: 'v3.15.0',
       last_login: new Date().toISOString()
     };
 
@@ -351,11 +352,47 @@ async function runAuthAuditSuite() {
 
     const { data: multiDevDoc } = await supabase.from('users').select('*').eq('id', testUserId).maybeSingle();
     assert(multiDevDoc?.device_info?.platform === 'android_apk', 'Device info (platform: android_apk) persisted on login');
-    assert(multiDevDoc?.device_info?.app_version === 'v3.13.0', 'Device info app version (v3.13.0) persisted correctly');
+    assert(multiDevDoc?.device_info?.app_version === 'v3.15.0', 'Device info app version (v3.15.0) persisted correctly');
 
     // Clean up test user
     await supabase.from('users').delete().eq('telegram_id', testTgId);
     await supabase.from('users').delete().eq('id', testUserId);
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 14: Enhanced AI Voice & Text Financial Parser
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 14: Enhanced AI Voice & Text Financial Parser ---');
+    // 1. Spoken food expense
+    const p1 = parseAITransaction("Tushlikka 45 ming so'm ketdi");
+    assert(p1.type === 'expense' && p1.amount === '45 000' && p1.category === 'Oziq-ovqat', 'AI correctly parses spoken food expense ("Tushlikka 45 ming so\'m ketdi" -> 45 000 UZS / Oziq-ovqat)');
+
+    // 2. Market groceries
+    const p2 = parseAITransaction("Bozordan 150 minglik go'sht oldim");
+    assert(p2.type === 'expense' && p2.amount === '150 000' && p2.category === 'Oziq-ovqat', 'AI correctly parses market groceries ("Bozordan 150 minglik go\'sht oldim" -> 150 000 UZS / Oziq-ovqat)');
+
+    // 3. Spoken Taxi / Transit
+    const p3 = parseAITransaction("Taksi 25000");
+    assert(p3.type === 'expense' && p3.amount === '25 000' && p3.category === 'Transport', 'AI correctly parses taxi/transport ("Taksi 25000" -> 25 000 UZS / Transport)');
+
+    // 4. Spoken Salary / Income
+    const p4 = parseAITransaction("Oylik tushdi 5 million");
+    assert(p4.type === 'income' && p4.amount === '5 000 000' && p4.category === 'Maosh', 'AI correctly parses salary income ("Oylik tushdi 5 million" -> 5 000 000 UZS / Maosh)');
+
+    // 5. Spoken Lending
+    const p5 = parseAITransaction("Anvarga 100 ming qarz berdim");
+    assert(p5.type === 'lending' && p5.amount === '100 000' && p5.debtWho === 'Anvar', 'AI correctly parses lending with borrower name ("Anvarga 100 ming qarz berdim" -> 100 000 UZS / Anvar)');
+
+    // 6. Spoken Debt
+    const p6 = parseAITransaction("Akamdan 500 ming qarz oldim");
+    assert(p6.type === 'debt' && p6.amount === '500 000' && p6.category === 'Oila', 'AI correctly parses debt from family ("Akamdan 500 ming qarz oldim" -> 500 000 UZS / Oila)');
+
+    // 7. Spoken Clothing
+    const p7 = parseAITransaction("Kiyimga 400 ming sarfladim");
+    assert(p7.type === 'expense' && p7.amount === '400 000' && p7.category === 'Kiyim', 'AI correctly parses clothing ("Kiyimga 400 ming sarfladim" -> 400 000 UZS / Kiyim)');
+
+    // 8. Spoken Utilities
+    const p8 = parseAITransaction("Internetga 150 ming to'ladim");
+    assert(p8.type === 'expense' && p8.amount === '150 000' && p8.category === 'Kommunal', 'AI correctly parses utilities/internet ("Internetga 150 ming to\'ladim" -> 150 000 UZS / Kommunal)');
 
     console.log('\n====================================================');
     console.log(`🏁 TEST SUITE COMPLETE: ${passed} PASSED, ${failed} FAILED`);

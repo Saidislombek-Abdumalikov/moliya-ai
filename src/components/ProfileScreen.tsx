@@ -38,7 +38,7 @@ const translations = {
         notifications: 'Bildirishnomalar',
         notificationsSub: 'Hammasi yoqilgan',
         security: 'Xavfsizlik',
-        securitySub: 'Face ID, PIN',
+        securitySub: '4 xonali PIN',
         payments: "To'lov usullari",
         paymentsSub: '2 ta karta',
         lang: 'Til',
@@ -79,7 +79,7 @@ const translations = {
       addCardBtn: 'Yangi karta qo\'shish',
       cardNumber: 'Karta raqami',
       cardHolder: 'Karta egasi',
-      cardExpiry: 'Amal qilish muddati (MM/YY)',
+      cardExpiry: 'Amal qilish muddati (OY/YIL)',
       cardBalance: 'Dastlabki balans',
       addBtn: 'Qo\'shish',
       cancelBtn: 'Bekor qilish',
@@ -106,7 +106,6 @@ const translations = {
     securityModal: {
       title: 'Xavfsizlik va PIN kod',
       pinEnable: 'PIN kodni yoqish',
-      faceIdEnable: 'Face ID va Biometrika',
       pinSetup: 'PIN kod o\'rnatish',
       enterPin: '4 xonali PIN kiriting',
       saved: 'Xavfsizlik sozlamalari yangilandi!'
@@ -150,7 +149,7 @@ const translations = {
         notifications: 'Билдиришномалар',
         notificationsSub: 'Ҳаммаси ёқилган',
         security: 'Хавфсизлик',
-        securitySub: 'Face ID, ПИН',
+        securitySub: '4 хонали ПИН',
         payments: "Тўлов усуллари",
         paymentsSub: '2 та карта',
         lang: 'Тил',
@@ -218,7 +217,6 @@ const translations = {
     securityModal: {
       title: 'Хавфсизлик ва ПИН код',
       pinEnable: 'ПИН кодни ёқиш',
-      faceIdEnable: 'Face ID ва Биометрика',
       pinSetup: 'ПИН код ўрнатиш',
       enterPin: '4 хонали ПИН киритинг',
       saved: 'Хавфсизлик созламалари янгиланди!'
@@ -262,7 +260,7 @@ const translations = {
         notifications: 'Уведомления',
         notificationsSub: 'Все включены',
         security: 'Безопасность',
-        securitySub: 'Face ID, PIN',
+        securitySub: '4-значный PIN',
         payments: 'Способы оплаты',
         paymentsSub: '2 карты',
         lang: 'Язык',
@@ -330,7 +328,6 @@ const translations = {
     securityModal: {
       title: 'Безопасность и PIN-код',
       pinEnable: 'Включить PIN-код',
-      faceIdEnable: 'Face ID и биометрия',
       pinSetup: 'Настройка PIN-кода',
       enterPin: 'Введите 4-значный PIN',
       saved: 'Настройки безопасности обновлены!'
@@ -374,7 +371,7 @@ const translations = {
         notifications: 'Notifications',
         notificationsSub: 'All turned on',
         security: 'Security',
-        securitySub: 'Face ID, PIN',
+        securitySub: '4-digit PIN',
         payments: 'Payment methods',
         paymentsSub: '2 cards',
         lang: 'Language',
@@ -442,7 +439,6 @@ const translations = {
     securityModal: {
       title: 'Security & PIN lock',
       pinEnable: 'Enable PIN access',
-      faceIdEnable: 'Face ID & Biometrics',
       pinSetup: 'PIN Code setup',
       enterPin: 'Enter 4-digit PIN',
       saved: 'Security options updated!'
@@ -530,14 +526,6 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
       return s ? JSON.parse(s).pinEnabled === true : false
     } catch {
       return false
-    }
-  })
-  const [faceIdEnabled, setFaceIdEnabled] = useState<boolean>(() => {
-    try {
-      const s = localStorage.getItem('user_security_v1')
-      return s ? JSON.parse(s).faceIdEnabled !== false : true
-    } catch {
-      return true
     }
   })
   const [pinInput, setPinInput] = useState<string>(() => {
@@ -2057,7 +2045,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                       {t.securityModal.pinEnable}
                     </span>
                     <span style={{ fontSize: 11.5, color: '#8B82C4' }}>
-                      {lang === 'uz' ? "Ilovaga kirishda 4 xonali kod so'rash" : lang === 'uz_cyrl' ? "Иловага киришда 4 хонали код сўраш" : lang === 'ru' ? 'Запрашивать 4-значный PIN при входе' : 'Require 4-digit PIN upon app start'}
+                      {lang === 'uz' ? "Ilovaga kirishda 4 xonali maxfiy kod so'rash" : lang === 'uz_cyrl' ? "Иловага киришда 4 хонали махфий код сўраш" : lang === 'ru' ? 'Запрашивать 4-значный PIN при входе' : 'Require 4-digit PIN upon app start'}
                     </span>
                   </div>
                   <button 
@@ -2143,33 +2131,6 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                         }}
                       />
                     </div>
-
-                    {/* Biometrics / Face ID */}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4, paddingTop: 10, borderTop: '1px solid #E4E1F4' }}>
-                      <div>
-                        <span style={{ fontSize: 13, fontWeight: 600, color: '#1E1A3C', display: 'block' }}>
-                          {t.securityModal.faceIdEnable}
-                        </span>
-                        <span style={{ fontSize: 11, color: '#8B82C4' }}>
-                          {lang === 'uz' ? 'Biometriya orqali tezkor ochish' : lang === 'uz_cyrl' ? 'Биометрия орқали тезкор очиш' : lang === 'ru' ? 'Быстрый вход по биометрии' : 'Quick biometric login'}
-                        </span>
-                      </div>
-                      <button 
-                        id="toggle_face_id_enabled"
-                        onClick={() => setFaceIdEnabled(!faceIdEnabled)}
-                        style={{
-                          width: 44, height: 24, borderRadius: 14, border: 'none',
-                          background: faceIdEnabled ? '#7C3AED' : '#E4E1F4', position: 'relative',
-                          cursor: 'pointer', transition: 'background-color 0.2s', flexShrink: 0
-                        }}
-                      >
-                        <div style={{
-                          width: 18, height: 18, borderRadius: '50%', background: '#FFFFFF',
-                          position: 'absolute', top: 3, left: faceIdEnabled ? 23 : 3,
-                          transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.15)'
-                        }} />
-                      </button>
-                    </div>
                   </div>
                 )}
 
@@ -2195,7 +2156,6 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
 
                     const securityData = {
                       pinEnabled,
-                      faceIdEnabled,
                       pinCode: pinEnabled ? pinInput : ''
                     }
 

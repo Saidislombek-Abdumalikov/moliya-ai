@@ -15,7 +15,6 @@ export interface Card {
 
 export interface SecurityOpts {
   pinEnabled: boolean
-  faceIdEnabled: boolean
   pinCode: string
 }
 
@@ -154,7 +153,6 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const [security, setSecurity] = useState<SecurityOpts>({
     pinEnabled: false,
-    faceIdEnabled: false,
     pinCode: ''
   })
 

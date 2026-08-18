@@ -33,14 +33,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || "";
     if (apiKey) {
       const ai = new GoogleGenAI({ apiKey });
-      const prompt = `Parse this financial transaction text in Uzbek/Russian/English: "${text}".
-Return JSON object:
-- type: 'expense' | 'income' | 'debt' | 'lending'
-- amount: number in UZS (e.g. 25000, 1000000)
-- category: string ('Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\'liq', 'Ta\'lim', 'Boshqa', 'Maosh', 'Freelance', 'Biznes')
-- note: string (clear description)
-- title: string (short title)
-- debtWho: string (person name if debt or lending, else empty)`;
+      const prompt = `You are a financial AI assistant. Parse this transaction spoken transcript or written text in Uzbek, Russian, or English: "${text}".
+Detect:
+- type: 'expense' (spending), 'income' (salary/earnings), 'debt' (borrowed money), or 'lending' (loaned money to someone)
+- amount: total amount in numbers (e.g. "45 ming" -> 45000, "1.5 mln" -> 1500000, "100 dollar" -> 100, "ellik ming" -> 50000)
+- category: choose EXACTLY one from: ['Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\'liq', 'Ta\'lim', 'Ko\'ngil ochar', 'Boshqa', 'Maosh', 'Freelance', 'Biznes', 'Sovg\'a', 'Investitsiya', 'Do\'st', 'Bank', 'Oila', 'Hamkasb']
+- note: meaningful description of the item or expense
+- title: concise 2-3 word title
+- debtWho: person or organization name if debt/lending, otherwise empty`;
 
       let response;
       try {
@@ -64,7 +64,7 @@ Return JSON object:
           }
         });
       } catch (err) {
-        console.warn('Gemini 2.5 flash parse failed, trying gemini-1.5-flash:', err);
+        console.warn('Gemini 2.5 flash parse failed, trying fallback:', err);
         response = await ai.models.generateContent({
           model: "gemini-1.5-flash",
           contents: prompt,

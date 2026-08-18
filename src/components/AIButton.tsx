@@ -258,13 +258,15 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
         setRecording(false)
 
         try {
-          const parsed = await parseAIText(resultText, cards)
+          const parsed = await parseAIText(resultText, cards, userId || undefined)
+          recordAiUsage()
+          setSelectedType(parsed.type)
           const localISOTime = (new Date(Date.now() - new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 16)
           setEntry(prev => ({
             ...prev,
             type: parsed.type,
             amount: parsed.amount,
-            note: resultText,
+            note: parsed.note || resultText,
             category: parsed.category,
             title: parsed.title,
             debtWho: parsed.debtWho,
@@ -818,7 +820,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                     <div style={{ marginBottom: 14 }}>
                       <label style={{ fontSize: 12, color: '#8B82C4', fontWeight: 500, display: 'block', marginBottom: 6 }}>SUMMA (SO'M)</label>
                   <input
-                    type="text"
+                    type="tel"
                     inputMode="numeric"
                     pattern="[0-9]*"
                     placeholder="0"

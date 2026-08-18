@@ -251,7 +251,7 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
               <input
                 key={idx}
                 ref={(el) => { otpInputsRef.current[idx] = el }}
-                type="text"
+                type="tel"
                 inputMode="numeric"
                 pattern="[0-9]*"
                 autoComplete="one-time-code"

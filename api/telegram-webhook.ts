@@ -715,7 +715,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // 1. Dedicated Android APK OTP code request (/start apk or /start app)
       if (rawArg.toLowerCase().includes('apk') || rawArg.toLowerCase().includes('app')) {
         const otpCode = await generateAndStoreOtpCode(fromUser);
-        const apkMessage = `🔐 <b>Kirish kodi:</b> <code>${otpCode}</code>\n\n` +
+        const apkMessage = `🔒 <b>Kodingiz:</b>\n<code>${otpCode}</code>\n\n` +
           `Ushbu kodni ilovaga kiriting. Kod 10 daqiqa amal qiladi.`;
 
         await sendTelegramMessage(chatId, apkMessage);
@@ -812,6 +812,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const welcomeText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n<b>Moliya AI</b> botiga xush kelibsiz! 🚀\nPulingizni oson va aqlli boshqaring.\n\n👇 <b>Kerakli bo'limni tanlang:</b>`;
       await sendTelegramMessage(chatId, welcomeText, getCleanInlineKeyboard(exchangeCode));
       await sendTelegramMessage(chatId, "👇 Asosiy menyu:", getMainMenuKeyboard());
+      return res.status(200).json({ status: 'ok' });
+    }
+
+    // Kod so'rovi (Kirish kodi)
+    if (text.toLowerCase() === "kod" || text.toLowerCase() === "/kod" || text.toLowerCase() === "kirish kodi" || text.toLowerCase() === "/otp") {
+      const otpCode = await generateAndStoreOtpCode(fromUser);
+      const apkMessage = `🔒 <b>Kodingiz:</b>\n<code>${otpCode}</code>\n\n` +
+        `Ushbu kodni ilovaga kiriting. Kod 10 daqiqa amal qiladi.`;
+      await sendTelegramMessage(chatId, apkMessage);
       return res.status(200).json({ status: 'ok' });
     }
 
