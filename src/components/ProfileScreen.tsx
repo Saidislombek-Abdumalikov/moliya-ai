@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react'
 import type { OnboardingResult } from './Onboarding'
 import { useFinance, Transaction } from '../FinanceContext'
 import BankCard from './BankCard'
+import { openTelegramBot, openExternalUrl, isNativePlatform } from '../utils/nativeBridge'
 
 interface Props {
   onLogout: () => void
@@ -1170,6 +1171,56 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
             </div>
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
               <path d="M5 3L9 7L5 11" stroke="#C4BDE8" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+
+          {/* Official Telegram Bot Link */}
+          <div 
+            id="menu_item_telegram_bot"
+            onClick={() => openTelegramBot('')}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px',
+              borderBottom: '1px solid #E4E1F4', cursor: 'pointer',
+            }}
+          >
+            <span style={{ fontSize: 18, width: 28, textAlign: 'center' }}>🤖</span>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: 14, fontWeight: 600, color: '#0088CC' }}>Telegram Bot (@moliya_v2bot)</p>
+              <p style={{ fontSize: 11.5, color: '#8B82C4' }}>
+                {lang === 'uz' ? "Bot orqali boshqarish va eslatmalar" : lang === 'uz_cyrl' ? "Бот орқали бошқариш ва эслатмалар" : lang === 'ru' ? 'Бот и уведомления' : 'Official Telegram Bot'}
+              </p>
+            </div>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M5 3L9 7L5 11" stroke="#0088CC" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+
+          {/* Web App Access / PWA Install Link */}
+          <div 
+            id="menu_item_webapp"
+            onClick={() => {
+              if (isNativePlatform()) {
+                openExternalUrl('https://moliya-ai-pi.vercel.app')
+              } else {
+                window.dispatchEvent(new Event('trigger_pwa_install'))
+              }
+            }}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px',
+              borderBottom: '1px solid #E4E1F4', cursor: 'pointer',
+            }}
+          >
+            <span style={{ fontSize: 18, width: 28, textAlign: 'center' }}>🌐</span>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: 14, fontWeight: 600, color: '#7C3AED' }}>
+                {isNativePlatform() 
+                  ? (lang === 'uz' ? "Web Ilovani ochish" : lang === 'uz_cyrl' ? "Web Иловани очиш" : lang === 'ru' ? 'Открыть Web-версию' : 'Open Web App')
+                  : (lang === 'uz' ? "Ilovani o'rnatish (PWA)" : lang === 'uz_cyrl' ? "Иловани ўрнатиш (PWA)" : lang === 'ru' ? 'Установить PWA' : 'Install PWA App')}
+              </p>
+              <p style={{ fontSize: 11.5, color: '#8B82C4' }}>moliya-ai-pi.vercel.app</p>
+            </div>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M5 3L9 7L5 11" stroke="#7C3AED" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </div>
 

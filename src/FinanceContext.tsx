@@ -613,13 +613,14 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   useEffect(() => {
     if (!userId || !isAuthReady) return;
 
-    // Load initial user document from Supabase
-    supabase
-      .from('users')
-      .select('*')
-      .eq('id', userId)
-      .maybeSingle()
-      .then(({ data, error }) => {
+    const fetchLatestData = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('users')
+          .select('*')
+          .eq('id', userId)
+          .maybeSingle();
+
         if (!error && data) {
           if (data.onboarding) {
             setOnboarding(data.onboarding);
@@ -634,7 +635,22 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
             localStorage.setItem('user_transactions_v1', JSON.stringify(data.transactions));
           }
         }
-      });
+      } catch (err) {
+        console.warn('[SYNC] Refresh error:', err);
+      }
+    };
+
+    // Initial fetch
+    fetchLatestData();
+
+    // Re-fetch on tab/app resume
+    const onResume = () => {
+      if (document.visibilityState === 'visible' || document.hasFocus()) {
+        fetchLatestData();
+      }
+    };
+    window.addEventListener('focus', onResume);
+    document.addEventListener('visibilitychange', onResume);
 
     // Realtime channel listener for instant multi-device syncing
     const channel = supabase
@@ -664,6 +680,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     return () => {
       supabase.removeChannel(channel);
+      window.removeEventListener('focus', onResume);
+      document.removeEventListener('visibilitychange', onResume);
     };
   }, [userId, isAuthReady]);
 

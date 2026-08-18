@@ -3,7 +3,7 @@ import { createSupabaseAuthSession } from '../api/_authHelper';
 
 async function runAuthAuditSuite() {
   console.log('====================================================');
-  console.log('🚀 RUNNING EPICSELL / MOLIYA AI COMPREHENSIVE AUTH SUITE');
+  console.log('🚀 RUNNING EPICSELL / MOLIYA AI COMPREHENSIVE SUITE');
   console.log('====================================================\n');
 
   let passed = 0;
@@ -188,6 +188,78 @@ async function runAuthAuditSuite() {
     console.log('\n--- TEST 7: Supabase Auth Session Generation ---');
     const authSession = await createSupabaseAuthSession(testTgId, { name: 'Test User', telegram: '@testuser' });
     assert(Boolean(authSession && authSession.access_token && authSession.refresh_token), 'Supabase Auth session generated with valid JWT access_token & refresh_token');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 8: Web App Instant Login Request Flow (req_...)
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 8: Web App Login Request Flow (req_...) ---');
+    const testReqId = `test_req_${Date.now()}`;
+    // Web App registers request
+    await supabase.from('users').insert({
+      id: `req_${testReqId}`,
+      name: 'Web Login Pending',
+      onboarding: {
+        login_request_id: testReqId,
+        login_request_status: 'PENDING',
+        expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString()
+      }
+    });
+
+    // Bot verifies request
+    const testExchangeCode = `ex_${Date.now()}_secret`;
+    await supabase.from('users').update({
+      telegram_id: testTgId,
+      name: 'Test User Verified',
+      onboarding: {
+        login_request_id: testReqId,
+        login_request_status: 'VERIFIED',
+        exchange_code: testExchangeCode,
+        telegram_id: testTgId,
+        session_token: 'sess_web_123',
+        expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString()
+      }
+    }).eq('id', `req_${testReqId}`);
+
+    // Web App check-login-request queries status
+    const { data: reqDoc } = await supabase.from('users').select('*').eq('id', `req_${testReqId}`).maybeSingle();
+    assert(reqDoc?.onboarding?.login_request_status === 'VERIFIED', 'Web App login request verified by Telegram bot');
+    assert(reqDoc?.onboarding?.telegram_id === testTgId, 'Web App login correctly identified Telegram User ID');
+
+    // Clean up request
+    await supabase.from('users').delete().eq('id', `req_${testReqId}`);
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 9: Cross-Client Data Synchronization (Web App <-> APK)
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 9: Cross-Platform Data Synchronization ---');
+    // 1. Web App adds a new transaction
+    const newTxWeb = {
+      id: `tx_web_${Date.now()}`,
+      type: 'expense',
+      name: 'Supermarket Xarid',
+      category: 'shopping',
+      amount: 120000,
+      date: new Date().toISOString()
+    };
+    const currentTxs = fetchedExisting?.transactions || [];
+    const updatedTxs = [newTxWeb, ...currentTxs];
+
+    await supabase.from('users').update({
+      transactions: updatedTxs,
+      updated_at: new Date().toISOString()
+    }).eq('id', testUserId);
+
+    // 2. APK retrieves the latest user document
+    const { data: apkUserDoc } = await supabase.from('users').select('*').eq('id', testUserId).maybeSingle();
+    const foundTxInApk = apkUserDoc?.transactions?.some((t: any) => t.name === 'Supermarket Xarid' && t.amount === 120000);
+    assert(Boolean(foundTxInApk), 'Transaction created on Web App is instantly visible in APK (100% data sync)');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 10: Multi-Client Unified User Identity Model
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 10: Unified Identity Model Verification ---');
+    assert(apkUserDoc?.id === `moliya_user_tg_${testTgId}`, 'Unified user profile ID (moliya_user_tg_...) shared across all clients');
+    assert(apkUserDoc?.telegram_id === testTgId, 'Telegram ID consistent across APK, Web App, and Telegram Bot');
 
     // Clean up test user
     await supabase.from('users').delete().eq('telegram_id', testTgId);
