@@ -1,6 +1,5 @@
-import { useState, useRef } from 'react'
-import { useFinance } from '../FinanceContext'
-import { openTelegramBot } from '../utils/nativeBridge'
+import { useState } from 'react'
+import { motion } from 'motion/react'
 
 export interface OnboardingResult {
   language: 'uz' | 'uz_cyrl' | 'ru' | 'en'
@@ -20,9 +19,9 @@ interface Props {
   onComplete: (result: OnboardingResult) => void
 }
 
-type Step = 'language' | 'goal' | 'ai' | 'telegram'
+type Step = 'language' | 'goal' | 'ai'
 
-const languages: { code: 'uz' | 'uz_cyrl' | 'ru' | 'en'; label: string; tag: string; isSubOption?: boolean; parentCode?: string }[] = [
+const languages: { code: 'uz' | 'uz_cyrl' | 'ru' | 'en'; label: string; tag: string }[] = [
   { code: 'uz', label: "O'zbekcha", tag: '🇺🇿' },
   { code: 'ru', label: 'Русский', tag: '🇷🇺' },
   { code: 'en', label: 'English', tag: '🇺🇸' },
@@ -33,7 +32,6 @@ const uzbekScriptTypes: { code: 'uz' | 'uz_cyrl'; label: string; sublabel: strin
   { code: 'uz_cyrl', label: 'Кирилл', sublabel: "А Б В Г" },
 ]
 
-// Multilingual translations including Uzbek Cyrillic & English
 const translations = {
   uz: {
     selectLanguage: "Tilni tanlang",
@@ -56,20 +54,7 @@ const translations = {
       "Oyiga qancha tejay olaman?",
       "Eng ko'p sarflagan kategoriyam?"
     ],
-    demoApp: "Moliya AI Dasturi",
-    startTelegram: "Davom etish →",
-    noAiInterest: "Asosiy oynaga o'tish",
-    aiPulseBadge: "✨ AI Yordamchi",
-    listening: "Eshityapman...",
-    cancel: "Bekor qilish",
-    telegramTitle: "Telegram orqali kiring",
-    telegramSub: "Hisobingizni xavfsiz tasdiqlash va botdan foydalanish uchun Telegram orqali kiring.",
-    loginTelegramBtn: "📱 Telegram botdan kod olish",
-    enterOtpSub: "Telegram bot yuborgan 6 xonali tasdiqlash kodini kiriting:",
-    verifyCodeBtn: "Tasdiqlash va kirish →",
-    verifying: "Tekshirilmoqda...",
-    orInstantWeb: "Brauzerda avtomatik kirish",
-    skipTelegramBtn: "Keyinroq / O'tkazib yuborish →",
+    startApp: "Boshlash 🚀",
   },
   uz_cyrl: {
     selectLanguage: "Тилни танланг",
@@ -92,212 +77,88 @@ const translations = {
       "Ойига қанча тежай оламан?",
       "Энг кўп сарфлаган категоришам?"
     ],
-    demoApp: "Молия AI Дастури",
-    startTelegram: "Давом этиш →",
-    noAiInterest: "Асосий ойнага ўтиш",
-    aiPulseBadge: "✨ AI Ёрдамчи",
-    listening: "Эшитяпман...",
-    cancel: "Бекор қилиш",
-    telegramTitle: "Telegram орқали киринг",
-    telegramSub: "Ҳисобингизни хавфсиз тасдиқлаш ва ботдан фойдаланиш учун Telegram орқали киринг.",
-    loginTelegramBtn: "📱 Telegram ботдан код олиш",
-    enterOtpSub: "Telegram бот юборган 6 хонали тасдиқлаш кодини киритинг:",
-    verifyCodeBtn: "Тасдиқлаш ва кириш →",
-    verifying: "Текширилмоқда...",
-    orInstantWeb: "Браузерда автоматик кириш",
-    skipTelegramBtn: "Кейинроқ / Ўтказиб юбориш →",
+    startApp: "Бошлаш 🚀",
   },
   ru: {
     selectLanguage: "Выберите язык",
     selectLangSub: "Пожалуйста, выберите язык приложения",
-    setGoalTitle: "Установите финансовую цель",
-    setGoalSub: "Сколько вы планируете откладывать каждый месяц?",
-    starter: "Стартовый",
+    setGoalTitle: "Финансовая цель",
+    setGoalSub: "Сколько вы планируете экономить каждый месяц?",
+    starter: "Начальный",
     recommended: "Рекомендуется",
     intensive: "Интенсивный",
     perMonth: "сум / месяц",
-    customGoal: "Введу сам",
+    customGoal: "Ввести вручную",
     otherAmount: "Другая сумма",
     enterAmount: "Введите сумму",
     saveGoalBtn: "Сохранить цель →",
     continueBtn: "Продолжить →",
-    askAiTitle: "Задайте вопрос о ваших деньгах",
-    askAiSub: "Искусственный интеллект проанализирует ваши расходы и даст умные советы.",
+    askAiTitle: "Задайте вопрос о финансах",
+    askAiSub: "Искусственный интеллект проанализирует расходы и даст полезные советы.",
     aiQuestions: [
       "Куда уходят мои деньги?",
-      "Сколько я могу экономить в месяц?",
-      "Какая категория самая расходная?"
+      "Сколько я могу сэкономить в месяц?",
+      "Моя самая крупная категория расходов?"
     ],
-    demoApp: "Приложение Moliya AI",
-    startTelegram: "Продолжить →",
-    noAiInterest: "Перейти на главную",
-    aiPulseBadge: "✨ ИИ Помощник",
-    listening: "Слушаю...",
-    cancel: "Отмена",
-    telegramTitle: "Войти через Telegram",
-    telegramSub: "Войдите через Telegram для подтверждения аккаунта и синхронизации.",
-    loginTelegramBtn: "📱 Получить код в Telegram боте",
-    enterOtpSub: "Введите 6-значный код подтверждения из Telegram бота:",
-    verifyCodeBtn: "Подтвердить и войти →",
-    verifying: "Проверка...",
-    orInstantWeb: "Автоматический вход в браузере",
-    skipTelegramBtn: "Позже / Пропустить →",
+    startApp: "Начать 🚀",
   },
   en: {
     selectLanguage: "Select Language",
     selectLangSub: "Please select your preferred language",
-    setGoalTitle: "Set Your Financial Goal",
-    setGoalSub: "How much money do you plan to save each month?",
-    starter: "Starter Plan",
+    setGoalTitle: "Financial Goal",
+    setGoalSub: "How much do you plan to save each month?",
+    starter: "Starter",
     recommended: "Recommended",
     intensive: "Intensive",
-    perMonth: "som / month",
-    customGoal: "Enter custom goal",
+    perMonth: "UZS / month",
+    customGoal: "Set custom goal",
     otherAmount: "Other amount",
     enterAmount: "Enter amount",
-    saveGoalBtn: "Save Goal →",
+    saveGoalBtn: "Save goal →",
     continueBtn: "Continue →",
-    askAiTitle: "Ask Questions About Your Money",
-    askAiSub: "Artificial Intelligence analyzes your expenses and provides smart financial advice.",
+    askAiTitle: "Ask about your money",
+    askAiSub: "Artificial intelligence analyzes your expenses and gives smart financial advice.",
     aiQuestions: [
       "Where is my money going?",
-      "How much can I save per month?",
-      "What is my top spending category?"
+      "How much can I save monthly?",
+      "What is my highest spending category?"
     ],
-    demoApp: "Moliya AI App",
-    startTelegram: "Continue →",
-    noAiInterest: "Go to Main Screen",
-    aiPulseBadge: "✨ AI Assistant",
-    listening: "Listening...",
-    cancel: "Cancel",
-    telegramTitle: "Log in via Telegram",
-    telegramSub: "Log in via Telegram to verify your account and enable sync.",
-    loginTelegramBtn: "📱 Get code from Telegram bot",
-    enterOtpSub: "Enter the 6-digit confirmation code from Telegram bot:",
-    verifyCodeBtn: "Verify and Enter →",
-    verifying: "Verifying...",
-    orInstantWeb: "Automatic browser login",
-    skipTelegramBtn: "Later / Skip →",
-  }
+    startApp: "Get Started 🚀",
+  },
 }
 
 const goalOptions = [
-  { key: 'starter', value: 500000 },
+  { key: 'starter', value: 500000, recommended: false },
   { key: 'recommended', value: 1000000, recommended: true },
-  { key: 'intensive', value: 2000000 },
+  { key: 'intensive', value: 2000000, recommended: false },
 ]
 
-const aiQuestionsIcons = ['💰', '📊', '🏷️']
+const aiQuestionsIcons = ['📊', '💡', '🏷️']
 
-function fmtMoney(n: number) {
-  return n.toLocaleString('en-US').replace(/,/g, ' ')
-}
+const fmtMoney = (val: number) => val.toLocaleString('en-US').replace(/,/g, ' ')
 
 export default function Onboarding({ onComplete }: Props) {
-  const { startTelegramLogin, verifyTelegramCode } = useFinance()
   const [step, setStep] = useState<Step>('language')
   const [language, setLanguage] = useState<'uz' | 'uz_cyrl' | 'ru' | 'en'>('uz')
   const [goal, setGoal] = useState<number>(1000000)
   const [customGoal, setCustomGoal] = useState('')
   const [useCustomGoal, setUseCustomGoal] = useState(false)
-  const [isWaitingTelegramAuth, setIsWaitingTelegramAuth] = useState(false)
-
-  // 6-digit visual OTP input state
-  const [otpDigits, setOtpDigits] = useState<string[]>(['', '', '', '', '', ''])
-  const [otpError, setOtpError] = useState<string | null>(null)
-  const [isVerifyingOtp, setIsVerifyingOtp] = useState<boolean>(false)
-  const otpInputsRef = useRef<(HTMLInputElement | null)[]>([])
-
-  const handleOtpChange = (index: number, value: string) => {
-    if (otpError) setOtpError(null)
-    const digit = value.replace(/\D/g, '').slice(-1)
-    const newDigits = [...otpDigits]
-    newDigits[index] = digit
-    setOtpDigits(newDigits)
-
-    if (digit && index < 5) {
-      otpInputsRef.current[index + 1]?.focus()
-    }
-
-    const fullCode = newDigits.join('')
-    if (fullCode.length === 6 && !newDigits.includes('')) {
-      submitOtpCode(fullCode)
-    }
-  }
-
-  const handleOtpKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Backspace' && !otpDigits[index] && index > 0) {
-      otpInputsRef.current[index - 1]?.focus()
-    }
-  }
-
-  const handleOtpPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
-    e.preventDefault()
-    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6)
-    if (!pasted) return
-    const newDigits = ['', '', '', '', '', '']
-    for (let i = 0; i < pasted.length; i++) {
-      newDigits[i] = pasted[i]
-    }
-    setOtpDigits(newDigits)
-    const nextFocusIdx = Math.min(pasted.length, 5)
-    otpInputsRef.current[nextFocusIdx]?.focus()
-    if (pasted.length === 6) {
-      submitOtpCode(pasted)
-    }
-  }
-
-  const submitOtpCode = async (code: string) => {
-    setIsVerifyingOtp(true)
-    setOtpError(null)
-    try {
-      const result = await verifyTelegramCode(code)
-      if (result.success) {
-        finish()
-      } else {
-        setOtpError(result.error || "Tasdiqlash kodi noto'g'ri")
-      }
-    } catch (err: any) {
-      setOtpError(err.message || "Xatolik yuz berdi")
-    } finally {
-      setIsVerifyingOtp(false)
-    }
-  }
-
-  const handleGetTelegramCode = () => {
-    if (otpError) setOtpError(null)
-    openTelegramBot('apk')
-  }
-
-  const handleStartTelegramAuth = async () => {
-    setIsWaitingTelegramAuth(true);
-    try {
-      await startTelegramLogin(() => {
-        finish();
-      });
-    } catch (e) {
-      console.error('Error starting telegram auth:', e);
-    }
-  };
 
   const t = translations[language] || translations.uz
-
-  const steps: Step[] = ['language', 'goal', 'ai', 'telegram']
+  const steps: Step[] = ['language', 'goal', 'ai']
   const stepIndex = steps.indexOf(step)
   const progressPct = Math.round(((stepIndex + 1) / steps.length) * 100)
-
   const finalGoal = useCustomGoal ? Number(customGoal.replace(/\D/g, '')) || 0 : goal
 
   const goNext = () => {
     if (step === 'language') setStep('goal')
     else if (step === 'goal') setStep('ai')
-    else if (step === 'ai') setStep('telegram')
+    else if (step === 'ai') finish()
   }
 
   const goBack = () => {
     if (step === 'goal') setStep('language')
     else if (step === 'ai') setStep('goal')
-    else if (step === 'telegram') setStep('ai')
   }
 
   const finish = () => {
@@ -318,6 +179,7 @@ export default function Onboarding({ onComplete }: Props) {
         display: 'flex',
         flexDirection: 'column',
         padding: '0 20px 24px',
+        boxSizing: 'border-box'
       }}
     >
       {/* Top bar */}
@@ -352,23 +214,24 @@ export default function Onboarding({ onComplete }: Props) {
 
       {/* Main step content */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '12px 0' }}>
-
         {/* STEP 1: Select Language */}
         {step === 'language' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {/* Logo header */}
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            style={{ display: 'flex', flexDirection: 'column', gap: 6 }}
+          >
             <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
               <img
                 src="/logo.png"
                 alt="Moliya AI"
                 style={{
-                  width: 76,
-                  height: 76,
+                  width: 72,
+                  height: 72,
                   borderRadius: 20,
                   objectFit: 'cover',
                   boxShadow: '0 10px 28px rgba(124, 58, 237, 0.3)',
                   border: '2px solid rgba(124, 58, 237, 0.2)',
-                  overflow: 'hidden',
                   display: 'block'
                 }}
               />
@@ -433,9 +296,7 @@ export default function Onboarding({ onComplete }: Props) {
 
                     {/* Uzbek script type sub-options */}
                     {isUzbek && isUzbekSelected && (
-                      <div style={{
-                        display: 'flex', gap: 8, marginTop: 8, paddingLeft: 8,
-                      }}>
+                      <div style={{ display: 'flex', gap: 8, marginTop: 8, paddingLeft: 8 }}>
                         {uzbekScriptTypes.map((st) => {
                           const stActive = language === st.code
                           return (
@@ -448,7 +309,6 @@ export default function Onboarding({ onComplete }: Props) {
                                 border: stActive ? '1.5px solid #7C3AED' : '1px solid #E8E3F8',
                                 background: stActive ? '#F5F3FF' : '#FFFFFF',
                                 cursor: 'pointer', fontFamily: 'inherit',
-                                transition: 'all 0.15s ease',
                               }}
                             >
                               <span style={{ fontSize: 13, fontWeight: 700, color: stActive ? '#7C3AED' : '#1E1A3C' }}>
@@ -466,12 +326,16 @@ export default function Onboarding({ onComplete }: Props) {
                 )
               })}
             </div>
-          </div>
+          </motion.div>
         )}
 
         {/* STEP 2: Financial Goal */}
         {step === 'goal' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            style={{ display: 'flex', flexDirection: 'column', gap: 6 }}
+          >
             <h1 style={{ fontSize: 22, fontWeight: 700, color: '#1E1A3C', textAlign: 'center', letterSpacing: -0.3, marginBottom: 4, lineHeight: 1.25 }}>
               {t.setGoalTitle}
             </h1>
@@ -562,12 +426,16 @@ export default function Onboarding({ onComplete }: Props) {
                 </div>
               </button>
             </div>
-          </div>
+          </motion.div>
         )}
 
         {/* STEP 3: AI Feature Overview */}
         {step === 'ai' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'center' }}>
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'center' }}
+          >
             <div style={{
               width: 56, height: 56, borderRadius: 20,
               background: 'linear-gradient(135deg, #7C3AED 0%, #A855F7 100%)',
@@ -584,7 +452,7 @@ export default function Onboarding({ onComplete }: Props) {
               {t.askAiSub}
             </p>
 
-            <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+            <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
               {t.aiQuestions.map((q, idx) => (
                 <div
                   key={q}
@@ -600,166 +468,34 @@ export default function Onboarding({ onComplete }: Props) {
                 </div>
               ))}
             </div>
-
-            <button
-              onClick={goNext}
-              style={{
-                width: '100%', padding: '14px', borderRadius: 16,
-                border: 'none', background: 'linear-gradient(135deg, #7C3AED, #5B21B6)',
-                color: '#FFFFFF', fontSize: 14, fontWeight: 700,
-                cursor: 'pointer', fontFamily: 'inherit',
-                boxShadow: '0 6px 20px rgba(124, 58, 237, 0.35)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-              }}
-            >
-              <span>{t.startTelegram}</span>
-            </button>
-          </div>
-        )}
-
-        {/* STEP 4: Telegram Login & APK OTP Code Flow */}
-        {step === 'telegram' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center', textAlign: 'center' }}>
-            <div style={{
-              width: 64, height: 64, borderRadius: 22,
-              background: 'linear-gradient(135deg, #0088CC 0%, #2AABEE 100%)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              boxShadow: '0 8px 24px rgba(0, 136, 204, 0.35)', marginBottom: 4,
-            }}>
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none">
-                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69.01-.03.01-.14-.07-.2-.08-.06-.19-.04-.27-.02-.12.02-1.96 1.25-5.54 3.67-.52.36-1 .54-1.43.53-.47-.01-1.37-.27-2.04-.49-.82-.27-1.47-.42-1.42-.88.03-.24.37-.49 1.02-.74 3.99-1.74 6.66-2.89 8.01-3.46 3.81-1.6 4.6-1.88 5.12-1.89.11 0 .37.03.54.17.14.12.18.28.2.45-.02.07-.02.26-.04.42z" fill="#FFFFFF"/>
-              </svg>
-            </div>
-
-            <h1 style={{ fontSize: 21, fontWeight: 700, color: '#1E1A3C', letterSpacing: -0.3, marginBottom: 2 }}>
-              {t.telegramTitle}
-            </h1>
-            <p style={{ fontSize: 13, color: '#8B82C4', maxWidth: 320, lineHeight: 1.4, marginBottom: 8 }}>
-              {t.telegramSub}
-            </p>
-
-            {/* 1. Primary Action: Open Telegram Bot to get 6-digit OTP code */}
-            <button
-              type="button"
-              onClick={handleGetTelegramCode}
-              style={{
-                width: '100%', padding: '14px', borderRadius: 16, border: 'none',
-                background: 'linear-gradient(135deg, #0088CC 0%, #0077B5 100%)',
-                color: '#FFFFFF', fontSize: 14, fontWeight: 700,
-                cursor: 'pointer', fontFamily: 'inherit',
-                boxShadow: '0 6px 20px rgba(0, 136, 204, 0.35)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-              }}
-            >
-              <span>{t.loginTelegramBtn}</span>
-            </button>
-
-            {/* 2. Visual 6-Digit OTP Code Input */}
-            <div style={{ width: '100%', marginTop: 8, padding: '14px 12px', background: '#FFFFFF', borderRadius: 18, border: '1px solid #E8E3F8', boxShadow: '0 2px 12px rgba(0,0,0,0.03)' }}>
-              <p style={{ fontSize: 12, fontWeight: 600, color: '#6B7280', marginBottom: 12 }}>
-                {t.enterOtpSub}
-              </p>
-
-              <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginBottom: 12 }}>
-                {otpDigits.map((digit, idx) => (
-                  <input
-                    key={idx}
-                    ref={(el) => { otpInputsRef.current[idx] = el }}
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={1}
-                    value={digit}
-                    onChange={(e) => handleOtpChange(idx, e.target.value)}
-                    onKeyDown={(e) => handleOtpKeyDown(idx, e)}
-                    onPaste={handleOtpPaste}
-                    disabled={isVerifyingOtp}
-                    style={{
-                      width: 44,
-                      height: 52,
-                      borderRadius: 14,
-                      border: otpError ? '2px solid #EF4444' : (digit ? '2px solid #7C3AED' : '1.5px solid #E8E3F8'),
-                      background: digit ? '#F5F3FF' : '#FFFFFF',
-                      textAlign: 'center',
-                      fontSize: 22,
-                      fontWeight: 700,
-                      color: '#1E1A3C',
-                      outline: 'none',
-                      boxShadow: digit ? '0 4px 12px rgba(124, 58, 237, 0.12)' : 'none',
-                      transition: 'all 0.15s ease-in-out',
-                    }}
-                  />
-                ))}
-              </div>
-
-              {otpError && (
-                <div style={{
-                  padding: '8px 12px', borderRadius: 10, background: '#FEF2F2',
-                  border: '1px solid #FEE2E2', color: '#DC2626', fontSize: 12,
-                  fontWeight: 500, marginBottom: 12
-                }}>
-                  ⚠️ {otpError}
-                </div>
-              )}
-
-              <button
-                type="button"
-                onClick={() => submitOtpCode(otpDigits.join(''))}
-                disabled={isVerifyingOtp || otpDigits.join('').length !== 6}
-                style={{
-                  width: '100%', padding: '12px', borderRadius: 14, border: 'none',
-                  background: otpDigits.join('').length === 6 && !isVerifyingOtp
-                    ? 'linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%)'
-                    : '#E5E7EB',
-                  color: otpDigits.join('').length === 6 && !isVerifyingOtp ? '#FFFFFF' : '#9CA3AF',
-                  fontSize: 13, fontWeight: 700,
-                  cursor: otpDigits.join('').length === 6 && !isVerifyingOtp ? 'pointer' : 'not-allowed',
-                  fontFamily: 'inherit',
-                  transition: 'all 0.2s',
-                  boxShadow: otpDigits.join('').length === 6 && !isVerifyingOtp ? '0 4px 14px rgba(124, 58, 237, 0.25)' : 'none',
-                }}
-              >
-                <span>{isVerifyingOtp ? t.verifying : t.verifyCodeBtn}</span>
-              </button>
-            </div>
-
-            {/* 3. Alternative / Instant browser polling link */}
-            <div style={{ width: '100%', marginTop: 2 }}>
-              <button
-                type="button"
-                onClick={handleStartTelegramAuth}
-                style={{
-                  width: '100%', padding: '11px', borderRadius: 14,
-                  border: '1px solid #E8E3F8', background: '#FFFFFF',
-                  color: '#6B7280', fontSize: 12, fontWeight: 600,
-                  cursor: 'pointer', fontFamily: 'inherit',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                }}
-              >
-                <span>🌐 {t.orInstantWeb}</span>
-              </button>
-            </div>
-          </div>
+          </motion.div>
         )}
       </div>
 
-      {/* Bottom action button */}
-      {step !== 'ai' && step !== 'telegram' && (
-        <div style={{ paddingTop: 8 }}>
-          <button
-            onClick={goNext}
-            style={{
-              width: '100%', padding: '14px', borderRadius: 16, border: 'none',
-              background: 'linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%)',
-              color: '#FFFFFF', fontSize: 15, fontWeight: 700,
-              cursor: 'pointer', fontFamily: 'inherit',
-              boxShadow: '0 6px 20px rgba(124, 58, 237, 0.35)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-            }}
-          >
-            <span>{step === 'goal' ? t.saveGoalBtn : t.continueBtn}</span>
-          </button>
-        </div>
-      )}
+      {/* Bottom Action Button */}
+      <button
+        onClick={goNext}
+        style={{
+          width: '100%',
+          padding: '15px 18px',
+          borderRadius: 16,
+          border: 'none',
+          background: 'linear-gradient(135deg, #7C3AED 0%, #6D28D9 100%)',
+          color: '#FFFFFF',
+          fontSize: 15,
+          fontWeight: 700,
+          cursor: 'pointer',
+          fontFamily: 'inherit',
+          boxShadow: '0 6px 20px rgba(124, 58, 237, 0.35)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 6,
+          marginTop: 'auto',
+        }}
+      >
+        <span>{step === 'ai' ? t.startApp : t.continueBtn}</span>
+      </button>
     </div>
   )
 }

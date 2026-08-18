@@ -56,7 +56,7 @@ interface FinanceContextType {
   logout: () => void
   setDateRange: (range: { start: Date; end: Date }) => void
   startTelegramLogin: (onVerified?: () => void) => Promise<{ requestId: string; cancel: () => void }>
-  verifyTelegramCode: (code: string) => Promise<{ success: boolean; error?: string }>
+  verifyTelegramCode: (code: string) => Promise<{ success: boolean; isNewUser?: boolean; error?: string }>
 }
 
 const FinanceContext = createContext<FinanceContextType | undefined>(undefined)
@@ -670,11 +670,11 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   // ═══════════════════════════════════════════════════════════
   // Context Functions with Offline-First Supabase Persistence
   // ═══════════════════════════════════════════════════════════
-  const verifyTelegramCode = async (code: string): Promise<{ success: boolean; error?: string }> => {
+  const verifyTelegramCode = async (code: string): Promise<{ success: boolean; isNewUser?: boolean; error?: string }> => {
     try {
       const cleanCode = code.trim().replace(/\D/g, '')
       if (cleanCode.length !== 6) {
-        return { success: false, error: "Kod 6 ta raqamdan iborat bo'lishi kerak" }
+        return { success: false, error: "Kod 6 ta raqamdan iborat bo'lishi kerak." }
       }
 
       const res = await fetch(getApiUrl('/api/auth/verify-code'), {
@@ -686,7 +686,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const data = await res.json().catch(() => ({}))
 
       if (!res.ok || !data.success) {
-        return { success: false, error: data.error || "Tasdiqlash kodi noto'g'ri yoki eskirgan" }
+        return { success: false, error: data.error || "Kiritilgan kod noto'g'ri. Qayta urinib ko'ring." }
       }
 
       // Set real Supabase Auth session if tokens returned
@@ -702,10 +702,14 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         transactions: data.transactions
       })
 
-      return { success: true }
+      if (data.onboardingCompleted) {
+        localStorage.setItem('user_onboarding_completed_v1', 'true')
+      }
+
+      return { success: true, isNewUser: Boolean(data.isNewUser) }
     } catch (err: any) {
       console.error('[AUTH] verifyTelegramCode error:', err)
-      return { success: false, error: err.message || "Server bilan bog'lanishda xatolik yuz berdi" }
+      return { success: false, error: err.message || "Server bilan bog'lanishda xatolik yuz berdi." }
     }
   }
 

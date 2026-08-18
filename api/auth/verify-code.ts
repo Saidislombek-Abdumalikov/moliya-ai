@@ -30,9 +30,11 @@ function resetRateLimit(ip: string) {
 /**
  * POST /api/auth/verify-code
  * 
- * Verifies 6-digit OTP code requested by Android APK or manual code flow.
- * Checks expiry, deletes OTP immediately (single-use), links or creates moliya_user_tg_{id},
- * and returns Supabase Auth tokens + full profile.
+ * Verifies 6-digit OTP code requested by Android APK or manual login.
+ * Distinguishes invalid, expired, already used, or rate-limited codes.
+ * Single-use: deletes OTP immediately upon successful verification.
+ * Associates correctly with moliya_user_tg_{telegram_id}.
+ * Preserves existing accounts and distinguishes new vs returning users.
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -45,7 +47,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   if (req.method !== 'POST') {
-    return res.status(405).json({ success: false, error: 'Method Not Allowed' });
+    return res.status(405).json({ success: false, errorType: 'METHOD_NOT_ALLOWED', error: 'Method Not Allowed' });
   }
 
   const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown-ip';
@@ -53,19 +55,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!checkRateLimit(clientIp)) {
     return res.status(429).json({
       success: false,
-      error: "Juda ko'p xato urinishlar qilindi. Iltimos, 5 daqiqadan so'ng qayta urinib ko'ring."
+      errorType: 'RATE_LIMITED',
+      error: "Juda ko'p xato urinishlar qilindi. 5 daqiqadan so'ng qayta urinib ko'ring."
     });
   }
 
   try {
     const { code } = req.body || {};
     if (!code || typeof code !== 'string') {
-      return res.status(400).json({ success: false, error: "Tasdiqlash kodi kiritilmadi" });
+      return res.status(400).json({
+        success: false,
+        errorType: 'INVALID_CODE',
+        error: "Kiritilgan kod noto'g'ri. Qayta urinib ko'ring."
+      });
     }
 
     const cleanCode = code.trim().replace(/\D/g, '');
     if (cleanCode.length !== 6) {
-      return res.status(400).json({ success: false, error: "Kod 6 ta raqamdan iborat bo'lishi kerak" });
+      return res.status(400).json({
+        success: false,
+        errorType: 'INVALID_CODE',
+        error: "Kod 6 ta raqamdan iborat bo'lishi kerak."
+      });
     }
 
     // 1. Look up the OTP record in Supabase users table
@@ -77,22 +88,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .maybeSingle();
 
     if (lookupError || !otpDoc) {
-      return res.status(400).json({ success: false, error: "Tasdiqlash kodi noto'g'ri yoki eskirgan" });
+      return res.status(400).json({
+        success: false,
+        errorType: 'INVALID_CODE',
+        error: "Kiritilgan kod noto'g'ri yoki eskirgan. Qayta urinib ko'ring."
+      });
     }
 
     // 2. Check 10-minute expiry
     if (otpDoc.session_expires_at && new Date(otpDoc.session_expires_at).getTime() < Date.now()) {
       await supabase.from('users').delete().eq('id', otpId);
-      return res.status(400).json({ success: false, error: "Tasdiqlash kodining amal qilish muddati tugagan" });
+      return res.status(400).json({
+        success: false,
+        errorType: 'EXPIRED_CODE',
+        error: "Kod muddati tugagan. Yangi kod oling."
+      });
     }
 
     const tgId = String(otpDoc.telegram_id || otpDoc.login_request_id || '');
     if (!tgId) {
       await supabase.from('users').delete().eq('id', otpId);
-      return res.status(400).json({ success: false, error: "Kod ma'lumotlarida xatolik yuz berdi" });
+      return res.status(400).json({
+        success: false,
+        errorType: 'INVALID_CODE',
+        error: "Kod ma'lumotlarida xatolik yuz berdi. Yangi kod oling."
+      });
     }
 
-    // 3. Immediately delete OTP record (single-use)
+    // 3. Immediately delete OTP record (single-use enforcement)
     await supabase.from('users').delete().eq('id', otpId);
 
     // Successful code -> clear rate limit
@@ -119,20 +142,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let userCards: any[] = [];
     let userTransactions: any[] = [];
     let isPremium = false;
+    let isNewUser = false;
+    let onboardingCompleted = false;
 
     if (existingUser) {
+      onboardingCompleted = Boolean(existingUser.onboarding?.completed || (existingUser.created_at && existingUser.onboarding));
       updatedOnboarding = {
         ...(existingUser.onboarding || {}),
-        completed: true,
-        language: existingUser.language || existingUser.onboarding?.language || userPhone ? 'uz' : 'uz',
         name: tgName,
         phone: userPhone || existingUser.phone || '',
         telegram: tgUsername,
         telegramId: tgId,
+        language: existingUser.language || existingUser.onboarding?.language || 'uz',
+        completed: onboardingCompleted
       };
       userCards = Array.isArray(existingUser.cards) ? existingUser.cards : [];
       userTransactions = Array.isArray(existingUser.transactions) ? existingUser.transactions : [];
       isPremium = Boolean(existingUser.is_premium);
+      isNewUser = false;
 
       await supabase.from('users').update({
         name: tgName,
@@ -145,8 +172,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         updated_at: now.toISOString()
       }).eq('id', userId);
     } else {
+      isNewUser = true;
+      onboardingCompleted = false;
       updatedOnboarding = {
-        completed: true,
+        completed: false,
         language: 'uz',
         name: tgName,
         phone: userPhone,
@@ -179,7 +208,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // 5. Generate Supabase Auth session
     const authSession = await createSupabaseAuthSession(
       tgId,
-      { name: tgName, telegram: tgUsername }
+      sessionToken,
+      tgName,
+      tgUsername
     );
 
     return res.status(200).json({
@@ -188,13 +219,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       sessionToken,
       access_token: authSession?.access_token || null,
       refresh_token: authSession?.refresh_token || null,
+      isNewUser,
+      onboardingCompleted,
       onboarding: updatedOnboarding,
       cards: userCards,
       transactions: userTransactions,
-      isPremium
+      isPremium,
     });
-  } catch (error: any) {
-    console.error('[VERIFY-CODE] Error:', error);
-    return res.status(500).json({ success: false, error: error.message || 'Serverda xatolik yuz berdi' });
+  } catch (err: any) {
+    console.error('[API /api/auth/verify-code] Internal error:', err);
+    return res.status(500).json({
+      success: false,
+      errorType: 'SERVER_ERROR',
+      error: "Serverda vaqtinchalik xatolik yuz berdi. Iltimos, qayta urinib ko'ring."
+    });
   }
 }

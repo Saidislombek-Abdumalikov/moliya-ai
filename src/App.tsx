@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
+import LoginScreen from './components/LoginScreen'
 import Onboarding from './components/Onboarding'
 import HomeScreen from './components/HomeScreen'
 import CalendarScreen from './components/CalendarScreen'
@@ -9,7 +10,6 @@ import BottomNav from './components/BottomNav'
 import AIButton from './components/AIButton'
 import AppTour from './components/AppTour'
 import { useFinance } from './FinanceContext'
-
 import { App as CapacitorApp } from '@capacitor/app'
 import { initNativeFeatures, isNativePlatform } from './utils/nativeBridge'
 
@@ -17,7 +17,7 @@ import InstallPromptModal from './components/InstallPromptModal'
 import OfflineStatusBanner from './components/OfflineStatusBanner'
 
 export type Screen = 'home' | 'calendar' | 'analytics' | 'profile'
-type Stage = 'loading' | 'onboarding' | 'app'
+type Stage = 'loading' | 'login' | 'onboarding' | 'app'
 
 export default function App() {
   const { onboarding, updateOnboarding, setHasSampleData, logout, isAuthReady, userId } = useFinance()
@@ -77,12 +77,21 @@ export default function App() {
   useEffect(() => {
     if (!isAuthReady) return
 
-    if (userId || localStorage.getItem('user_logged_in_v1') === 'true') {
-      setStage('app')
+    const isLoggedIn = Boolean(userId || localStorage.getItem('user_logged_in_v1') === 'true')
+    if (isLoggedIn) {
+      const isOnboardingCompleted = Boolean(
+        onboarding?.completed ||
+        localStorage.getItem('user_onboarding_completed_v1') === 'true'
+      )
+      if (isOnboardingCompleted) {
+        setStage('app')
+      } else {
+        setStage('onboarding')
+      }
     } else {
-      setStage('onboarding')
+      setStage('login')
     }
-  }, [isAuthReady, userId])
+  }, [isAuthReady, userId, onboarding])
 
   // Trigger tour on first visit to main page
   useEffect(() => {
@@ -92,14 +101,19 @@ export default function App() {
     }
   }, [stage])
 
-  // Auto-transition to app/onboarding when user gets authenticated or logs out
+  // Auto-transition when storage or custom auth events change
   useEffect(() => {
     const checkLoggedIn = () => {
       const isLoggedIn = localStorage.getItem('user_logged_in_v1') === 'true'
       if (isLoggedIn) {
-        setStage('app')
+        const isOnboardingCompleted = localStorage.getItem('user_onboarding_completed_v1') === 'true'
+        if (isOnboardingCompleted) {
+          setStage('app')
+        } else {
+          setStage('onboarding')
+        }
       } else if (isAuthReady) {
-        setStage('onboarding')
+        setStage('login')
       }
     }
     window.addEventListener('storage', checkLoggedIn)
@@ -110,35 +124,19 @@ export default function App() {
     }
   }, [isAuthReady])
 
-  // If onboarding is null and user is authenticated, set clean defaults
-  useEffect(() => {
-    if (stage === 'app' && !onboarding) {
-      updateOnboarding({
-        name: 'Foydalanuvchi',
-        phone: '+998 90 123 45 67',
-        telegram: '@moliya_user',
-        language: 'uz',
-        monthlyIncome: 0,
-        monthlyGoal: 0,
-        isPremium: false
-      })
-    }
-  }, [stage, onboarding, updateOnboarding])
-
   // Telegram Mini App viewport initialization & auto-expand
-  // CRITICAL: This MUST be before conditional returns to avoid hooks violation
   useEffect(() => {
-    const tg = (window as any).Telegram?.WebApp;
+    const tg = (window as any).Telegram?.WebApp
     if (tg) {
       try {
-        if (typeof tg.ready === 'function') tg.ready();
-        if (typeof tg.expand === 'function') tg.expand();
-        if (typeof tg.enableClosingConfirmation === 'function') tg.enableClosingConfirmation();
+        if (typeof tg.ready === 'function') tg.ready()
+        if (typeof tg.expand === 'function') tg.expand()
+        if (typeof tg.enableClosingConfirmation === 'function') tg.enableClosingConfirmation()
       } catch (e) {
-        console.error('Telegram WebApp init error:', e);
+        console.error('Telegram WebApp init error:', e)
       }
     }
-  }, []);
+  }, [])
 
   // ═══════════════════════════════════════════════════════════
   // CONDITIONAL RENDERS — all hooks are above this line
@@ -180,14 +178,28 @@ export default function App() {
     )
   }
 
+  if (stage === 'login') {
+    return (
+      <LoginScreen
+        onLoginSuccess={(isNewUser) => {
+          if (isNewUser || localStorage.getItem('user_onboarding_completed_v1') !== 'true') {
+            setStage('onboarding')
+          } else {
+            setStage('app')
+            setShowTour(true)
+          }
+        }}
+      />
+    )
+  }
+
   if (stage === 'onboarding') {
     return (
       <Onboarding
         onComplete={(result) => {
-          updateOnboarding(result)
+          updateOnboarding({ ...result, completed: true })
+          localStorage.setItem('user_onboarding_completed_v1', 'true')
           setHasSampleData(false)
-          // NOTE: Do NOT set user_logged_in_v1 here — it should only be set
-          // by actual Telegram authentication in FinanceContext
           setStage('app')
           setShowTour(true)
         }}
@@ -227,14 +239,16 @@ export default function App() {
             <ProfileScreen
               onLogout={() => {
                 logout()
-                setStage('onboarding')
+                localStorage.removeItem('user_onboarding_completed_v1')
+                setStage('login')
                 setActiveScreen('home')
               }}
               onboarding={onboarding}
               onUpdateOnboarding={updateOnboarding}
               onClearData={() => {
                 logout()
-                setStage('onboarding')
+                localStorage.removeItem('user_onboarding_completed_v1')
+                setStage('login')
                 setActiveScreen('home')
               }}
               onStartTour={() => setShowTour(true)}

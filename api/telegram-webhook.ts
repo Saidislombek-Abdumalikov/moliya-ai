@@ -98,7 +98,18 @@ async function generateAndStoreOtpCode(fromUser: any): Promise<string> {
   const tgUsername = fromUser.username ? `@${fromUser.username}` : '';
   const userId = `moliya_user_tg_${tgId}`;
 
-  // Generate 6 digit random number from 100000 to 999999
+  // 1. Invalidate/delete any previous active OTP codes for this Telegram user
+  try {
+    await supabase
+      .from('users')
+      .delete()
+      .eq('telegram_id', tgId)
+      .like('id', 'otp_%');
+  } catch (cleanErr) {
+    console.warn('[BOT] Error cleaning old OTP codes:', cleanErr);
+  }
+
+  // 2. Generate 6 digit random number from 100000 to 999999
   const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
   const now = new Date();
   const expiresAt = new Date(now.getTime() + 10 * 60 * 1000).toISOString(); // 10 minutes
@@ -686,13 +697,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // 1. Dedicated Android APK OTP code request (/start apk or /start app)
       if (rawArg.toLowerCase().includes('apk') || rawArg.toLowerCase().includes('app')) {
         const otpCode = await generateAndStoreOtpCode(fromUser);
-        const apkMessage = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
-          `📲 <b>Moliya AI Android Ilovasi</b>\n\n` +
-          `🔐 <b>Sizning bir martalik tasdiqlash kodingiz:</b>\n\n` +
-          `👉 <code>${otpCode}</code> 👈\n\n` +
-          `<i>(Kodni nusxalash uchun ustiga bir marta bosing)</i>\n\n` +
-          `⏱ <i>Ushbu bir martalik kod 10 daqiqa davomida amal qiladi.</i>\n` +
-          `📱 <i>Moliya AI Android ilovasiga qaytib, kodni kiriting va hisobingizga kiring!</i>`;
+        const apkMessage = `🔐 <b>Kirish kodi:</b> <code>${otpCode}</code>\n\n` +
+          `Ushbu kodni ilovaga kiriting. Kod 10 daqiqa amal qiladi.`;
 
         await sendTelegramMessage(chatId, apkMessage);
         await sendTelegramMessage(chatId, "👇 Asosiy menyu:", getMainMenuKeyboard());

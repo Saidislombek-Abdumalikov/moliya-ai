@@ -244,6 +244,152 @@ async function startServer() {
     }
   });
 
+  // Standalone Android APK OTP Verification
+  app.post("/api/auth/verify-code", async (req, res) => {
+    try {
+      const { code } = req.body || {};
+      if (!code || typeof code !== 'string') {
+        res.status(400).json({ success: false, errorType: 'INVALID_CODE', error: "Kiritilgan kod noto'g'ri. Qayta urinib ko'ring." });
+        return;
+      }
+
+      const cleanCode = code.trim().replace(/\D/g, '');
+      if (cleanCode.length !== 6) {
+        res.status(400).json({ success: false, errorType: 'INVALID_CODE', error: "Kod 6 ta raqamdan iborat bo'lishi kerak." });
+        return;
+      }
+
+      const otpId = `otp_${cleanCode}`;
+      const { data: otpDoc, error: lookupError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', otpId)
+        .maybeSingle();
+
+      if (lookupError || !otpDoc) {
+        res.status(400).json({ success: false, errorType: 'INVALID_CODE', error: "Kiritilgan kod noto'g'ri yoki eskirgan. Qayta urinib ko'ring." });
+        return;
+      }
+
+      if (otpDoc.session_expires_at && new Date(otpDoc.session_expires_at).getTime() < Date.now()) {
+        await supabase.from('users').delete().eq('id', otpId);
+        res.status(400).json({ success: false, errorType: 'EXPIRED_CODE', error: "Kod muddati tugagan. Yangi kod oling." });
+        return;
+      }
+
+      const tgId = String(otpDoc.telegram_id || otpDoc.login_request_id || '');
+      if (!tgId) {
+        await supabase.from('users').delete().eq('id', otpId);
+        res.status(400).json({ success: false, errorType: 'INVALID_CODE', error: "Kod ma'lumotlarida xatolik yuz berdi. Yangi kod oling." });
+        return;
+      }
+
+      await supabase.from('users').delete().eq('id', otpId);
+
+      const userId = `moliya_user_tg_${tgId}`;
+      const { data: existingUser } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle();
+
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString();
+      const randomHex = crypto.randomBytes(16).toString('hex');
+      const sessionToken = existingUser?.session_token || ('sess_' + randomHex);
+
+      const tgName = otpDoc.name || existingUser?.name || 'Telegram Foydalanuvchi';
+      const tgUsername = otpDoc.telegram || existingUser?.telegram || '@moliya_user';
+      const userPhone = otpDoc.phone || existingUser?.phone || existingUser?.onboarding?.phone || '';
+
+      let updatedOnboarding: any;
+      let userCards: any[] = [];
+      let userTransactions: any[] = [];
+      let isPremium = false;
+      let isNewUser = false;
+      let onboardingCompleted = false;
+
+      if (existingUser) {
+        onboardingCompleted = Boolean(existingUser.onboarding?.completed || (existingUser.created_at && existingUser.onboarding));
+        updatedOnboarding = {
+          ...(existingUser.onboarding || {}),
+          name: tgName,
+          phone: userPhone || existingUser.phone || '',
+          telegram: tgUsername,
+          telegramId: tgId,
+          language: existingUser.language || existingUser.onboarding?.language || 'uz',
+          completed: onboardingCompleted
+        };
+        userCards = Array.isArray(existingUser.cards) ? existingUser.cards : [];
+        userTransactions = Array.isArray(existingUser.transactions) ? existingUser.transactions : [];
+        isPremium = Boolean(existingUser.is_premium);
+        isNewUser = false;
+
+        await supabase.from('users').update({
+          name: tgName,
+          telegram: tgUsername,
+          telegram_id: tgId,
+          phone: userPhone || existingUser.phone || null,
+          session_token: sessionToken,
+          session_expires_at: expiresAt,
+          onboarding: updatedOnboarding,
+          updated_at: now.toISOString()
+        }).eq('id', userId);
+      } else {
+        isNewUser = true;
+        onboardingCompleted = false;
+        updatedOnboarding = {
+          completed: false,
+          language: 'uz',
+          name: tgName,
+          phone: userPhone,
+          telegram: tgUsername,
+          telegramId: tgId,
+          monthlyGoal: 1000000,
+          monthlyIncome: 0,
+          isPremium: false,
+          budgets: {}
+        };
+
+        await supabase.from('users').insert({
+          id: userId,
+          name: tgName,
+          telegram: tgUsername,
+          telegram_id: tgId,
+          phone: userPhone || null,
+          language: 'uz',
+          is_premium: false,
+          session_token: sessionToken,
+          session_expires_at: expiresAt,
+          onboarding: updatedOnboarding,
+          cards: [],
+          transactions: [],
+          created_at: now.toISOString(),
+          updated_at: now.toISOString()
+        });
+      }
+
+      const authSession = await createSupabaseAuthSession(tgId, sessionToken, tgName, tgUsername);
+
+      res.status(200).json({
+        success: true,
+        userId,
+        sessionToken,
+        access_token: authSession?.access_token || null,
+        refresh_token: authSession?.refresh_token || null,
+        isNewUser,
+        onboardingCompleted,
+        onboarding: updatedOnboarding,
+        cards: userCards,
+        transactions: userTransactions,
+        isPremium,
+      });
+    } catch (e: any) {
+      console.error("Verify code error in server:", e);
+      res.status(500).json({ success: false, errorType: 'SERVER_ERROR', error: "Serverda vaqtinchalik xatolik yuz berdi. Iltimos, qayta urinib ko'ring." });
+    }
+  });
+
   app.post("/api/parse-expense", async (req, res) => {
     try {
       const { text, cards = [] } = req.body;
@@ -432,6 +578,17 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
     const tgName = [fromUser.first_name, fromUser.last_name].filter(Boolean).join(' ') || 'Telegram Foydalanuvchi';
     const tgUsername = fromUser.username ? `@${fromUser.username}` : '';
     const userId = `moliya_user_tg_${tgId}`;
+
+    // 1. Invalidate/delete previous OTPs for this user
+    try {
+      await supabase
+        .from('users')
+        .delete()
+        .eq('telegram_id', tgId)
+        .like('id', 'otp_%');
+    } catch (cleanErr) {
+      console.warn('[SERVER] Error cleaning old OTPs:', cleanErr);
+    }
 
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
     const now = new Date();
@@ -663,13 +820,8 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
         // Android APK OTP code request
         if (rawArg.toLowerCase().includes('apk') || rawArg.toLowerCase().includes('app')) {
           const otpCode = await generateAndStoreOtpCode(fromUser);
-          const apkMessage = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
-            `📲 <b>Moliya AI Android Ilovasi</b>\n\n` +
-            `🔐 <b>Sizning bir martalik tasdiqlash kodingiz:</b>\n\n` +
-            `👉 <code>${otpCode}</code> 👈\n\n` +
-            `<i>(Kodni nusxalash uchun ustiga bir marta bosing)</i>\n\n` +
-            `⏱ <i>Ushbu bir martalik kod 10 daqiqa davomida amal qiladi.</i>\n` +
-            `📱 <i>Moliya AI Android ilovasiga qaytib, kodni kiriting va hisobingizga kiring!</i>`;
+          const apkMessage = `🔐 <b>Kirish kodi:</b> <code>${otpCode}</code>\n\n` +
+            `Ushbu kodni ilovaga kiriting. Kod 10 daqiqa amal qiladi.`;
 
           await sendTelegramMessage(chatId, apkMessage);
           await sendTelegramMessage(chatId, "👇 Asosiy menyu:", getMainMenuKeyboard());
