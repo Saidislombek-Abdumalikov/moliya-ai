@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { supabase } from '../_supabaseClient.js';
 import { createSupabaseAuthSession } from '../_authHelper.js';
 
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8955141731:AAF0axUBdGs6D1LN32tNncb2cOp47-z9oho";
 
 function verifyTelegramInitData(initData: string, botToken: string): { isValid: boolean; user?: any } {
   if (!botToken || !initData) {

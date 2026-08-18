@@ -48,12 +48,14 @@ export default function App() {
     }
   }, [stage])
 
-  // Auto-transition to app when user gets authenticated via polling or events
+  // Auto-transition to app/onboarding when user gets authenticated or logs out
   useEffect(() => {
     const checkLoggedIn = () => {
       const isLoggedIn = localStorage.getItem('user_logged_in_v1') === 'true'
       if (isLoggedIn) {
         setStage('app')
+      } else if (isAuthReady) {
+        setStage('onboarding')
       }
     }
     window.addEventListener('storage', checkLoggedIn)
@@ -62,7 +64,7 @@ export default function App() {
       window.removeEventListener('storage', checkLoggedIn)
       window.removeEventListener('user_logged_in_updated', checkLoggedIn)
     }
-  }, [])
+  }, [isAuthReady])
 
   // If onboarding is null and user is authenticated, set clean defaults
   useEffect(() => {

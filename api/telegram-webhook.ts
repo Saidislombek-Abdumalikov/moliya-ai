@@ -3,7 +3,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import crypto from "crypto";
 import { supabase } from './_supabaseClient.js';
 
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8955141731:AAF0axUBdGs6D1LN32tNncb2cOp47-z9oho";
 const appUrl = process.env.APP_URL || "https://moliya-ai-pi.vercel.app";
 
 // Helper: Create 60-day Session Token & Mark Login Request VERIFIED in Supabase
@@ -604,18 +604,46 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const username = fromUser.username ? `@${fromUser.username}` : '';
       const userId = `moliya_user_tg_${tgId}`;
 
+      // Fetch existing user to preserve onboarding, transactions, cards, session_token
+      const { data: existingUser } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
+
+      const updatedOnboarding = {
+        ...(existingUser?.onboarding || {}),
+        completed: true,
+        language: existingUser?.language || existingUser?.onboarding?.language || 'uz',
+        name: fullName || existingUser?.name || 'Foydalanuvchi',
+        phone,
+        telegram: username || existingUser?.telegram || '',
+        telegramId: tgId,
+      };
+
       await supabase.from('users').upsert({
         id: userId,
-        name: fullName,
+        name: fullName || existingUser?.name || 'Foydalanuvchi',
         phone,
-        telegram: username,
+        telegram: username || existingUser?.telegram || null,
         telegram_id: tgId,
-        language: 'uz',
+        language: updatedOnboarding.language,
+        is_premium: existingUser?.is_premium || false,
+        onboarding: updatedOnboarding,
         updated_at: new Date().toISOString()
       }, { onConflict: 'id' });
 
-      const successText = `✅ <b>Telefon raqamingiz saqlandi va hisobingiz tasdiqlandi!</b> 🎉\n\n📞 <b>Raqam:</b> ${phone}\n\n👇 Brauzeringizga qaytib ilovadan foydalanishingiz mumkin:`;
-      await sendTelegramMessage(chatId, successText, getCleanInlineKeyboard());
+      // Generate single-use exchange code so the user can open Web App / Mini App authenticated
+      const now = new Date();
+      const exchangeCode = crypto.randomBytes(24).toString('hex');
+      const codeExpiresAt = new Date(now.getTime() + 5 * 60 * 1000).toISOString();
+      await supabase.from('users').upsert({
+        id: `exchange_${exchangeCode}`,
+        telegram_id: tgId,
+        session_token: existingUser?.session_token || null,
+        login_request_status: 'VALID',
+        session_expires_at: codeExpiresAt,
+        updated_at: now.toISOString()
+      }, { onConflict: 'id' });
+
+      const successText = `✅ <b>Telefon raqamingiz saqlandi va profilingiz tasdiqlandi!</b> 🎉\n\n📞 <b>Raqam:</b> ${phone}\n\n👇 <i>Ilovaga o'tish uchun quyidagi tugmani bosing:</i>`;
+      await sendTelegramMessage(chatId, successText, getCleanInlineKeyboard(exchangeCode));
       await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
       return res.status(200).json({ status: 'ok' });
     }
@@ -626,26 +654,82 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const requestId = rawArg.replace('req_', '').trim();
 
       if (requestId && requestId.length >= 8) {
-        const successText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n✅ <b>Profilingiz muvaffaqiyatli tasdiqlandi!</b> 🚀\nBrauzeringizdagi Moliya AI sahifasiga qaytsangiz, profilingiz avtomatik ochiladi.\n\n👇 <i>Ilovani to'g'ridan-to'g'ri ochish:</i>`;
-
         const verifyResult = await verifyAndMarkLoginRequest(requestId, fromUser);
         const code = verifyResult?.exchangeCode || undefined;
+        const tgId = String(fromUser?.id);
+        const { data: userDoc } = await supabase.from('users').select('*').eq('id', `moliya_user_tg_${tgId}`).maybeSingle();
+
+        const successText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n✅ <b>Profilingiz muvaffaqiyatli tasdiqlandi!</b> 🚀\nBrauzeringizdagi Moliya AI sahifasiga qaytsangiz, profilingiz avtomatik ochiladi.\n\n👇 <i>Ilovani to'g'ridan-to'g'ri ochish:</i>`;
         await sendTelegramMessage(chatId, successText, getCleanInlineKeyboard(code));
+
+        if (!userDoc?.phone && !userDoc?.onboarding?.phone) {
+          const phonePromptText = `📞 <i>Profilingiz to'liq bo'lishi uchun telefon raqamingizni ham ulashing:</i>`;
+          const phoneReplyKeyboard = {
+            keyboard: [
+              [{ text: "📞 Telefon raqamini ulashish", request_contact: true }],
+              [{ text: "📱 Mini App", web_app: { url: code ? `${appUrl}?code=${code}` : appUrl } }, { text: "🌐 Web App", url: code ? `${appUrl}?code=${code}` : appUrl }]
+            ],
+            resize_keyboard: true,
+            one_time_keyboard: true
+          };
+          await sendTelegramMessage(chatId, phonePromptText, phoneReplyKeyboard);
+        } else {
+          await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
+        }
         return res.status(200).json({ status: 'ok' });
       }
 
       // Standard /start
       const tgId = String(fromUser?.id);
-      const { data: userDoc } = await supabase.from('users').select('*').eq('id', `moliya_user_tg_${tgId}`).maybeSingle();
+      const tgName = [fromUser.first_name, fromUser.last_name].filter(Boolean).join(' ') || 'Telegram Foydalanuvchi';
+      const tgUsername = fromUser.username ? `@${fromUser.username}` : '';
+      const userId = `moliya_user_tg_${tgId}`;
 
-      if (!userDoc?.phone && !userDoc?.onboarding?.phone) {
+      // Always get and store Telegram User ID, name, username
+      const { data: userDoc } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
+
+      const existingPhone = userDoc?.phone || userDoc?.onboarding?.phone || '';
+      const updatedOnboarding = {
+        ...(userDoc?.onboarding || {}),
+        name: tgName || userDoc?.name,
+        telegram: tgUsername || userDoc?.telegram,
+        telegramId: tgId,
+        language: userDoc?.language || userDoc?.onboarding?.language || 'uz',
+        phone: existingPhone
+      };
+
+      await supabase.from('users').upsert({
+        id: userId,
+        name: tgName,
+        telegram: tgUsername,
+        telegram_id: tgId,
+        phone: existingPhone || null,
+        language: updatedOnboarding.language,
+        onboarding: updatedOnboarding,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'id' });
+
+      // Generate single-use exchange code for buttons
+      const now = new Date();
+      const exchangeCode = crypto.randomBytes(24).toString('hex');
+      const codeExpiresAt = new Date(now.getTime() + 5 * 60 * 1000).toISOString();
+      await supabase.from('users').upsert({
+        id: `exchange_${exchangeCode}`,
+        telegram_id: tgId,
+        session_token: userDoc?.session_token || null,
+        login_request_status: 'VALID',
+        session_expires_at: codeExpiresAt,
+        updated_at: now.toISOString()
+      }, { onConflict: 'id' });
+
+      if (!existingPhone) {
         const phonePromptText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
           `<b>Moliya AI</b> botiga xush kelibsiz! 🚀\n\n` +
           `📞 <i>Profilingiz to'liq bo'lishi uchun telefon raqamingizni yuboring:</i>`;
         const phoneReplyKeyboard = {
           keyboard: [
             [{ text: "📞 Telefon raqamini ulashish", request_contact: true }],
-            [{ text: "📱 Mini App", web_app: { url: appUrl } }, { text: "🌐 Web App", url: appUrl }]
+            [{ text: "📱 Mini App", web_app: { url: `${appUrl}?code=${exchangeCode}` } }, { text: "🌐 Web App", url: `${appUrl}?code=${exchangeCode}` }]
           ],
           resize_keyboard: true,
           one_time_keyboard: true
@@ -655,7 +739,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       const welcomeText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n<b>Moliya AI</b> botiga xush kelibsiz! 🚀\nPulingizni oson va aqlli boshqaring.\n\n👇 <b>Kerakli bo'limni tanlang:</b>`;
-      await sendTelegramMessage(chatId, welcomeText, getMainMenuKeyboard());
+      await sendTelegramMessage(chatId, welcomeText, getCleanInlineKeyboard(exchangeCode));
+      await sendTelegramMessage(chatId, "👇 Asosiy menyu:", getMainMenuKeyboard());
       return res.status(200).json({ status: 'ok' });
     }
 

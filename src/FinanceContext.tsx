@@ -190,13 +190,14 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         // ===== STEP 0: Check for existing real Supabase Auth session =====
         const { data: existingSession } = await supabase.auth.getSession()
         if (existingSession?.session?.user) {
-          const tgId = existingSession.session.user.user_metadata?.telegram_id
+          const user = existingSession.session.user
+          const tgId = user.user_metadata?.telegram_id || (user.email?.startsWith('tg') ? user.email.replace(/^tg/, '').replace(/@.*$/, '') : null)
           if (tgId) {
             const profileId = `moliya_user_tg_${tgId}`
             setUserId(profileId)
             localStorage.setItem('user_id_v1', profileId)
             localStorage.setItem('user_logged_in_v1', 'true')
-            console.log('[AUTH] ✅ Restored from existing Supabase Auth session')
+            console.log('[AUTH] ✅ Restored from existing Supabase Auth session for:', profileId)
             window.dispatchEvent(new Event('user_logged_in_updated'))
             setIsAuthReady(true)
             return

@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
-import { supabase, SUPABASE_URL } from './_supabaseClient.js';
+import { supabase, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } from './_supabaseClient.js';
 
 // Anon key for client-side-style sign-in on backend (to get real session tokens)
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFqdW1uanpiZ2psZGJ3d2x1Z2dyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY5Nzc0ODIsImV4cCI6MjEwMjU1MzQ4Mn0.zHMIbL50xmrlhtpkpGdewvcWvsBJUAHyo5lS1hdU910';
@@ -12,7 +12,7 @@ function generateAuthEmail(tgId: string): string {
 }
 
 function generateAuthPassword(tgId: string): string {
-  const secret = process.env.SUPABASE_SERVICE_ROLE_KEY || 'moliya-fallback-secret';
+  const secret = SUPABASE_SERVICE_ROLE_KEY || 'moliya_master_auth_secret_v1_2026';
   return crypto.createHmac('sha256', secret).update(`${AUTH_SALT}_${tgId}`).digest('hex');
 }
 
@@ -48,10 +48,29 @@ export async function createSupabaseAuthSession(
 
     if (createError) {
       const msg = createError.message || '';
-      if (!msg.includes('already been registered') && !msg.includes('already exists') && !msg.includes('duplicate')) {
+      // If user already exists, update their password and email confirmation to ensure signInWithPassword works
+      if (msg.includes('already been registered') || msg.includes('already exists') || msg.includes('duplicate')) {
+        try {
+          const { data: usersData } = await supabase.auth.admin.listUsers({ perPage: 1000 });
+          const existingUser = usersData?.users?.find(u => u.email === email);
+          if (existingUser) {
+            await supabase.auth.admin.updateUserById(existingUser.id, {
+              password,
+              email_confirm: true,
+              user_metadata: {
+                telegram_id: tgId,
+                name: metadata?.name || existingUser.user_metadata?.name || '',
+                telegram: metadata?.telegram || existingUser.user_metadata?.telegram || '',
+                provider: 'telegram'
+              }
+            });
+          }
+        } catch (updateErr: any) {
+          console.error('[AUTH_HELPER] Error updating existing auth user:', updateErr.message);
+        }
+      } else {
         console.error('[AUTH_HELPER] Error creating Supabase Auth user:', msg);
       }
-      // If user already exists, we'll just sign them in below
     }
 
     // 2. Sign in with a fresh anon-key client to get real session tokens
@@ -66,33 +85,6 @@ export async function createSupabaseAuthSession(
 
     if (signInError || !signInData.session) {
       console.error('[AUTH_HELPER] Sign-in failed:', signInError?.message);
-
-      // If sign-in fails because password doesn't match (user existed before our system),
-      // try to update the password and retry
-      if (signInError?.message?.includes('Invalid login credentials')) {
-        try {
-          // Find the user by email and update their password
-          const { data: users } = await supabase.auth.admin.listUsers({ perPage: 1000 });
-          const existingUser = users?.users?.find(u => u.email === email);
-          if (existingUser) {
-            await supabase.auth.admin.updateUserById(existingUser.id, { password });
-            // Retry sign-in
-            const { data: retryData, error: retryError } = await anonClient.auth.signInWithPassword({ email, password });
-            if (!retryError && retryData.session) {
-              console.log('[AUTH_HELPER] ✅ Supabase Auth session created (after password update) for tg:', tgId);
-              return {
-                access_token: retryData.session.access_token,
-                refresh_token: retryData.session.refresh_token,
-                expires_in: retryData.session.expires_in,
-                auth_user_id: retryData.user?.id || ''
-              };
-            }
-          }
-        } catch (retryErr: any) {
-          console.error('[AUTH_HELPER] Retry after password update failed:', retryErr.message);
-        }
-      }
-
       return null;
     }
 
