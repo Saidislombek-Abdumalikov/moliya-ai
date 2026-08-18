@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useFinance } from '../FinanceContext'
+import { openTelegramBot } from '../utils/nativeBridge'
 
 export interface OnboardingResult {
   language: 'uz' | 'uz_cyrl' | 'ru' | 'en'
@@ -62,8 +63,12 @@ const translations = {
     listening: "Eshityapman...",
     cancel: "Bekor qilish",
     telegramTitle: "Telegram orqali kiring",
-    telegramSub: "Hisobingizni xavfsiz tasdiqlash va tezkor bildirishnomalarni olish uchun Telegram orqali kiring.",
-    loginTelegramBtn: "📱 Telegram orqali kiring",
+    telegramSub: "Hisobingizni xavfsiz tasdiqlash va botdan foydalanish uchun Telegram orqali kiring.",
+    loginTelegramBtn: "📱 Telegram botdan kod olish",
+    enterOtpSub: "Telegram bot yuborgan 6 xonali tasdiqlash kodini kiriting:",
+    verifyCodeBtn: "Tasdiqlash va kirish →",
+    verifying: "Tekshirilmoqda...",
+    orInstantWeb: "Brauzerda avtomatik kirish",
     skipTelegramBtn: "Keyinroq / O'tkazib yuborish →",
   },
   uz_cyrl: {
@@ -94,8 +99,12 @@ const translations = {
     listening: "Эшитяпман...",
     cancel: "Бекор қилиш",
     telegramTitle: "Telegram орқали киринг",
-    telegramSub: "Ҳисобингизни хавфсиз тасдиқлаш ва тезкор билдиришномаларни олиш учун Telegram орқали киринг.",
-    loginTelegramBtn: "📱 Telegram орқали киринг",
+    telegramSub: "Ҳисобингизни хавфсиз тасдиқлаш ва ботдан фойдаланиш учун Telegram орқали киринг.",
+    loginTelegramBtn: "📱 Telegram ботдан код олиш",
+    enterOtpSub: "Telegram бот юборган 6 хонали тасдиқлаш кодини киритинг:",
+    verifyCodeBtn: "Тасдиқлаш ва кириш →",
+    verifying: "Текширилмоқда...",
+    orInstantWeb: "Браузерда автоматик кириш",
     skipTelegramBtn: "Кейинроқ / Ўтказиб юбориш →",
   },
   ru: {
@@ -126,8 +135,12 @@ const translations = {
     listening: "Слушаю...",
     cancel: "Отмена",
     telegramTitle: "Войти через Telegram",
-    telegramSub: "Войдите через Telegram для подтверждения аккаунта и получения уведомлений.",
-    loginTelegramBtn: "📱 Войти через Telegram",
+    telegramSub: "Войдите через Telegram для подтверждения аккаунта и синхронизации.",
+    loginTelegramBtn: "📱 Получить код в Telegram боте",
+    enterOtpSub: "Введите 6-значный код подтверждения из Telegram бота:",
+    verifyCodeBtn: "Подтвердить и войти →",
+    verifying: "Проверка...",
+    orInstantWeb: "Автоматический вход в браузере",
     skipTelegramBtn: "Позже / Пропустить →",
   },
   en: {
@@ -158,8 +171,12 @@ const translations = {
     listening: "Listening...",
     cancel: "Cancel",
     telegramTitle: "Log in via Telegram",
-    telegramSub: "Log in via Telegram to verify your account and receive instant updates.",
-    loginTelegramBtn: "📱 Log in via Telegram",
+    telegramSub: "Log in via Telegram to verify your account and enable sync.",
+    loginTelegramBtn: "📱 Get code from Telegram bot",
+    enterOtpSub: "Enter the 6-digit confirmation code from Telegram bot:",
+    verifyCodeBtn: "Verify and Enter →",
+    verifying: "Verifying...",
+    orInstantWeb: "Automatic browser login",
     skipTelegramBtn: "Later / Skip →",
   }
 }
@@ -177,13 +194,80 @@ function fmtMoney(n: number) {
 }
 
 export default function Onboarding({ onComplete }: Props) {
-  const { startTelegramLogin } = useFinance()
+  const { startTelegramLogin, verifyTelegramCode } = useFinance()
   const [step, setStep] = useState<Step>('language')
   const [language, setLanguage] = useState<'uz' | 'uz_cyrl' | 'ru' | 'en'>('uz')
   const [goal, setGoal] = useState<number>(1000000)
   const [customGoal, setCustomGoal] = useState('')
   const [useCustomGoal, setUseCustomGoal] = useState(false)
   const [isWaitingTelegramAuth, setIsWaitingTelegramAuth] = useState(false)
+
+  // 6-digit visual OTP input state
+  const [otpDigits, setOtpDigits] = useState<string[]>(['', '', '', '', '', ''])
+  const [otpError, setOtpError] = useState<string | null>(null)
+  const [isVerifyingOtp, setIsVerifyingOtp] = useState<boolean>(false)
+  const otpInputsRef = useRef<(HTMLInputElement | null)[]>([])
+
+  const handleOtpChange = (index: number, value: string) => {
+    if (otpError) setOtpError(null)
+    const digit = value.replace(/\D/g, '').slice(-1)
+    const newDigits = [...otpDigits]
+    newDigits[index] = digit
+    setOtpDigits(newDigits)
+
+    if (digit && index < 5) {
+      otpInputsRef.current[index + 1]?.focus()
+    }
+
+    const fullCode = newDigits.join('')
+    if (fullCode.length === 6 && !newDigits.includes('')) {
+      submitOtpCode(fullCode)
+    }
+  }
+
+  const handleOtpKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Backspace' && !otpDigits[index] && index > 0) {
+      otpInputsRef.current[index - 1]?.focus()
+    }
+  }
+
+  const handleOtpPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    e.preventDefault()
+    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6)
+    if (!pasted) return
+    const newDigits = ['', '', '', '', '', '']
+    for (let i = 0; i < pasted.length; i++) {
+      newDigits[i] = pasted[i]
+    }
+    setOtpDigits(newDigits)
+    const nextFocusIdx = Math.min(pasted.length, 5)
+    otpInputsRef.current[nextFocusIdx]?.focus()
+    if (pasted.length === 6) {
+      submitOtpCode(pasted)
+    }
+  }
+
+  const submitOtpCode = async (code: string) => {
+    setIsVerifyingOtp(true)
+    setOtpError(null)
+    try {
+      const result = await verifyTelegramCode(code)
+      if (result.success) {
+        finish()
+      } else {
+        setOtpError(result.error || "Tasdiqlash kodi noto'g'ri")
+      }
+    } catch (err: any) {
+      setOtpError(err.message || "Xatolik yuz berdi")
+    } finally {
+      setIsVerifyingOtp(false)
+    }
+  }
+
+  const handleGetTelegramCode = () => {
+    if (otpError) setOtpError(null)
+    openTelegramBot('apk')
+  }
 
   const handleStartTelegramAuth = async () => {
     setIsWaitingTelegramAuth(true);
@@ -533,89 +617,127 @@ export default function Onboarding({ onComplete }: Props) {
           </div>
         )}
 
-        {/* STEP 4: Telegram Login */}
+        {/* STEP 4: Telegram Login & APK OTP Code Flow */}
         {step === 'telegram' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center', textAlign: 'center' }}>
             <div style={{
               width: 64, height: 64, borderRadius: 22,
               background: 'linear-gradient(135deg, #0088CC 0%, #2AABEE 100%)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              boxShadow: '0 8px 24px rgba(0, 136, 204, 0.35)', marginBottom: 6,
+              boxShadow: '0 8px 24px rgba(0, 136, 204, 0.35)', marginBottom: 4,
             }}>
               <svg width="32" height="32" viewBox="0 0 24 24" fill="none">
                 <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69.01-.03.01-.14-.07-.2-.08-.06-.19-.04-.27-.02-.12.02-1.96 1.25-5.54 3.67-.52.36-1 .54-1.43.53-.47-.01-1.37-.27-2.04-.49-.82-.27-1.47-.42-1.42-.88.03-.24.37-.49 1.02-.74 3.99-1.74 6.66-2.89 8.01-3.46 3.81-1.6 4.6-1.88 5.12-1.89.11 0 .37.03.54.17.14.12.18.28.2.45-.02.07-.02.26-.04.42z" fill="#FFFFFF"/>
               </svg>
             </div>
 
-            {!isWaitingTelegramAuth ? (
-              <>
-                <h1 style={{ fontSize: 21, fontWeight: 700, color: '#1E1A3C', letterSpacing: -0.3, marginBottom: 2 }}>
-                  {t.telegramTitle}
-                </h1>
-                <p style={{ fontSize: 13, color: '#8B82C4', maxWidth: 310, lineHeight: 1.4, marginBottom: 12 }}>
-                  {t.telegramSub}
-                </p>
+            <h1 style={{ fontSize: 21, fontWeight: 700, color: '#1E1A3C', letterSpacing: -0.3, marginBottom: 2 }}>
+              {t.telegramTitle}
+            </h1>
+            <p style={{ fontSize: 13, color: '#8B82C4', maxWidth: 320, lineHeight: 1.4, marginBottom: 8 }}>
+              {t.telegramSub}
+            </p>
 
-                <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  <button
-                    type="button"
-                    onClick={handleStartTelegramAuth}
+            {/* 1. Primary Action: Open Telegram Bot to get 6-digit OTP code */}
+            <button
+              type="button"
+              onClick={handleGetTelegramCode}
+              style={{
+                width: '100%', padding: '14px', borderRadius: 16, border: 'none',
+                background: 'linear-gradient(135deg, #0088CC 0%, #0077B5 100%)',
+                color: '#FFFFFF', fontSize: 14, fontWeight: 700,
+                cursor: 'pointer', fontFamily: 'inherit',
+                boxShadow: '0 6px 20px rgba(0, 136, 204, 0.35)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              }}
+            >
+              <span>{t.loginTelegramBtn}</span>
+            </button>
+
+            {/* 2. Visual 6-Digit OTP Code Input */}
+            <div style={{ width: '100%', marginTop: 8, padding: '14px 12px', background: '#FFFFFF', borderRadius: 18, border: '1px solid #E8E3F8', boxShadow: '0 2px 12px rgba(0,0,0,0.03)' }}>
+              <p style={{ fontSize: 12, fontWeight: 600, color: '#6B7280', marginBottom: 12 }}>
+                {t.enterOtpSub}
+              </p>
+
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginBottom: 12 }}>
+                {otpDigits.map((digit, idx) => (
+                  <input
+                    key={idx}
+                    ref={(el) => { otpInputsRef.current[idx] = el }}
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={1}
+                    value={digit}
+                    onChange={(e) => handleOtpChange(idx, e.target.value)}
+                    onKeyDown={(e) => handleOtpKeyDown(idx, e)}
+                    onPaste={handleOtpPaste}
+                    disabled={isVerifyingOtp}
                     style={{
-                      width: '100%', padding: '15px', borderRadius: 16, border: 'none',
-                      background: 'linear-gradient(135deg, #0088CC 0%, #0077B5 100%)',
-                      color: '#FFFFFF', fontSize: 14, fontWeight: 700,
-                      cursor: 'pointer', fontFamily: 'inherit',
-                      boxShadow: '0 6px 20px rgba(0, 136, 204, 0.35)',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                      width: 44,
+                      height: 52,
+                      borderRadius: 14,
+                      border: otpError ? '2px solid #EF4444' : (digit ? '2px solid #7C3AED' : '1.5px solid #E8E3F8'),
+                      background: digit ? '#F5F3FF' : '#FFFFFF',
+                      textAlign: 'center',
+                      fontSize: 22,
+                      fontWeight: 700,
+                      color: '#1E1A3C',
+                      outline: 'none',
+                      boxShadow: digit ? '0 4px 12px rgba(124, 58, 237, 0.12)' : 'none',
+                      transition: 'all 0.15s ease-in-out',
                     }}
-                  >
-                    <span>{t.loginTelegramBtn}</span>
-                  </button>
+                  />
+                ))}
+              </div>
+
+              {otpError && (
+                <div style={{
+                  padding: '8px 12px', borderRadius: 10, background: '#FEF2F2',
+                  border: '1px solid #FEE2E2', color: '#DC2626', fontSize: 12,
+                  fontWeight: 500, marginBottom: 12
+                }}>
+                  ⚠️ {otpError}
                 </div>
-              </>
-            ) : (
-              <>
-                <h1 style={{ fontSize: 20, fontWeight: 700, color: '#1E1A3C', letterSpacing: -0.3, marginBottom: 2 }}>
-                  {(language === 'uz' || language === 'uz_cyrl') ? (language === 'uz_cyrl' ? "Telegram ботингиз очилди! 📱" : "Telegram botingiz ochildi! 📱") : "Telegram bot opened! 📱"}
-                </h1>
-                <p style={{ fontSize: 13, color: '#8B82C4', maxWidth: 310, lineHeight: 1.4, marginBottom: 16 }}>
-                  {(language === 'uz' || language === 'uz_cyrl')
-                    ? (language === 'uz_cyrl' ? "Telegram ботда /start босилгач, тизим сизни инстант аниқлайди ва асосий саҳифага ўтказади." : "Telegram botda /start bosilgach, tizim sizni avtomatik aniqlaydi va asosiy sahifaga o'tkazadi.")
-                    : "Press /start in the Telegram bot, the system will verify you and land on your account automatically."
-                  }
-                </p>
+              )}
 
-                <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  <button
-                    type="button"
-                    onClick={() => window.location.reload()}
-                    style={{
-                      width: '100%', padding: '14px', borderRadius: 16, border: 'none',
-                      background: 'linear-gradient(135deg, #0088CC 0%, #0077B5 100%)',
-                      color: '#FFFFFF', fontSize: 14, fontWeight: 700,
-                      cursor: 'pointer', fontFamily: 'inherit',
-                      boxShadow: '0 6px 20px rgba(0, 136, 204, 0.35)',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                    }}
-                  >
-                    <span>🔄 {(language === 'uz' || language === 'uz_cyrl') ? (language === 'uz_cyrl' ? "Саҳифани янгилаш" : "Sahifani yangilash") : (language === 'ru' ? "Обновить страницу" : "Refresh Page")}</span>
-                  </button>
+              <button
+                type="button"
+                onClick={() => submitOtpCode(otpDigits.join(''))}
+                disabled={isVerifyingOtp || otpDigits.join('').length !== 6}
+                style={{
+                  width: '100%', padding: '12px', borderRadius: 14, border: 'none',
+                  background: otpDigits.join('').length === 6 && !isVerifyingOtp
+                    ? 'linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%)'
+                    : '#E5E7EB',
+                  color: otpDigits.join('').length === 6 && !isVerifyingOtp ? '#FFFFFF' : '#9CA3AF',
+                  fontSize: 13, fontWeight: 700,
+                  cursor: otpDigits.join('').length === 6 && !isVerifyingOtp ? 'pointer' : 'not-allowed',
+                  fontFamily: 'inherit',
+                  transition: 'all 0.2s',
+                  boxShadow: otpDigits.join('').length === 6 && !isVerifyingOtp ? '0 4px 14px rgba(124, 58, 237, 0.25)' : 'none',
+                }}
+              >
+                <span>{isVerifyingOtp ? t.verifying : t.verifyCodeBtn}</span>
+              </button>
+            </div>
 
-                  <button
-                    onClick={handleStartTelegramAuth}
-                    style={{
-                      width: '100%', padding: '13px', borderRadius: 16,
-                      border: '1.5px solid #E8E3F8', background: '#FFFFFF',
-                      color: '#0088CC', fontSize: 13, fontWeight: 600,
-                      cursor: 'pointer', fontFamily: 'inherit',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                    }}
-                  >
-                    <span>🔄 {(language === 'uz' || language === 'uz_cyrl') ? (language === 'uz_cyrl' ? "Қайта уриниш" : "Qayta urinish") : (language === 'ru' ? "Попробовать снова" : "Try Again")}</span>
-                  </button>
-                </div>
-              </>
-            )}
+            {/* 3. Alternative / Instant browser polling link */}
+            <div style={{ width: '100%', marginTop: 2 }}>
+              <button
+                type="button"
+                onClick={handleStartTelegramAuth}
+                style={{
+                  width: '100%', padding: '11px', borderRadius: 14,
+                  border: '1px solid #E8E3F8', background: '#FFFFFF',
+                  color: '#6B7280', fontSize: 12, fontWeight: 600,
+                  cursor: 'pointer', fontFamily: 'inherit',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                }}
+              >
+                <span>🌐 {t.orInstantWeb}</span>
+              </button>
+            </div>
           </div>
         )}
       </div>

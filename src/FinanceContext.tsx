@@ -43,6 +43,7 @@ interface FinanceContextType {
   setHasSampleData: (val: boolean) => Promise<void>
   loading: boolean
   isAuthReady: boolean
+  isOnline: boolean
   updateOnboarding: (newData: Partial<OnboardingResult>) => Promise<void>
   saveCards: (updated: Card[]) => Promise<void>
   updateSecurity: (updated: SecurityOpts) => Promise<void>
@@ -53,6 +54,7 @@ interface FinanceContextType {
   logout: () => void
   setDateRange: (range: { start: Date; end: Date }) => void
   startTelegramLogin: (onVerified?: () => void) => Promise<{ requestId: string; cancel: () => void }>
+  verifyTelegramCode: (code: string) => Promise<{ success: boolean; error?: string }>
 }
 
 const FinanceContext = createContext<FinanceContextType | undefined>(undefined)
@@ -134,16 +136,71 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return saved === 'true'
   })
 
+  const [loading] = useState(false)
+  const [isAuthReady, setIsAuthReady] = useState(false)
+
+  const [isOnline, setIsOnline] = useState<boolean>(() => {
+    return typeof navigator !== 'undefined' ? navigator.onLine : true
+  })
+
+  // Synchronize locally stored offline changes to Supabase when internet reconnects
+  const syncOfflineData = async () => {
+    const currentUserId = userId || localStorage.getItem('user_id_v1')
+    if (!currentUserId) return
+    try {
+      console.log('[SYNC] Device online, syncing offline data to Supabase...')
+      const localOnboarding = localStorage.getItem('user_onboarding_v1')
+      const localCards = localStorage.getItem('user_cards_v1')
+      const localTxs = localStorage.getItem('user_transactions_v1')
+
+      const updatePayload: any = {
+        updated_at: new Date().toISOString()
+      }
+      if (localOnboarding) {
+        try { updatePayload.onboarding = JSON.parse(localOnboarding) } catch {}
+      }
+      if (localCards) {
+        try { updatePayload.cards = JSON.parse(localCards) } catch {}
+      }
+      if (localTxs) {
+        try { updatePayload.transactions = JSON.parse(localTxs) } catch {}
+      }
+
+      await supabase.from('users').update(updatePayload).eq('id', currentUserId)
+      console.log('[SYNC] ✅ Offline data synchronized successfully')
+    } catch (err) {
+      console.error('[SYNC] Failed to sync offline data:', err)
+    }
+  }
+
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true)
+      syncOfflineData()
+    }
+    const handleOffline = () => {
+      setIsOnline(false)
+    }
+
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
+    return () => {
+      window.removeEventListener('online', handleOnline)
+      window.removeEventListener('offline', handleOffline)
+    }
+  }, [userId])
+
   const setHasSampleData = async (val: boolean) => {
     setHasSampleDataState(val)
     localStorage.setItem('user_has_sample_v1', String(val))
     if (userId) {
-      supabase.from('users').update({ has_sample_data: val, updated_at: new Date().toISOString() }).eq('id', userId).then(() => {});
+      try {
+        await supabase.from('users').update({ has_sample_data: val, updated_at: new Date().toISOString() }).eq('id', userId)
+      } catch (err) {
+        console.warn('[OFFLINE] setHasSampleData cached locally:', err)
+      }
     }
   }
-
-  const [loading] = useState(false)
-  const [isAuthReady, setIsAuthReady] = useState(false)
 
   const [dateRange, setDateRange] = useState<{ start: Date; end: Date }>(() => {
     const now = new Date()
@@ -609,26 +666,69 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, [userId, isAuthReady]);
 
   // ═══════════════════════════════════════════════════════════
-  // Context Functions with Supabase Persistence
+  // Context Functions with Offline-First Supabase Persistence
   // ═══════════════════════════════════════════════════════════
+  const verifyTelegramCode = async (code: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const cleanCode = code.trim().replace(/\D/g, '')
+      if (cleanCode.length !== 6) {
+        return { success: false, error: "Kod 6 ta raqamdan iborat bo'lishi kerak" }
+      }
+
+      const res = await fetch('/api/auth/verify-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: cleanCode }),
+      })
+
+      const data = await res.json().catch(() => ({}))
+
+      if (!res.ok || !data.success) {
+        return { success: false, error: data.error || "Tasdiqlash kodi noto'g'ri yoki eskirgan" }
+      }
+
+      // Set real Supabase Auth session if tokens returned
+      if (data.access_token && data.refresh_token) {
+        await setSupabaseSession(data.access_token, data.refresh_token)
+      }
+
+      persistAuthState({
+        userId: data.userId,
+        sessionToken: data.sessionToken,
+        onboarding: data.onboarding,
+        cards: data.cards,
+        transactions: data.transactions
+      })
+
+      return { success: true }
+    } catch (err: any) {
+      console.error('[AUTH] verifyTelegramCode error:', err)
+      return { success: false, error: err.message || "Server bilan bog'lanishda xatolik yuz berdi" }
+    }
+  }
+
   const updateOnboarding = async (newData: Partial<OnboardingResult>) => {
     const updated = onboarding ? { ...onboarding, ...newData } : (newData as OnboardingResult);
     setOnboarding(updated);
     localStorage.setItem('user_onboarding_v1', JSON.stringify(updated));
 
     if (userId) {
-      const nowIso = new Date().toISOString();
-      await supabase.from('users').upsert({
-        id: userId,
-        name: updated.name || '—',
-        phone: updated.phone || null,
-        telegram: updated.telegram || '—',
-        telegram_id: updated.telegramId || null,
-        language: updated.language || 'uz',
-        is_premium: !!updated.isPremium,
-        onboarding: updated,
-        updated_at: nowIso
-      }, { onConflict: 'id' });
+      try {
+        const nowIso = new Date().toISOString();
+        await supabase.from('users').upsert({
+          id: userId,
+          name: updated.name || '—',
+          phone: updated.phone || null,
+          telegram: updated.telegram || '—',
+          telegram_id: updated.telegramId || null,
+          language: updated.language || 'uz',
+          is_premium: !!updated.isPremium,
+          onboarding: updated,
+          updated_at: nowIso
+        }, { onConflict: 'id' });
+      } catch (err) {
+        console.warn('[OFFLINE] updateOnboarding saved locally:', err);
+      }
     }
   };
 
@@ -637,10 +737,14 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     localStorage.setItem('user_cards_v1', JSON.stringify(updatedCards));
 
     if (userId) {
-      await supabase.from('users').update({
-        cards: updatedCards,
-        updated_at: new Date().toISOString()
-      }).eq('id', userId);
+      try {
+        await supabase.from('users').update({
+          cards: updatedCards,
+          updated_at: new Date().toISOString()
+        }).eq('id', userId);
+      } catch (err) {
+        console.warn('[OFFLINE] saveCards saved locally:', err);
+      }
     }
   };
 
@@ -669,10 +773,14 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     window.dispatchEvent(new Event('user_transactions_updated'));
 
     if (userId) {
-      await supabase.from('users').update({
-        transactions: updated,
-        updated_at: new Date().toISOString()
-      }).eq('id', userId);
+      try {
+        await supabase.from('users').update({
+          transactions: updated,
+          updated_at: new Date().toISOString()
+        }).eq('id', userId);
+      } catch (err) {
+        console.warn('[OFFLINE] addTransaction saved locally:', err);
+      }
     }
   };
 
@@ -688,16 +796,24 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     window.dispatchEvent(new Event('user_transactions_updated'));
 
     if (userId) {
-      await supabase.from('users').update({
-        transactions: updatedTxs,
-        updated_at: new Date().toISOString()
-      }).eq('id', userId);
+      try {
+        await supabase.from('users').update({
+          transactions: updatedTxs,
+          updated_at: new Date().toISOString()
+        }).eq('id', userId);
+      } catch (err) {
+        console.warn('[OFFLINE] deleteTransaction saved locally:', err);
+      }
     }
   };
 
   const clearAllData = async () => {
     if (userId) {
-      await supabase.from('users').delete().eq('id', userId);
+      try {
+        await supabase.from('users').delete().eq('id', userId);
+      } catch (err) {
+        console.warn('[OFFLINE] clearAllData local clear:', err);
+      }
     }
     localStorage.clear();
     setOnboarding(null);
@@ -709,11 +825,15 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const clearOnlyFinancialData = async () => {
     if (userId) {
-      await supabase.from('users').update({
-        transactions: [],
-        cards: [],
-        updated_at: new Date().toISOString()
-      }).eq('id', userId);
+      try {
+        await supabase.from('users').update({
+          transactions: [],
+          cards: [],
+          updated_at: new Date().toISOString()
+        }).eq('id', userId);
+      } catch (err) {
+        console.warn('[OFFLINE] clearOnlyFinancialData local clear:', err);
+      }
     }
     localStorage.removeItem('user_transactions_v1');
     localStorage.removeItem('user_cards_v1');
@@ -751,6 +871,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         setHasSampleData,
         loading,
         isAuthReady,
+        isOnline,
         updateOnboarding,
         saveCards,
         updateSecurity,
@@ -761,6 +882,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         logout,
         setDateRange,
         startTelegramLogin,
+        verifyTelegramCode,
       }}
     >
       {children}

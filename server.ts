@@ -427,6 +427,33 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
     }
   }
 
+  async function generateAndStoreOtpCode(fromUser: any): Promise<string> {
+    const tgId = String(fromUser.id);
+    const tgName = [fromUser.first_name, fromUser.last_name].filter(Boolean).join(' ') || 'Telegram Foydalanuvchi';
+    const tgUsername = fromUser.username ? `@${fromUser.username}` : '';
+    const userId = `moliya_user_tg_${tgId}`;
+
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 10 * 60 * 1000).toISOString();
+
+    const { data: userDoc } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
+
+    await supabase.from('users').upsert({
+      id: `otp_${otpCode}`,
+      telegram_id: tgId,
+      name: tgName,
+      telegram: tgUsername,
+      phone: userDoc?.phone || userDoc?.onboarding?.phone || null,
+      login_request_id: tgId,
+      login_request_status: 'PENDING_OTP',
+      session_expires_at: expiresAt,
+      updated_at: now.toISOString()
+    }, { onConflict: 'id' });
+
+    return otpCode;
+  }
+
   const checkAndIncrementAiLimit = (chatId: number): { allowed: boolean; isTrial: boolean; remaining: number } => {
     const now = Date.now();
     let usage = tgUserAiUsage.get(chatId);
@@ -632,6 +659,19 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
       if (text.startsWith("/start")) {
         const rawArg = text.replace('/start', '').trim();
         const requestId = rawArg.replace('req_', '').trim();
+
+        // Android APK OTP code request
+        if (rawArg.toLowerCase().includes('apk') || rawArg.toLowerCase().includes('app')) {
+          const otpCode = await generateAndStoreOtpCode(fromUser);
+          const apkMessage = `📲 <b>Moliya AI Android Ilovasi</b>\n\n` +
+            `🔐 <b>Sizning bir martalik tasdiqlash kodingiz:</b>\n\n` +
+            `👉 <code>${otpCode}</code> 👈\n\n` +
+            `⏱ <i>Ushbu bir martalik kod 10 daqiqa davomida amal qiladi.</i>\n` +
+            `📱 <i>Moliya AI Android ilovasiga qaytib, kodni kiriting va hisobingizga kiring!</i>`;
+
+          await sendTelegramMessage(chatId, apkMessage);
+          return;
+        }
 
         if (requestId && requestId.length >= 8) {
           try {

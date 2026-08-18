@@ -91,6 +91,36 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone
   }
 }
 
+// Helper: Generate and store 6-digit OTP code for Android APK (10-minute expiry)
+async function generateAndStoreOtpCode(fromUser: any): Promise<string> {
+  const tgId = String(fromUser.id);
+  const tgName = [fromUser.first_name, fromUser.last_name].filter(Boolean).join(' ') || 'Telegram Foydalanuvchi';
+  const tgUsername = fromUser.username ? `@${fromUser.username}` : '';
+  const userId = `moliya_user_tg_${tgId}`;
+
+  // Generate 6 digit random number from 100000 to 999999
+  const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 10 * 60 * 1000).toISOString(); // 10 minutes
+
+  // Fetch existing user to preserve phone
+  const { data: userDoc } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
+
+  await supabase.from('users').upsert({
+    id: `otp_${otpCode}`,
+    telegram_id: tgId,
+    name: tgName,
+    telegram: tgUsername,
+    phone: userDoc?.phone || userDoc?.onboarding?.phone || null,
+    login_request_id: tgId,
+    login_request_status: 'PENDING_OTP',
+    session_expires_at: expiresAt,
+    updated_at: now.toISOString()
+  }, { onConflict: 'id' });
+
+  return otpCode;
+}
+
 // Transaction Helpers via Supabase users.transactions JSON Array
 async function saveBotTransaction(fromUser: any, txItem: { id: string; type: string; name: string; category: string; amount: number; date: string }) {
   try {
@@ -653,6 +683,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const rawArg = text.replace('/start', '').trim();
       const requestId = rawArg.replace('req_', '').trim();
 
+      // 1. Dedicated Android APK OTP code request (/start apk or /start app)
+      if (rawArg.toLowerCase().includes('apk') || rawArg.toLowerCase().includes('app')) {
+        const otpCode = await generateAndStoreOtpCode(fromUser);
+        const apkMessage = `📲 <b>Moliya AI Android Ilovasi</b>\n\n` +
+          `🔐 <b>Sizning bir martalik tasdiqlash kodingiz:</b>\n\n` +
+          `👉 <code>${otpCode}</code> 👈\n\n` +
+          `⏱ <i>Ushbu bir martalik kod 10 daqiqa davomida amal qiladi.</i>\n` +
+          `📱 <i>Moliya AI Android ilovasiga qaytib, kodni kiriting va hisobingizga kiring!</i>`;
+
+        await sendTelegramMessage(chatId, apkMessage);
+        return res.status(200).json({ status: 'ok' });
+      }
+
+      // 2. Web App instant login request (/start req_...)
       if (requestId && requestId.length >= 8) {
         const verifyResult = await verifyAndMarkLoginRequest(requestId, fromUser);
         const code = verifyResult?.exchangeCode || undefined;
