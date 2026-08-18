@@ -1,7 +1,7 @@
 {
   "name": "Moliya AI",
   "private": true,
-  "version": "3.10.0",
+  "version": "3.10.1",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
@@ -14,8 +14,8 @@
     "cap:sync": "cap sync",
     "cap:open": "cap open android",
     "cap:build:android": "vite build && cap sync android",
-    "build:apk": "npm run cap:build:android && cd android && gradlew assembleDebug",
-    "build:aab": "npm run cap:build:android && cd android && gradlew bundleRelease"
+    "build:apk": "npm test && npm run cap:build:android && cd android && gradlew assembleDebug",
+    "build:aab": "npm test && npm run cap:build:android && cd android && gradlew bundleRelease"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.0",
