@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { motion } from 'motion/react'
 import { useFinance } from '../FinanceContext'
 import { openTelegramBot, isNativePlatform } from '../utils/nativeBridge'
@@ -14,7 +14,31 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
   const [otpError, setOtpError] = useState<string | null>(null)
   const [isVerifyingOtp, setIsVerifyingOtp] = useState<boolean>(false)
   const [isWaitingWebAuth, setIsWaitingWebAuth] = useState<boolean>(false)
+  const [timerSeconds, setTimerSeconds] = useState<number | null>(null)
   const otpInputsRef = useRef<(HTMLInputElement | null)[]>([])
+
+  // Live OTP expiration countdown timer (10 minutes matching backend lifetime)
+  useEffect(() => {
+    if (timerSeconds === null || timerSeconds <= 0) return
+
+    const interval = setInterval(() => {
+      setTimerSeconds((prev) => {
+        if (prev === null || prev <= 1) {
+          clearInterval(interval)
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+
+    return () => clearInterval(interval)
+  }, [timerSeconds])
+
+  const formatTimer = (seconds: number) => {
+    const m = Math.floor(seconds / 60)
+    const s = seconds % 60
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+  }
 
   const handleOtpChange = (index: number, value: string) => {
     if (otpError) setOtpError(null)
@@ -79,6 +103,8 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
   const handleGetCode = () => {
     if (otpError) setOtpError(null)
     setOtpDigits(['', '', '', '', '', ''])
+    // Start 10-minute real expiration timer
+    setTimerSeconds(600)
     openTelegramBot('apk')
     setTimeout(() => {
       otpInputsRef.current[0]?.focus()
@@ -99,6 +125,7 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
   }
 
   const fullOtp = otpDigits.join('')
+  const isExpired = timerSeconds === 0
 
   return (
     <div
@@ -150,11 +177,11 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
         <h1 style={{ fontSize: 24, fontWeight: 800, color: '#1E1A3C', margin: '0 0 4px', letterSpacing: -0.5 }}>
           Moliya AI
         </h1>
-        <p style={{ fontSize: 13, color: '#6B7280', margin: '0 0 24px', lineHeight: 1.4 }}>
+        <p style={{ fontSize: 13, color: '#6B7280', margin: '0 0 20px', lineHeight: 1.4 }}>
           Pulingizni oson va aqlli boshqaring
         </p>
 
-        {/* Action 1: Get Code Button */}
+        {/* Single Unified Action: Telegram Code Request */}
         <button
           onClick={handleGetCode}
           style={{
@@ -162,7 +189,9 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
             padding: '14px 18px',
             borderRadius: 16,
             border: 'none',
-            background: 'linear-gradient(135deg, #0088CC 0%, #0077B5 100%)',
+            background: isExpired
+              ? 'linear-gradient(135deg, #DC2626 0%, #B91C1C 100%)'
+              : 'linear-gradient(135deg, #0088CC 0%, #0077B5 100%)',
             color: '#FFFFFF',
             fontSize: 15,
             fontWeight: 700,
@@ -171,16 +200,37 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
             alignItems: 'center',
             justifyContent: 'center',
             gap: 10,
-            boxShadow: '0 6px 20px rgba(0, 136, 204, 0.3)',
-            marginBottom: 20,
-            transition: 'transform 0.15s ease',
+            boxShadow: isExpired
+              ? '0 6px 20px rgba(220, 38, 38, 0.3)'
+              : '0 6px 20px rgba(0, 136, 204, 0.3)',
+            marginBottom: 16,
+            transition: 'all 0.15s ease',
           }}
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
             <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .37z" />
           </svg>
-          Telegram orqali kod olish
+          {isExpired
+            ? "🔄 Yangi kod olish (Telegram)"
+            : timerSeconds !== null
+            ? "📱 Telegram botga o'tish"
+            : "Telegram orqali kod olish"}
         </button>
+
+        {/* Live Expiration Timer Display */}
+        {timerSeconds !== null && (
+          <div style={{ marginBottom: 14 }}>
+            {isExpired ? (
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: '#DC2626' }}>
+                ⚠️ Kod muddati tugadi. Yangi kod oling.
+              </span>
+            ) : (
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: '#6B7280' }}>
+                ⏳ Kod amal qilish muddati: <b style={{ color: '#7C3AED' }}>{formatTimer(timerSeconds)}</b>
+              </span>
+            )}
+          </div>
+        )}
 
         {/* 6-digit Code Input Section */}
         <div style={{ width: '100%', marginBottom: 18 }}>
@@ -208,7 +258,7 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
                 maxLength={1}
                 value={digit}
                 onChange={(e) => handleOtpChange(idx, e.target.value)}
-                onKeyDown={(e) => handleOtpKeyDown(idx, e.key)}
+                onKeyDown={(e) => handleOtpKeyDown(idx, e)}
                 style={{
                   width: 44,
                   height: 52,
@@ -252,26 +302,26 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
         {/* Submit Verification Button */}
         <button
           onClick={() => submitOtpCode(fullOtp)}
-          disabled={fullOtp.length !== 6 || isVerifyingOtp}
+          disabled={fullOtp.length !== 6 || isVerifyingOtp || isExpired}
           style={{
             width: '100%',
             padding: '14px 18px',
             borderRadius: 16,
             border: 'none',
-            background: fullOtp.length === 6 && !isVerifyingOtp
+            background: fullOtp.length === 6 && !isVerifyingOtp && !isExpired
               ? 'linear-gradient(135deg, #7C3AED 0%, #6D28D9 100%)'
               : '#E5E7EB',
-            color: fullOtp.length === 6 && !isVerifyingOtp ? '#FFFFFF' : '#9CA3AF',
+            color: fullOtp.length === 6 && !isVerifyingOtp && !isExpired ? '#FFFFFF' : '#9CA3AF',
             fontSize: 15,
             fontWeight: 700,
-            cursor: fullOtp.length === 6 && !isVerifyingOtp ? 'pointer' : 'not-allowed',
+            cursor: fullOtp.length === 6 && !isVerifyingOtp && !isExpired ? 'pointer' : 'not-allowed',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             gap: 8,
-            boxShadow: fullOtp.length === 6 ? '0 6px 20px rgba(124, 58, 237, 0.25)' : 'none',
+            boxShadow: fullOtp.length === 6 && !isExpired ? '0 6px 20px rgba(124, 58, 237, 0.25)' : 'none',
             transition: 'all 0.15s ease',
-            marginBottom: 12,
+            marginBottom: 8,
           }}
         >
           {isVerifyingOtp ? (
@@ -281,26 +331,9 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
           )}
         </button>
 
-        {/* Get New Code Action */}
-        <button
-          onClick={handleGetCode}
-          style={{
-            background: 'none',
-            border: 'none',
-            color: '#7C3AED',
-            fontSize: 13,
-            fontWeight: 600,
-            cursor: 'pointer',
-            padding: '6px 12px',
-            textDecoration: 'underline',
-          }}
-        >
-          🔄 Yangi kod olish
-        </button>
-
-        {/* Web browser instant QR fallback */}
+        {/* Web browser instant QR / automatic fallback */}
         {!isNativePlatform() && (
-          <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid #F3F4F6', width: '100%' }}>
+          <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #F3F4F6', width: '100%' }}>
             <button
               onClick={handleWebInstantLogin}
               disabled={isWaitingWebAuth}

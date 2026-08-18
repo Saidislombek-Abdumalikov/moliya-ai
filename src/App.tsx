@@ -89,7 +89,13 @@ export default function App() {
         setStage('onboarding')
       }
     } else {
-      setStage('login')
+      const hasPreOnboarded = localStorage.getItem('user_onboarding_pre_completed_v1') === 'true'
+      const hasCompleted = localStorage.getItem('user_onboarding_completed_v1') === 'true'
+      if (!hasPreOnboarded && !hasCompleted) {
+        setStage('onboarding')
+      } else {
+        setStage('login')
+      }
     }
   }, [isAuthReady, userId, onboarding])
 
@@ -113,7 +119,13 @@ export default function App() {
           setStage('onboarding')
         }
       } else if (isAuthReady) {
-        setStage('login')
+        const hasPreOnboarded = localStorage.getItem('user_onboarding_pre_completed_v1') === 'true'
+        const hasCompleted = localStorage.getItem('user_onboarding_completed_v1') === 'true'
+        if (!hasPreOnboarded && !hasCompleted) {
+          setStage('onboarding')
+        } else {
+          setStage('login')
+        }
       }
     }
     window.addEventListener('storage', checkLoggedIn)
@@ -178,27 +190,34 @@ export default function App() {
     )
   }
 
-  if (stage === 'login') {
+  if (stage === 'onboarding') {
     return (
-      <LoginScreen
-        onLoginSuccess={(isNewUser) => {
-          if (isNewUser || localStorage.getItem('user_onboarding_completed_v1') !== 'true') {
-            setStage('onboarding')
-          } else {
+      <Onboarding
+        onComplete={(result) => {
+          localStorage.setItem('user_onboarding_pre_completed_v1', 'true')
+          if (userId) {
+            updateOnboarding({ ...result, completed: true })
+            localStorage.setItem('user_onboarding_completed_v1', 'true')
+            setHasSampleData(false)
             setStage('app')
             setShowTour(true)
+          } else {
+            // Pre-login onboarding complete -> save selected language/goal & proceed to Telegram verification
+            updateOnboarding({ ...result })
+            setStage('login')
           }
         }}
       />
     )
   }
 
-  if (stage === 'onboarding') {
+  if (stage === 'login') {
     return (
-      <Onboarding
-        onComplete={(result) => {
-          updateOnboarding({ ...result, completed: true })
+      <LoginScreen
+        onLoginSuccess={(_isNewUser) => {
+          localStorage.setItem('user_onboarding_pre_completed_v1', 'true')
           localStorage.setItem('user_onboarding_completed_v1', 'true')
+          updateOnboarding({ completed: true })
           setHasSampleData(false)
           setStage('app')
           setShowTour(true)

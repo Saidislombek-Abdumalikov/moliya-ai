@@ -1388,7 +1388,8 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                   </label>
                   <input 
                     id="edit_profile_phone_input"
-                    type="text" 
+                    type="tel"
+                    inputMode="tel"
                     value={editPhone}
                     onChange={(e) => setEditPhone(e.target.value)}
                     style={{
@@ -1913,6 +1914,13 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
         {activeModal === 'payments' && (
           <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
             <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setActiveModal(null)}
+              style={{ position: 'absolute', inset: 0, background: 'rgba(30, 26, 60, 0.5)', backdropFilter: 'blur(4px)' }}
+            />
+            <motion.div
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
@@ -2008,7 +2016,9 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                       </label>
                       <input 
                         id="add_card_number_input"
-                        type="tel" 
+                        type="text" 
+                        inputMode="numeric"
+                        pattern="[0-9]*"
                         placeholder="8600 1234 5678 9012"
                         required
                         maxLength={19}
@@ -2050,7 +2060,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                               flex: 1, padding: '8px 4px', borderRadius: 10,
                               background: newCardBrand === brand.id ? brand.bg : '#F4F3FA',
                               color: newCardBrand === brand.id ? '#FFFFFF' : '#6E6893',
-                              border: newCardBrand === brand.id ? 'none' : '1.5px solid #E4E1F4',
+                              border: newCardBrand === brand.id ? 'none' : '1.5px solid #E4E2F0',
                               fontSize: 11, fontWeight: 600, cursor: 'pointer'
                             }}
                           >
@@ -2066,7 +2076,9 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                       </label>
                       <input 
                         id="add_card_balance_input"
-                        type="tel" 
+                        type="text" 
+                        inputMode="numeric"
+                        pattern="[0-9]*"
                         placeholder="500 000"
                         value={newCardBalance ? Number(newCardBalance.replace(/\D/g, '')).toLocaleString('en-US').replace(/,/g, ' ') : ''}
                         onChange={(e) => setNewCardBalance(e.target.value.replace(/\D/g, ''))}
@@ -2086,7 +2098,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                         cursor: 'pointer', fontFamily: 'inherit', marginTop: 6
                       }}
                     >
-                      {t.cardsModal.addBtn}
+                      {editingCardId ? (lang === 'uz' ? 'Yangilash' : lang === 'ru' ? 'Обновить' : 'Update') : (lang === 'uz' ? "Qo'shish" : lang === 'ru' ? 'Добавить' : 'Add')}
                     </button>
                   </div>
                 </form>

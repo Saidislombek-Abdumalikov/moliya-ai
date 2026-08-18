@@ -1689,7 +1689,10 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                     <div>
                       <label style={{ fontSize: 12, fontWeight: 600, color: '#8B82C4', marginBottom: 6, display: 'block' }}>{lang === 'uz' ? 'Karta raqami' : lang === 'uz_cyrl' ? 'Карта рақами' : lang === 'ru' ? 'Номер карты' : 'Card number'}</label>
                       <input
-                        type="text" required maxLength={19}
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        required maxLength={19}
                         value={newCardNumber}
                         onChange={(e) => {
                           let v = e.target.value.replace(/\D/g, '')
@@ -1743,7 +1746,10 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                     <div>
                       <label style={{ fontSize: 12, fontWeight: 600, color: '#8B82C4', marginBottom: 6, display: 'block' }}>{lang === 'uz' ? 'Balans (so\'m)' : lang === 'uz_cyrl' ? 'Баланс (сўм)' : lang === 'ru' ? 'Баланс (сум)' : 'Balance (som)'}</label>
                       <input
-                        type="tel" required
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        required
                         value={newCardBalance ? Number(newCardBalance.replace(/\D/g, '')).toLocaleString('en-US').replace(/,/g, ' ') : ''}
                         onChange={(e) => setNewCardBalance(e.target.value.replace(/\D/g, ''))}
                         style={{ width: '100%', padding: '14px 16px', borderRadius: 14, border: '1.5px solid #E4E2F0', fontSize: 15, fontWeight: 500, color: '#1E1A3C' }}

@@ -819,7 +819,9 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                     <div style={{ marginBottom: 14 }}>
                       <label style={{ fontSize: 12, color: '#8B82C4', fontWeight: 500, display: 'block', marginBottom: 6 }}>SUMMA (SO'M)</label>
                   <input
-                    type="tel"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     placeholder="0"
                     value={entry.amount}
                     onChange={(e) => {
