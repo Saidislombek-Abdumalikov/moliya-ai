@@ -68,7 +68,7 @@ async function parseAIText(text: string, cardsList: any[] = [], userId?: string)
 }
 
 export default function AIButton({ visible = true, language = 'uz' }: { visible?: boolean; language?: 'uz' | 'uz_cyrl' | 'ru' | 'en' }) {
-  const { addTransaction, hasSampleData, setHasSampleData, cards, onboarding, userId } = useFinance()
+  const { addTransaction, hasSampleData, setHasSampleData, cards, userId, userSubscription, recordAiUsage } = useFinance()
   const [open, setOpen] = useState(false)
   const [step, setStep] = useState<'type' | 'form' | 'voice' | 'done' | 'removeSamples'>('type')
   const [selectedType, setSelectedType] = useState<EntryType>('expense')
@@ -116,6 +116,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
             }
           }
 
+          recordAiUsage()
           setSelectedType(parsed.type || 'expense')
           const localISOTime = (new Date(Date.now() - new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 16)
           setEntry(prev => ({
@@ -169,22 +170,19 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
 
   
   const checkAndDeductAIQuery = (): boolean => {
-    if (onboarding?.isPremium) return true
-    const currentCount = parseInt(localStorage.getItem('ai_query_count_v1') || '0', 10)
-    if (currentCount >= 5) {
-      setAiError(
-        (language === 'uz' || language === 'uz_cyrl')
-          ? (language === 'uz_cyrl'
-              ? 'Free тарифда ойлик 5 та AI савол лимити тугади. Чексиз AI учун Premium га ўтинг!'
-              : 'Free tarifda oylik 5 ta AI savol limiti tugadi. Cheksiz AI uchun Premium ga o\'ting!')
-          : language === 'ru'
-          ? 'Лимит 5 ИИ-запросов исчерпан. Перейдите на Премиум!'
-          : 'Monthly limit of 5 AI queries reached. Upgrade to Premium!'
-      )
-      return false
-    }
-    localStorage.setItem('ai_query_count_v1', (currentCount + 1).toString())
-    return true
+    if (userSubscription.hasAiQuota) return true
+    const limit = userSubscription.aiLimit || 5
+    const isVip = userSubscription.isVip
+    setAiError(
+      (language === 'uz' || language === 'uz_cyrl')
+        ? (language === 'uz_cyrl'
+            ? `${isVip ? 'VIP' : 'Free'} тарифда ойлик ${limit} та AI савол лимити тугади. Чексиз AI учун Premium га ўтинг!`
+            : `${isVip ? 'VIP' : 'Free'} tarifda oylik ${limit} ta AI savol limiti tugadi. Cheksiz AI uchun Premium ga o'ting!`)
+        : language === 'ru'
+        ? `Лимит ${limit} ИИ-запросов исчерпан. Перейдите на Премиум!`
+        : `Monthly limit of ${limit} AI queries reached. Upgrade to Premium!`
+    )
+    return false
   }
 
   const handleAiTextSubmit = async () => {
@@ -196,6 +194,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
     setAiError('')
     try {
       const parsed = await parseAIText(aiText, cards, userId || undefined)
+      recordAiUsage()
       setSelectedType(parsed.type)
       const localISOTime = (new Date(Date.now() - new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 16)
       setEntry(prev => ({

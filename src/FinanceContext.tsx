@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react'
 import { supabase } from './supabase'
 import type { OnboardingResult } from './components/Onboarding'
 import { getApiUrl } from './utils/apiUrl'
+import { isNativePlatform } from './utils/nativeBridge'
 
 export interface Card {
   id: string
@@ -33,6 +34,26 @@ export interface Transaction {
 
 export const baseTransactions: Transaction[] = []
 
+export interface AppAnnouncement {
+  id: string | number
+  title: string
+  message: string
+  image_url?: string
+  action_url?: string
+  target?: string
+  created_at?: string
+  emoji?: string
+}
+
+export interface UserSubscriptionInfo {
+  isVip: boolean
+  isExpired: boolean
+  premiumExpiresAt: string | null
+  aiLimit: number | null
+  aiQueryCount: number
+  hasAiQuota: boolean
+}
+
 interface FinanceContextType {
   userId: string | null
   onboarding: OnboardingResult | null
@@ -57,6 +78,13 @@ interface FinanceContextType {
   setDateRange: (range: { start: Date; end: Date }) => void
   startTelegramLogin: (onVerified?: () => void) => Promise<{ requestId: string; cancel: () => void }>
   verifyTelegramCode: (code: string) => Promise<{ success: boolean; isNewUser?: boolean; error?: string }>
+  userSubscription: UserSubscriptionInfo
+  recordAiUsage: () => Promise<void>
+  announcements: AppAnnouncement[]
+  activeAnnouncementPopup: AppAnnouncement | null
+  dismissAnnouncementPopup: () => void
+  hasNewAnnouncements: boolean
+  markAnnouncementsRead: () => void
 }
 
 const FinanceContext = createContext<FinanceContextType | undefined>(undefined)
@@ -83,6 +111,21 @@ async function setSupabaseSession(accessToken: string, refreshToken: string): Pr
   } catch (err) {
     console.error('[AUTH] Error setting session:', err)
     return false
+  }
+}
+
+
+function getDeviceInfo() {
+  const isApk = isNativePlatform()
+  const ua = typeof navigator !== 'undefined' ? navigator.userAgent : ''
+  const platform = typeof navigator !== 'undefined' ? navigator.platform : 'Unknown'
+  return {
+    platform: isApk ? 'android_apk' : 'web_app',
+    model: ua.includes('Android') ? 'Android Phone' : platform,
+    os: ua.includes('Android') ? 'Android' : platform,
+    app_version: 'v3.13.0',
+    push_token: null,
+    last_login: new Date().toISOString()
   }
 }
 
@@ -137,6 +180,25 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const saved = localStorage.getItem('user_has_sample_v1')
     return saved === 'true'
   })
+
+  // Subscription & AI Quota State
+  const [userSubscription, setUserSubscription] = useState<UserSubscriptionInfo>(() => {
+    const isPrem = localStorage.getItem('user_onboarding_v1') ? JSON.parse(localStorage.getItem('user_onboarding_v1')!).isPremium === true : false
+    const localCount = parseInt(localStorage.getItem('ai_query_count_v1') || '0', 10)
+    return {
+      isVip: isPrem,
+      isExpired: false,
+      premiumExpiresAt: null,
+      aiLimit: isPrem ? null : 5,
+      aiQueryCount: localCount,
+      hasAiQuota: isPrem || localCount < 5
+    }
+  })
+
+  // Real-time Announcements & Notification Listener State
+  const [announcements, setAnnouncements] = useState<AppAnnouncement[]>([])
+  const [activeAnnouncementPopup, setActiveAnnouncementPopup] = useState<AppAnnouncement | null>(null)
+  const [hasNewAnnouncements, setHasNewAnnouncements] = useState<boolean>(false)
 
   const [loading] = useState(false)
   const [isAuthReady, setIsAuthReady] = useState(false)
@@ -622,6 +684,24 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           .maybeSingle();
 
         if (!error && data) {
+          // Calculate VIP expiration & AI Quota
+          const isExpired = data.premium_expires_at 
+            ? new Date(data.premium_expires_at) <= new Date() 
+            : false
+          const isVip = Boolean((data.is_premium || data.onboarding?.isPremium) && !isExpired)
+          const aiLimit = data.ai_limit !== undefined && data.ai_limit !== null ? data.ai_limit : (isVip ? null : 5)
+          const aiQueryCount = Number(data.ai_query_count || localStorage.getItem('ai_query_count_v1') || 0)
+          const hasAiQuota = isVip ? (aiLimit === null || aiQueryCount < aiLimit) : aiQueryCount < (aiLimit || 5)
+
+          setUserSubscription({
+            isVip,
+            isExpired,
+            premiumExpiresAt: data.premium_expires_at || null,
+            aiLimit,
+            aiQueryCount,
+            hasAiQuota
+          })
+
           if (data.onboarding) {
             setOnboarding(data.onboarding);
             localStorage.setItem('user_onboarding_v1', JSON.stringify(data.onboarding));
@@ -686,6 +766,60 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, [userId, isAuthReady]);
 
   // ═══════════════════════════════════════════════════════════
+  // Real-Time In-App Announcements Listener (public.app_notifications)
+  // ═══════════════════════════════════════════════════════════
+  useEffect(() => {
+    // 1. Fetch recent announcements on mount
+    const fetchAnnouncements = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('app_notifications')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(10)
+
+        if (!error && Array.isArray(data)) {
+          setAnnouncements(data)
+        }
+      } catch (err) {
+        console.warn('[NOTIFICATIONS] Fetch announcements error:', err)
+      }
+    }
+
+    fetchAnnouncements()
+
+    // 2. Realtime listener for incoming broadcast alerts
+    const notifChannel = supabase
+      .channel('public:app_notifications')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'app_notifications' },
+        (payload: any) => {
+          const notice = payload.new as AppAnnouncement
+          if (!notice) return
+
+          const isApk = isNativePlatform()
+          const isForMe = 
+            notice.target === 'all' || 
+            (isApk && notice.target === 'android') || 
+            (!isApk && notice.target === 'web') ||
+            notice.target === userId
+
+          if (isForMe) {
+            setAnnouncements(prev => [notice, ...prev.filter(n => n.id !== notice.id)])
+            setHasNewAnnouncements(true)
+            setActiveAnnouncementPopup(notice)
+          }
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(notifChannel)
+    }
+  }, [userId]);
+
+  // ═══════════════════════════════════════════════════════════
   // Context Functions with Offline-First Supabase Persistence
   // ═══════════════════════════════════════════════════════════
   const verifyTelegramCode = async (code: string): Promise<{ success: boolean; isNewUser?: boolean; error?: string }> => {
@@ -731,6 +865,40 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   }
 
+  const recordAiUsage = async () => {
+    if (userId) {
+      try {
+        await (supabase.rpc as any)('increment_user_ai_count', { user_id: userId })
+          .catch(async () => {
+            // Fallback direct update
+            const { data: u } = await supabase.from('users').select('ai_query_count').eq('id', userId).maybeSingle()
+            const currentCount = Number(u?.ai_query_count || 0) + 1
+            await supabase.from('users').update({
+              ai_query_count: currentCount,
+              last_ai_query_at: new Date().toISOString()
+            }).eq('id', userId)
+          })
+      } catch (err) {
+        console.warn('[AI QUOTA] Increment count error:', err)
+      }
+    }
+    const localCount = parseInt(localStorage.getItem('ai_query_count_v1') || '0', 10) + 1
+    localStorage.setItem('ai_query_count_v1', String(localCount))
+    setUserSubscription(prev => ({
+      ...prev,
+      aiQueryCount: prev.aiQueryCount + 1,
+      hasAiQuota: prev.isVip ? (prev.aiLimit === null || prev.aiQueryCount + 1 < prev.aiLimit) : (prev.aiQueryCount + 1 < (prev.aiLimit || 5))
+    }))
+  }
+
+  const dismissAnnouncementPopup = () => {
+    setActiveAnnouncementPopup(null)
+  }
+
+  const markAnnouncementsRead = () => {
+    setHasNewAnnouncements(false)
+  }
+
   const updateOnboarding = async (newData: Partial<OnboardingResult>) => {
     const updated = onboarding ? { ...onboarding, ...newData } : (newData as OnboardingResult);
     setOnboarding(updated);
@@ -747,6 +915,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           telegram_id: updated.telegramId || null,
           language: updated.language || 'uz',
           is_premium: !!updated.isPremium,
+          platform: isNativePlatform() ? 'android_apk' : 'web_app',
+          device_info: getDeviceInfo(),
           onboarding: updated,
           updated_at: nowIso
         }, { onConflict: 'id' });
@@ -908,6 +1078,13 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         setDateRange,
         startTelegramLogin,
         verifyTelegramCode,
+        userSubscription,
+        recordAiUsage,
+        announcements,
+        activeAnnouncementPopup,
+        dismissAnnouncementPopup,
+        hasNewAnnouncements,
+        markAnnouncementsRead,
       }}
     >
       {children}

@@ -322,7 +322,21 @@ function fmtFull(n: number) {
 }
 
 export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
-  const { onboarding: contextOnboarding, customTransactions, cards, saveCards, deleteTransaction, addTransaction, deletedTxIds, hasSampleData } = useFinance()
+  const { 
+    onboarding: contextOnboarding, 
+    customTransactions, 
+    cards, 
+    saveCards, 
+    deleteTransaction, 
+    addTransaction, 
+    deletedTxIds, 
+    hasSampleData,
+    announcements,
+    activeAnnouncementPopup,
+    dismissAnnouncementPopup,
+    hasNewAnnouncements,
+    markAnnouncementsRead
+  } = useFinance()
   const currentOnboarding = onboarding || contextOnboarding
   const initialLang = currentOnboarding?.language || 'uz'
   const lang = (initialLang in translations) ? initialLang : 'uz'
@@ -422,8 +436,6 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
 
   const [showPremium, setShowPremium] = useState(false)
   const [showNotifications, setShowNotifications] = useState(false)
-  const [hasNewNotifications, setHasNewNotifications] = useState(false)
-  const [notificationsList] = useState<any[]>([])
 
   // States for limit calculator modal
   const [showLimitModal, setShowLimitModal] = useState(false)
@@ -606,9 +618,9 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
           </button>
           <div style={{ position: 'relative' }}>
             <button
-              onClick={async () => {
+              onClick={() => {
                 setShowNotifications(true)
-                setHasNewNotifications(false)
+                markAnnouncementsRead()
               }}
               style={{
                 width: 38,
@@ -629,7 +641,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                 <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
               </svg>
             </button>
-            {hasNewNotifications && (
+            {hasNewAnnouncements && (
               <div style={{
                 position: 'absolute',
                 top: -2,
@@ -1155,7 +1167,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                 {t.notificationsTitle}
               </h3>
 
-              {notificationsList.length === 0 ? (
+              {announcements.length === 0 ? (
                 <div style={{ padding: '36px 16px', textAlign: 'center' }}>
                   <div style={{
                     width: 56, height: 56, borderRadius: '50%',
@@ -1178,24 +1190,54 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                  {notificationsList.map((not, idx) => (
-                    <div key={idx} style={{
-                      display: 'flex', gap: 14, padding: '16px', borderRadius: 16,
+                  {announcements.map((not, idx) => (
+                    <div key={not.id || idx} style={{
+                      display: 'flex', flexDirection: 'column', gap: 10, padding: '16px', borderRadius: 16,
                       background: '#F9F8FF', border: '1px solid #F3F0FF'
                     }}>
-                      <div style={{
-                        width: 38, height: 38, borderRadius: 12, background: not.bg || '#F0FDF4',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: 18, flexShrink: 0
-                      }}>
-                        {not.emoji || '📢'}
+                      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                        <div style={{
+                          width: 38, height: 38, borderRadius: 12, background: '#F5F3FF',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: 18, flexShrink: 0
+                        }}>
+                          {not.emoji || '📢'}
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <p style={{ fontSize: 14, fontWeight: 700, color: '#1E1A3C', marginBottom: 4, lineHeight: 1.3 }}>
+                            {not.title}
+                          </p>
+                          <p style={{ fontSize: 13, color: '#5C548A', lineHeight: 1.45, marginBottom: 4 }}>
+                            {not.message}
+                          </p>
+                          {not.created_at && (
+                            <p style={{ fontSize: 11, color: '#B8B0DC' }}>
+                              {new Date(not.created_at).toLocaleDateString('uz-UZ', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                            </p>
+                          )}
+                        </div>
                       </div>
-                      <div style={{ flex: 1 }}>
-                        <p style={{ fontSize: 13, fontWeight: 600, color: '#1E1A3C', marginBottom: 4, lineHeight: 1.4 }}>
-                          {not.title}
-                        </p>
-                        <p style={{ fontSize: 11, color: '#B8B0DC' }}>{not.time || 'Hozir'}</p>
-                      </div>
+
+                      {not.image_url && (
+                        <img
+                          src={not.image_url}
+                          alt={not.title}
+                          style={{ width: '100%', borderRadius: 12, maxHeight: 180, objectFit: 'cover', marginTop: 4 }}
+                        />
+                      )}
+
+                      {not.action_url && (
+                        <button
+                          onClick={() => window.open(not.action_url, '_blank')}
+                          style={{
+                            padding: '8px 14px', borderRadius: 10, border: 'none',
+                            background: '#7C3AED', color: '#FFFFFF', fontSize: 12.5, fontWeight: 600,
+                            cursor: 'pointer', alignSelf: 'flex-start', marginTop: 2
+                          }}
+                        >
+                          {lang === 'uz' ? "Batafsil ko'rish 🔗" : lang === 'ru' ? 'Подробнее 🔗' : 'View Details 🔗'}
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -2079,7 +2121,88 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
           )}
         </AnimatePresence>
 
-        {/* Edit Transaction Modal */}
+  
+      {/* Real-time Incoming Announcement Popup */}
+      <AnimatePresence>
+        {activeAnnouncementPopup && (
+          <div style={{ position: 'fixed', inset: 0, zIndex: 1200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={dismissAnnouncementPopup}
+              style={{ position: 'absolute', inset: 0, background: 'rgba(30, 26, 60, 0.6)', backdropFilter: 'blur(4px)' }}
+            />
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              style={{
+                position: 'relative', background: '#FFFFFF', width: '100%', maxWidth: 360,
+                borderRadius: 24, padding: 20, boxShadow: '0 20px 50px rgba(0,0,0,0.25)', zIndex: 1201
+              }}
+            >
+              <button
+                onClick={dismissAnnouncementPopup}
+                style={{
+                  position: 'absolute', top: 14, right: 14, width: 28, height: 28, borderRadius: '50%',
+                  background: '#F5F4FA', border: 'none', fontSize: 13, fontWeight: 700, color: '#5C548A', cursor: 'pointer'
+                }}
+              >
+                ✕
+              </button>
+
+              {activeAnnouncementPopup.image_url && (
+                <img
+                  src={activeAnnouncementPopup.image_url}
+                  alt={activeAnnouncementPopup.title}
+                  style={{ width: '100%', borderRadius: 16, maxHeight: 160, objectFit: 'cover', marginBottom: 14 }}
+                />
+              )}
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <span style={{ fontSize: 20 }}>{activeAnnouncementPopup.emoji || '📢'}</span>
+                <h4 style={{ fontSize: 17, fontWeight: 700, color: '#1E1A3C', margin: 0 }}>
+                  {activeAnnouncementPopup.title}
+                </h4>
+              </div>
+
+              <p style={{ fontSize: 13.5, color: '#5C548A', lineHeight: 1.5, marginBottom: 16 }}>
+                {activeAnnouncementPopup.message}
+              </p>
+
+              <div style={{ display: 'flex', gap: 10 }}>
+                {activeAnnouncementPopup.action_url && (
+                  <button
+                    onClick={() => {
+                      window.open(activeAnnouncementPopup.action_url, '_blank')
+                      dismissAnnouncementPopup()
+                    }}
+                    style={{
+                      flex: 1, padding: '12px', borderRadius: 12, border: 'none',
+                      background: '#7C3AED', color: '#FFFFFF', fontSize: 13, fontWeight: 700, cursor: 'pointer'
+                    }}
+                  >
+                    {lang === 'uz' ? "Ochish" : lang === 'ru' ? 'Открыть' : 'Open'}
+                  </button>
+                )}
+                <button
+                  onClick={dismissAnnouncementPopup}
+                  style={{
+                    flex: 1, padding: '12px', borderRadius: 12,
+                    border: '1.5px solid #E4E1F4', background: '#FAF9FD', color: '#5C548A',
+                    fontSize: 13, fontWeight: 600, cursor: 'pointer'
+                  }}
+                >
+                  {lang === 'uz' ? "Tushunarli" : lang === 'ru' ? 'Понятно' : 'Dismiss'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+            {/* Edit Transaction Modal */}
         <AnimatePresence>
           {editTx && (
             <div style={{ position: 'fixed', inset: 0, zIndex: 99999, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>

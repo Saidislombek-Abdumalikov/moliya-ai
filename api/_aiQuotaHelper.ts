@@ -24,26 +24,39 @@ export async function checkAndRecordAiUsage(
   const customLimit = 5; // Default free quota
 
   try {
-    // 1. Fetch user from Supabase users table
+    // 1. Fetch user subscription & quota status from Supabase users table
     const { data: suUser } = await supabase
       .from('users')
-      .select('is_premium, ai_query_count')
+      .select('is_premium, premium_expires_at, ai_limit, ai_query_count')
       .eq('id', userId)
       .maybeSingle();
 
     if (suUser) {
-      isPremium = !!suUser.is_premium;
+      const isExpired = suUser.premium_expires_at 
+        ? new Date(suUser.premium_expires_at) <= new Date() 
+        : false;
+      isPremium = Boolean(suUser.is_premium && !isExpired);
       usedCount = Number(suUser.ai_query_count || 0);
     }
 
-    // 2. Check Quota for Free Users
-    if (!isPremium && usedCount >= customLimit) {
+    const aiLimit = suUser?.ai_limit !== undefined && suUser?.ai_limit !== null
+      ? suUser.ai_limit
+      : (isPremium ? null : 5);
+
+    // 2. Check Quota
+    const hasQuota = isPremium 
+      ? (aiLimit === null || usedCount < aiLimit)
+      : usedCount < (aiLimit || 5);
+
+    if (!hasQuota) {
       return {
         allowed: false,
-        isPremium: false,
-        limit: customLimit,
+        isPremium,
+        limit: aiLimit || 5,
         usedCount,
-        message: `Bepul AI limidi (${customLimit} ta) tugadi. Cheksiz AI ishlatish uchun VIP Premium oling!`
+        message: isPremium 
+          ? `VIP tarifdagi oylik AI so'rovlar limiti (${aiLimit} ta) tugadi.`
+          : `Bepul AI limiti (${aiLimit || 5} ta) tugadi. Cheksiz AI ishlatish uchun VIP Premium oling!`
       };
     }
 
