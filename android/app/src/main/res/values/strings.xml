@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Moliya AI</string>
+    <string name="title_activity_main">Moliya AI</string>
+    <string name="package_name">ai.moliya.app</string>
+    <string name="custom_url_scheme">ai.moliya.app</string>
+</resources>

@@ -1,7 +1,7 @@
 {
   "name": "Moliya AI",
   "private": true,
-  "version": "3.6.0",
+  "version": "3.7.0",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
@@ -9,9 +9,20 @@
     "preview": "vite preview",
     "format": "oxfmt",
     "lint": "tsc --noEmit",
-    "start": "node dist/server.cjs"
+    "start": "node dist/server.cjs",
+    "cap:sync": "cap sync",
+    "cap:open": "cap open android",
+    "cap:build:android": "vite build && cap sync android",
+    "build:apk": "npm run cap:build:android && cd android && gradlew assembleDebug",
+    "build:aab": "npm run cap:build:android && cd android && gradlew bundleRelease"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.0",
+    "@capacitor/app": "^8.1.1",
+    "@capacitor/browser": "^8.0.4",
+    "@capacitor/core": "^8.5.0",
+    "@capacitor/splash-screen": "^8.0.2",
+    "@capacitor/status-bar": "^8.0.3",
     "@google/genai": "^2.12.0",
     "@supabase/supabase-js": "^2.112.3",
     "express": "^5.2.1",
@@ -20,6 +31,7 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.5.0",
     "@tailwindcss/vite": "^4.0.0",
     "@types/express": "^5.0.6",
     "@types/node": "^22.0.0",
