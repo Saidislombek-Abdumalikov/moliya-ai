@@ -602,15 +602,16 @@ export default function Onboarding({ onComplete }: Props) {
                   </button>
 
                   <button
-                    onClick={finish}
+                    onClick={handleStartTelegramAuth}
                     style={{
                       width: '100%', padding: '13px', borderRadius: 16,
                       border: '1.5px solid #E8E3F8', background: '#FFFFFF',
-                      color: '#8B82C4', fontSize: 13, fontWeight: 600,
+                      color: '#0088CC', fontSize: 13, fontWeight: 600,
                       cursor: 'pointer', fontFamily: 'inherit',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
                     }}
                   >
-                    <span>{(language === 'uz' || language === 'uz_cyrl') ? (language === 'uz_cyrl' ? "Кейинроқ кириш (Меҳмон режим) →" : "Keyinroq kirish (Mehmon rejim) →") : "Continue as Guest →"}</span>
+                    <span>🔄 {(language === 'uz' || language === 'uz_cyrl') ? (language === 'uz_cyrl' ? "Қайта уриниш" : "Qayta urinish") : (language === 'ru' ? "Попробовать снова" : "Try Again")}</span>
                   </button>
                 </div>
               </>

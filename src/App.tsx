@@ -20,11 +20,14 @@ export default function App() {
   const { onboarding, updateOnboarding, setHasSampleData, logout, isAuthReady, userId } = useFinance()
 
   const [showTour, setShowTour] = useState(false)
-
-  // Stage is determined AFTER auth is ready — no more race conditions
   const [stage, setStage] = useState<Stage>('loading')
-
   const [activeScreen, setActiveScreen] = useState<Screen>('home')
+
+  // ═══════════════════════════════════════════════════════════
+  // ALL HOOKS MUST BE BEFORE ANY CONDITIONAL RETURNS
+  // React requires hooks to be called in the same order every render.
+  // Placing useEffect after if/return causes "Rendered more hooks" crash.
+  // ═══════════════════════════════════════════════════════════
 
   // Determine stage ONLY after auth check completes
   useEffect(() => {
@@ -40,12 +43,12 @@ export default function App() {
   // Trigger tour on first visit to main page
   useEffect(() => {
     const tourSeen = localStorage.getItem('user_tour_completed_v2')
-    if (!tourSeen) {
+    if (!tourSeen && stage === 'app') {
       setShowTour(true)
     }
-  }, [])
+  }, [stage])
 
-  // Auto-transition to app when user gets authenticated via Session, URL parameter, or Telegram Polling
+  // Auto-transition to app when user gets authenticated via polling or events
   useEffect(() => {
     const checkLoggedIn = () => {
       const isLoggedIn = localStorage.getItem('user_logged_in_v1') === 'true'
@@ -61,9 +64,9 @@ export default function App() {
     }
   }, [])
 
-  // If onboarding is null, set clean defaults
+  // If onboarding is null and user is authenticated, set clean defaults
   useEffect(() => {
-    if (!onboarding) {
+    if (stage === 'app' && !onboarding) {
       updateOnboarding({
         name: 'Foydalanuvchi',
         phone: '+998 90 123 45 67',
@@ -74,9 +77,27 @@ export default function App() {
         isPremium: false
       })
     }
-  }, [onboarding, updateOnboarding])
+  }, [stage, onboarding, updateOnboarding])
 
-  // Loading screen while auth is being checked — prevents flash of onboarding
+  // Telegram Mini App viewport initialization & auto-expand
+  // CRITICAL: This MUST be before conditional returns to avoid hooks violation
+  useEffect(() => {
+    const tg = (window as any).Telegram?.WebApp;
+    if (tg) {
+      try {
+        if (typeof tg.ready === 'function') tg.ready();
+        if (typeof tg.expand === 'function') tg.expand();
+        if (typeof tg.enableClosingConfirmation === 'function') tg.enableClosingConfirmation();
+      } catch (e) {
+        console.error('Telegram WebApp init error:', e);
+      }
+    }
+  }, []);
+
+  // ═══════════════════════════════════════════════════════════
+  // CONDITIONAL RENDERS — all hooks are above this line
+  // ═══════════════════════════════════════════════════════════
+
   if (stage === 'loading') {
     return (
       <div
@@ -119,27 +140,14 @@ export default function App() {
         onComplete={(result) => {
           updateOnboarding(result)
           setHasSampleData(false)
-          localStorage.setItem('user_logged_in_v1', 'true')
+          // NOTE: Do NOT set user_logged_in_v1 here — it should only be set
+          // by actual Telegram authentication in FinanceContext
           setStage('app')
           setShowTour(true)
         }}
       />
     )
   }
-
-  // Telegram Mini App viewport initialization & auto-expand
-  useEffect(() => {
-    const tg = (window as any).Telegram?.WebApp;
-    if (tg) {
-      try {
-        if (typeof tg.ready === 'function') tg.ready();
-        if (typeof tg.expand === 'function') tg.expand();
-        if (typeof tg.enableClosingConfirmation === 'function') tg.enableClosingConfirmation();
-      } catch (e) {
-        console.error('Telegram WebApp init error:', e);
-      }
-    }
-  }, []);
 
   return (
     <div

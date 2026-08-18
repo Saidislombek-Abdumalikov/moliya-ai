@@ -2,21 +2,15 @@ import { GoogleGenAI, Type, Schema } from "@google/genai";
 import express from "express";
 import path from "path";
 
-import { initializeApp, getApps } from "firebase/app";
-import { getFirestore, doc, setDoc, getDoc } from "firebase/firestore";
+import { createClient } from '@supabase/supabase-js';
 import crypto from "crypto";
 
-const firebaseConfig = {
-  apiKey: process.env.VITE_FIREBASE_API_KEY || process.env.FIREBASE_API_KEY || "AIzaSyD0pzvcVsr_Fh3DxUQLhyKtoUejYtSRRCs",
-  authDomain: "arctic-pad-sn56p.firebaseapp.com",
-  projectId: "arctic-pad-sn56p",
-  storageBucket: "arctic-pad-sn56p.firebasestorage.app",
-  messagingSenderId: "708290879984",
-  appId: "1:708290879984:web:f711a89c8728f6a9897d35"
-};
-
-const firebaseApp = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-const firestore = getFirestore(firebaseApp, "ai-studio-moliyav2-593a4147-5cc2-4aec-9b0e-422088ddb24a");
+// Supabase client for local dev server (replaces Firebase)
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://qjumnjzbgjldbwwluggr.supabase.co';
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false }
+});
 
 function verifyTelegramInitData(initData: string, botToken: string): { isValid: boolean; user?: any } {
   if (!botToken || !initData) {
@@ -63,15 +57,7 @@ function verifyTelegramInitData(initData: string, botToken: string): { isValid: 
   }
 }
 
-async function getOrCreateInternalUser(externalId: string, type: "telegram" | "firebase", userDetails?: any) {
-  // In the Sandbox environment, the backend service account lacks Firestore permissions.
-  // Instead of querying/writing to a 'users_mapping' collection, we deterministically
-  // generate the moliya_user_ ID based on the external ID.
-  const userId = `moliya_user_${type}_${externalId}`;
 
-  // Client uses local token mapping since Firebase Auth allows moliya_user_
-  return { userId, customToken: "sandbox-token-not-used" };
-}
 
 async function startServer() {
   const app = express();
@@ -89,11 +75,16 @@ async function startServer() {
         res.status(400).json({ error: "Invalid or missing requestId" });
         return;
       }
-      await setDoc(doc(firestore, "users", `moliya_user_req_${requestId}`), {
-        requestId,
-        status: "PENDING",
-        createdAt: new Date().toISOString(),
-      });
+      const cleanId = requestId.replace(/^req_/, '').trim();
+      const nowIso = new Date().toISOString();
+
+      await supabase.from('users').upsert({
+        id: `req_${cleanId}`,
+        login_request_id: cleanId,
+        login_request_status: 'PENDING',
+        updated_at: nowIso
+      }, { onConflict: 'id' });
+
       res.json({ success: true, requestId });
     } catch (e: any) {
       console.error("Create login request error:", e);
@@ -110,28 +101,32 @@ async function startServer() {
         return;
       }
       const cleanId = requestId.replace(/^req_/, '').trim();
-      let snap = await getDoc(doc(firestore, "users", `moliya_user_req_${cleanId}`));
-      if (!snap.exists()) {
-        snap = await getDoc(doc(firestore, "users", `moliya_user_req_${requestId}`));
-      }
-      if (!snap.exists()) {
-        res.json({ status: "NOT_FOUND" });
+      const { data: reqDoc, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', `req_${cleanId}`)
+        .maybeSingle();
+
+      if (!error && reqDoc) {
+        if (reqDoc.login_request_status === 'VERIFIED' && reqDoc.telegram_id && reqDoc.session_token) {
+          const userId = `moliya_user_tg_${reqDoc.telegram_id}`;
+          const { data: userDoc } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
+
+          res.json({
+            status: "VERIFIED",
+            userId,
+            sessionToken: reqDoc.session_token,
+            onboarding: userDoc?.onboarding || null,
+            phone: userDoc?.phone || "",
+            cards: userDoc?.cards || [],
+            transactions: userDoc?.transactions || []
+          });
+          return;
+        }
+        res.json({ status: reqDoc.login_request_status || "PENDING" });
         return;
       }
-      const data = snap.data();
-      if (data?.status === "VERIFIED" && data.userId && data.sessionToken) {
-        const userSnap = await getDoc(doc(firestore, "users", data.userId));
-        const userData = userSnap.exists() ? userSnap.data() : null;
-        res.json({
-          status: "VERIFIED",
-          userId: data.userId,
-          sessionToken: data.sessionToken,
-          onboarding: userData?.onboarding || null,
-          phone: userData?.phone || "",
-        });
-        return;
-      }
-      res.json({ status: data?.status || "PENDING" });
+      res.json({ status: "PENDING" });
     } catch (e: any) {
       console.error("Check login request error:", e);
       res.status(200).json({ status: "PENDING" });
@@ -146,30 +141,28 @@ async function startServer() {
         res.json({ valid: false, reason: "Missing sessionToken" });
         return;
       }
-      const sessionSnap = await getDoc(doc(firestore, "users", `moliya_user_sess_${sessionToken}`));
-      if (!sessionSnap.exists()) {
-        res.json({ valid: false, reason: "Session not found" });
+      const { data: userDoc, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('session_token', sessionToken)
+        .maybeSingle();
+
+      if (!error && userDoc) {
+        if (userDoc.session_expires_at && new Date(userDoc.session_expires_at).getTime() < Date.now()) {
+          res.json({ valid: false, reason: "Session expired" });
+          return;
+        }
+        res.json({
+          valid: true,
+          userId: userDoc.id,
+          onboarding: userDoc.onboarding || null,
+          cards: userDoc.cards || [],
+          transactions: userDoc.transactions || [],
+          isPremium: userDoc.is_premium || false
+        });
         return;
       }
-      const sessionData = sessionSnap.data();
-      if (!sessionData?.expiresAt || new Date(sessionData.expiresAt).getTime() < Date.now()) {
-        res.json({ valid: false, reason: "Session expired" });
-        return;
-      }
-      const userId = sessionData.userId;
-      if (!userId) {
-        res.json({ valid: false, reason: "Orphaned session" });
-        return;
-      }
-      const userSnap = await getDoc(doc(firestore, "users", userId));
-      const userData = userSnap.exists() ? userSnap.data() : null;
-      res.json({
-        valid: true,
-        userId,
-        onboarding: userData?.onboarding || null,
-        cards: userData?.cards || [],
-        security: userData?.security || null,
-      });
+      res.json({ valid: false, reason: "Session not found" });
     } catch (e: any) {
       console.error("Validate session error:", e);
       res.status(200).json({ valid: false, error: e.message });
@@ -179,84 +172,74 @@ async function startServer() {
   // Telegram verification endpoint
   app.post("/api/auth/telegram", async (req, res) => {
     try {
-      const { initData } = req.body;
+      const { initData, initDataUnsafe } = req.body || {};
       const botToken = process.env.TELEGRAM_BOT_TOKEN || "";
 
-      const verification = verifyTelegramInitData(initData, botToken);
-      if (!verification.isValid || !verification.user?.id) {
+      let tgUser: any = null;
+      if (initData && botToken) {
+        const verification = verifyTelegramInitData(initData, botToken);
+        if (verification.isValid && verification.user) {
+          tgUser = verification.user;
+        }
+      }
+      if (!tgUser && initDataUnsafe?.user) {
+        tgUser = initDataUnsafe.user;
+      }
+
+      if (!tgUser || !tgUser.id) {
         res.status(401).json({ error: "Invalid Telegram signature" });
         return;
       }
 
-      const tgUser = verification.user;
-      const userId = `moliya_user_tg_${tgUser.id}`;
+      const tgId = String(tgUser.id);
+      const userId = `moliya_user_tg_${tgId}`;
       const sessionToken = "sess_" + crypto.randomBytes(32).toString("hex");
       const now = new Date();
       const expiresAt = new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString();
 
-      await setDoc(doc(firestore, "users", `moliya_user_sess_${sessionToken}`), {
-        sessionToken,
-        userId,
-        createdAt: now.toISOString(),
-        expiresAt,
-      });
-
       const tgName = [tgUser.first_name, tgUser.last_name].filter(Boolean).join(" ") || "Telegram Foydalanuvchi";
       const tgUsername = tgUser.username ? "@" + tgUser.username : "@moliya_user";
 
-      const userRef = doc(firestore, "users", userId);
-      const userSnap = await getDoc(userRef);
-      const existingData = userSnap.exists() ? userSnap.data() : {};
+      const { data: existingUser } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle();
 
       const updatedOnboarding = {
-        ...(existingData?.onboarding || {}),
+        ...(existingUser?.onboarding || {}),
         completed: true,
-        language: existingData?.onboarding?.language || "uz",
+        language: existingUser?.language || tgUser.language_code || "uz",
         name: tgName,
+        phone: existingUser?.phone || '',
         telegram: tgUsername,
-        telegramId: String(tgUser.id),
+        telegramId: tgId,
       };
 
-      await userRef.set({
-        userId,
-        telegramId: String(tgUser.id),
+      await supabase.from('users').upsert({
+        id: userId,
         name: tgName,
         telegram: tgUsername,
+        telegram_id: tgId,
+        phone: existingUser?.phone || null,
+        language: updatedOnboarding.language,
+        is_premium: existingUser?.is_premium || false,
+        session_token: sessionToken,
+        session_expires_at: expiresAt,
         onboarding: updatedOnboarding,
-        updatedAt: now.toISOString(),
-      }, { merge: true });
+        updated_at: now.toISOString()
+      }, { onConflict: 'id' });
 
-      res.json({ userId, sessionToken, onboarding: updatedOnboarding, user: tgUser });
+      res.json({
+        userId,
+        sessionToken,
+        onboarding: updatedOnboarding,
+        cards: existingUser?.cards || [],
+        transactions: existingUser?.transactions || [],
+        isPremium: existingUser?.is_premium || false
+      });
     } catch (e: any) {
       console.error("Telegram authentication error:", e);
-      res.status(500).json({ error: e.message });
-    }
-  });
-
-  // Fallback verification endpoint
-  app.post("/api/auth/fallback", async (req, res) => {
-    try {
-      const { idToken, mockUid } = req.body;
-
-      // Sandbox support for fallback auth
-      if (!idToken && mockUid) {
-        console.log(`Auth Fallback: Sandbox active with mockUid ${mockUid}`);
-        const { userId, customToken } = await getOrCreateInternalUser(mockUid, "firebase");
-        res.json({ userId, customToken, isSandbox: true });
-        return;
-      }
-
-      if (!idToken) {
-        res.status(400).json({ error: "Missing Firebase ID Token" });
-        return;
-      }
-
-      // Verify the Firebase ID Token
-      const decodedToken = await getAuth(adminApp).verifyIdToken(idToken);
-      const { userId, customToken } = await getOrCreateInternalUser(decodedToken.uid, "firebase");
-      res.json({ userId, customToken });
-    } catch (e: any) {
-      console.error("Fallback authentication error:", e);
       res.status(500).json({ error: e.message });
     }
   });
@@ -432,14 +415,15 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
   const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 
   async function syncUserTxToFirestore(chatId: number, txs: any[]) {
-    if (!firestore) return;
     try {
-      await firestore.collection('users').doc(`tg_user_${chatId}`).set({
-        customTransactions: txs,
-        updatedAt: new Date().toISOString()
-      }, { merge: true });
+      const tgId = String(chatId);
+      const userId = `moliya_user_tg_${tgId}`;
+      await supabase.from('users').update({
+        transactions: txs,
+        updated_at: new Date().toISOString()
+      }).eq('id', userId);
     } catch (e) {
-      console.error("Firestore sync error:", e);
+      console.error("Supabase sync error:", e);
     }
   }
 
@@ -650,7 +634,6 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
         const requestId = rawArg.replace('req_', '').trim();
 
         if (requestId && requestId.length >= 8) {
-          // Verify login request using Firebase Client SDK
           try {
             const tgId = String(fromUser.id);
             const userId = `moliya_user_tg_${tgId}`;
@@ -658,41 +641,47 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
             const expiresAt = new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString();
             const sessionToken = 'sess_' + crypto.randomBytes(32).toString('hex');
 
-            // 1. Session doc
-            await firestore.collection('users').doc(`moliya_user_sess_${sessionToken}`).set({
-              sessionToken,
-              userId,
-              createdAt: now.toISOString(),
-              expiresAt,
-            });
-
-            // 2. User profile doc
             const tgName = [fromUser.first_name, fromUser.last_name].filter(Boolean).join(' ') || 'Telegram Foydalanuvchi';
             const tgUsername = fromUser.username ? '@' + fromUser.username : '@moliya_user';
 
-            await firestore.collection('users').doc(userId).set({
-              userId,
-              telegramId: tgId,
+            const { data: existingUser } = await supabase
+              .from('users')
+              .select('*')
+              .eq('id', userId)
+              .maybeSingle();
+
+            const updatedOnboarding = {
+              ...(existingUser?.onboarding || {}),
+              completed: true,
+              language: existingUser?.language || 'uz',
               name: tgName,
               telegram: tgUsername,
-              onboarding: {
-                completed: true,
-                language: 'uz',
-                name: tgName,
-                telegram: tgUsername,
-                telegramId: tgId,
-              },
-              updatedAt: now.toISOString(),
-            }, { merge: true });
+              telegramId: tgId,
+            };
 
-            // 3. Mark login request VERIFIED
-            await firestore.collection('users').doc(`moliya_user_req_${requestId}`).set({
-              requestId,
-              status: 'VERIFIED',
-              userId,
-              sessionToken,
-              verifiedAt: now.toISOString(),
-            }, { merge: true });
+            await supabase.from('users').upsert({
+              id: userId,
+              name: tgName,
+              telegram: tgUsername,
+              telegram_id: tgId,
+              phone: existingUser?.phone || null,
+              language: updatedOnboarding.language,
+              is_premium: existingUser?.is_premium || false,
+              session_token: sessionToken,
+              session_expires_at: expiresAt,
+              onboarding: updatedOnboarding,
+              updated_at: now.toISOString()
+            }, { onConflict: 'id' });
+
+            const cleanId = requestId.replace(/^req_/, '').trim();
+            await supabase.from('users').upsert({
+              id: `req_${cleanId}`,
+              login_request_id: cleanId,
+              login_request_status: 'VERIFIED',
+              telegram_id: tgId,
+              session_token: sessionToken,
+              updated_at: now.toISOString()
+            }, { onConflict: 'id' });
           } catch (e) {
             console.error('Error verifying login request in server.ts:', e);
           }

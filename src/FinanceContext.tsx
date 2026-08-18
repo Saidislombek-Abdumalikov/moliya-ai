@@ -154,7 +154,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   void dateRange;
 
   // Helper: Persist auth state after successful verification
-  const persistAuthState = (data: { userId: string; sessionToken?: string; access_token?: string; refresh_token?: string; onboarding?: any; cards?: any[]; transactions?: any[] }) => {
+  const persistAuthState = (data: { userId: string; sessionToken?: string; onboarding?: any; cards?: any[]; transactions?: any[] }) => {
     setUserId(data.userId)
     localStorage.setItem('user_id_v1', data.userId)
     if (data.sessionToken) {
@@ -173,10 +173,15 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       setCustomTransactions(data.transactions)
       localStorage.setItem('user_transactions_v1', JSON.stringify(data.transactions))
     }
+    // Clean saved pending request since auth is done
+    localStorage.removeItem('moliya_pending_request_id')
     window.dispatchEvent(new Event('user_logged_in_updated'))
   }
 
-  // 1. Authenticate: Real Supabase Auth session + custom token fallback
+  // ═══════════════════════════════════════════════════════════
+  // MAIN AUTHENTICATION EFFECT
+  // Auth state: AUTH_INITIALIZING → AUTHENTICATED | UNAUTHENTICATED
+  // ═══════════════════════════════════════════════════════════
   useEffect(() => {
     async function authenticate() {
       try {
@@ -198,8 +203,46 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           }
         }
 
-        // ===== STEP 1: Check for URL ?s= parameter (session token from bot URL) =====
         const urlParams = new URLSearchParams(window.location.search)
+
+        // ===== STEP 1: Check for URL ?code= parameter (exchange code from bot) =====
+        const exchangeCode = urlParams.get('code')
+        if (exchangeCode && exchangeCode.length >= 16) {
+          try {
+            console.log('[AUTH] Found ?code= URL parameter, exchanging...')
+            const res = await fetch('/api/auth/exchange-code', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ code: exchangeCode }),
+            })
+            if (res.ok) {
+              const data = await res.json()
+              if (data.access_token && data.refresh_token && data.userId) {
+                await setSupabaseSession(data.access_token, data.refresh_token)
+                persistAuthState({
+                  userId: data.userId,
+                  sessionToken: data.sessionToken,
+                  onboarding: data.onboarding,
+                  cards: data.cards,
+                  transactions: data.transactions
+                })
+                // Clean URL
+                const cleanUrl = window.location.pathname + window.location.hash
+                window.history.replaceState({}, document.title, cleanUrl)
+                console.log('[AUTH] ✅ Authenticated via exchange code')
+                setIsAuthReady(true)
+                return
+              }
+            }
+          } catch (err) {
+            console.error('[AUTH] Error exchanging code:', err)
+          }
+          // Clean URL even if exchange failed
+          const cleanUrl = window.location.pathname + window.location.hash
+          window.history.replaceState({}, document.title, cleanUrl)
+        }
+
+        // ===== STEP 1b: Check for URL ?s= parameter (legacy — validate-session) =====
         const sessionParam = urlParams.get('s')
         if (sessionParam) {
           try {
@@ -212,12 +255,10 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
             if (res.ok) {
               const data = await res.json()
               if (data.valid && data.userId) {
-                // Set real Supabase Auth session
                 if (data.access_token && data.refresh_token) {
                   await setSupabaseSession(data.access_token, data.refresh_token)
                 }
-                persistAuthState({ userId: data.userId, sessionToken: sessionParam, access_token: data.access_token, refresh_token: data.refresh_token, onboarding: data.onboarding, cards: data.cards, transactions: data.transactions })
-                // Clean URL
+                persistAuthState({ userId: data.userId, sessionToken: sessionParam, onboarding: data.onboarding, cards: data.cards, transactions: data.transactions })
                 const cleanUrl = window.location.pathname + window.location.hash
                 window.history.replaceState({}, document.title, cleanUrl)
                 console.log('[AUTH] ✅ Authenticated via ?s= URL token')
@@ -241,7 +282,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 if (data.access_token && data.refresh_token) {
                   await setSupabaseSession(data.access_token, data.refresh_token)
                 }
-                persistAuthState({ userId: data.userId, sessionToken: data.sessionToken, access_token: data.access_token, refresh_token: data.refresh_token, onboarding: data.onboarding })
+                persistAuthState({ userId: data.userId, sessionToken: data.sessionToken, onboarding: data.onboarding })
                 const cleanUrl = window.location.pathname + window.location.hash
                 window.history.replaceState({}, document.title, cleanUrl)
                 console.log('[AUTH] ✅ Authenticated via ?req= URL parameter')
@@ -269,7 +310,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 if (data.access_token && data.refresh_token) {
                   await setSupabaseSession(data.access_token, data.refresh_token)
                 }
-                persistAuthState({ userId: data.userId, sessionToken, access_token: data.access_token, refresh_token: data.refresh_token, onboarding: data.onboarding, cards: data.cards, transactions: data.transactions })
+                persistAuthState({ userId: data.userId, sessionToken, onboarding: data.onboarding, cards: data.cards, transactions: data.transactions })
                 console.log('[AUTH] ✅ Authenticated via stored session token')
                 setIsAuthReady(true)
                 return
@@ -294,6 +335,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         const initDataUnsafe = tg?.initDataUnsafe
         if (tg && (initData || initDataUnsafe?.user?.id)) {
           try {
+            console.log('[AUTH] Telegram Mini App detected, verifying initData...')
             const res = await fetch('/api/auth/telegram', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -305,22 +347,34 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 if (data.access_token && data.refresh_token) {
                   await setSupabaseSession(data.access_token, data.refresh_token)
                 }
-                persistAuthState({ userId: data.userId, sessionToken: data.sessionToken, access_token: data.access_token, refresh_token: data.refresh_token, onboarding: data.onboarding, cards: data.cards, transactions: data.transactions })
+                persistAuthState({ userId: data.userId, sessionToken: data.sessionToken, onboarding: data.onboarding, cards: data.cards, transactions: data.transactions })
                 console.log('[AUTH] ✅ Authenticated via Telegram Mini App initData')
                 setIsAuthReady(true)
                 return
               }
+            } else {
+              const errData = await res.json().catch(() => ({}))
+              console.error('[AUTH] Telegram initData verification failed:', errData)
             }
           } catch (err) {
             console.error('[AUTH] Telegram initData auth error:', err)
           }
         }
 
-        // ===== STEP 5: Local fallback (returning user with localStorage) =====
+        // ===== STEP 5: Resume polling for pending login request (mobile redirect recovery) =====
+        const pendingRequestId = localStorage.getItem('moliya_pending_request_id')
+        if (pendingRequestId) {
+          console.log('[AUTH] Found pending login request, resuming polling...')
+          resumePolling(pendingRequestId)
+          // Don't return — let isAuthReady be set so the user sees loading/onboarding
+          // The polling callback will transition them to authenticated when complete
+        }
+
+        // ===== STEP 6: Local fallback =====
         const savedUserId = localStorage.getItem('user_id_v1')
         if (savedUserId && localStorage.getItem('user_logged_in_v1') === 'true') {
           setUserId(savedUserId)
-          console.log('[AUTH] Restored from localStorage fallback (no Supabase Auth session)')
+          console.log('[AUTH] Restored from localStorage fallback')
         }
       } catch (e) {
         console.error('[AUTH] Authentication error:', e)
@@ -329,14 +383,16 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
     }
     authenticate()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Listen for Supabase Auth state changes (auto-refresh, sign-out, etc.)
+  // ═══════════════════════════════════════════════════════════
+  // Supabase Auth State Listener
+  // ═══════════════════════════════════════════════════════════
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       console.log('[AUTH] onAuthStateChange event:', event)
       if (event === 'SIGNED_OUT') {
-        // User was signed out, clear local state
         setUserId(null)
         localStorage.removeItem('user_logged_in_v1')
         localStorage.removeItem('user_session_token_v1')
@@ -352,7 +408,95 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   }, [])
 
-  // 2. Start Telegram Login with Polling & Instant Visibility Listeners
+  // ═══════════════════════════════════════════════════════════
+  // POLLING HELPER — resumes polling for a login request
+  // Used both during initial login and after mobile redirect recovery
+  // ═══════════════════════════════════════════════════════════
+  function resumePolling(requestId: string, onVerified?: () => void) {
+    let intervalId: any = null
+    let isFinished = false
+
+    const checkVerification = async () => {
+      if (isFinished) return
+      try {
+        const res = await fetch(`/api/auth/check-login-request?requestId=${requestId}`)
+        if (res.ok) {
+          const data = await res.json()
+          if (data.status === 'VERIFIED' && data.userId) {
+            isFinished = true
+            if (intervalId) clearInterval(intervalId)
+            window.removeEventListener('focus', onTabActive)
+            document.removeEventListener('visibilitychange', onTabActive)
+
+            // Set real Supabase Auth session if available
+            if (data.access_token && data.refresh_token) {
+              await setSupabaseSession(data.access_token, data.refresh_token)
+            }
+
+            const currentOnboarding = JSON.parse(localStorage.getItem('user_onboarding_v1') || '{}')
+            const savedLang = localStorage.getItem('user_selected_language_v1')
+            const updatedOnboarding = {
+              ...currentOnboarding,
+              ...(data.onboarding || {}),
+              completed: true,
+              language: savedLang || data.onboarding?.language || currentOnboarding.language || 'uz',
+              phone: data.phone || data.onboarding?.phone || currentOnboarding.phone || '',
+            }
+
+            persistAuthState({
+              userId: data.userId,
+              sessionToken: data.sessionToken,
+              onboarding: updatedOnboarding,
+              cards: data.cards,
+              transactions: data.transactions,
+            })
+
+            localStorage.removeItem('moliya_pending_request_id')
+            if (onVerified) onVerified()
+          }
+        }
+      } catch (err) {
+        console.error('[AUTH] Polling error:', err)
+      }
+    }
+
+    const onTabActive = () => {
+      if (document.visibilityState === 'visible' || document.hasFocus()) {
+        checkVerification()
+      }
+    }
+
+    window.addEventListener('focus', onTabActive)
+    document.addEventListener('visibilitychange', onTabActive)
+
+    // Check immediately on return
+    checkVerification()
+
+    intervalId = setInterval(checkVerification, 1500)
+
+    // Auto-cancel after 2 minutes
+    setTimeout(() => {
+      if (!isFinished) {
+        isFinished = true
+        if (intervalId) clearInterval(intervalId)
+        window.removeEventListener('focus', onTabActive)
+        document.removeEventListener('visibilitychange', onTabActive)
+      }
+    }, 120000)
+
+    return () => {
+      isFinished = true
+      if (intervalId) clearInterval(intervalId)
+      window.removeEventListener('focus', onTabActive)
+      document.removeEventListener('visibilitychange', onTabActive)
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Start Telegram Login
+  // On mobile: uses window.location.href (the only reliable approach)
+  // but saves requestId to localStorage so polling resumes on return
+  // ═══════════════════════════════════════════════════════════
   const startTelegramLogin = async (onVerified?: () => void) => {
     const requestId = typeof crypto !== 'undefined' && crypto.randomUUID
       ? crypto.randomUUID()
@@ -361,21 +505,28 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const botUrl = `https://t.me/moliya_v2bot?start=req_${requestId}`;
     const tgDeepLink = `tg://resolve?domain=moliya_v2bot&start=req_${requestId}`;
 
+    // Save the request ID BEFORE navigating away so we can resume on return
+    localStorage.setItem('moliya_pending_request_id', requestId)
+
+    // Register with backend first
+    fetch('/api/auth/create-login-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestId }),
+    }).catch(() => {});
+
+    // Start polling immediately (works when desktop, also works when page isn't destroyed)
+    resumePolling(requestId, onVerified)
+
     try {
       const isMobile = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
       if (isMobile) {
-        // FIX: Use window.open() instead of window.location.href to keep the page alive
-        // so that the polling continues even after Telegram opens
-        const opened = window.open(tgDeepLink, '_blank');
-        if (!opened) {
-          // Fallback: try the https URL which is more likely to work with window.open
-          const opened2 = window.open(botUrl, '_blank');
-          if (!opened2) {
-            // Last resort: use href but the polling might break — this is the old broken behavior
-            window.location.href = botUrl;
-          }
-        }
+        // On mobile, window.open() is blocked by popup blockers.
+        // window.location.href is the only reliable way to open Telegram.
+        // The requestId is saved in localStorage so polling resumes when user returns.
+        window.location.href = tgDeepLink;
       } else {
+        // On desktop, open in new tab
         const link = document.createElement('a');
         link.href = botUrl;
         link.target = '_blank';
@@ -385,91 +536,20 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         document.body.removeChild(link);
       }
     } catch {
-      window.open(botUrl, '_blank') || (window.location.href = botUrl);
+      window.location.href = botUrl;
     }
 
-    // Register with backend
-    fetch('/api/auth/create-login-request', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ requestId }),
-    }).catch(() => {});
-
-    let intervalId: any = null;
-    let isFinished = false;
-
-    const checkVerification = async () => {
-      if (isFinished) return;
-      try {
-        const res = await fetch(`/api/auth/check-login-request?requestId=${requestId}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.status === 'VERIFIED' && data.userId) {
-            isFinished = true;
-            if (intervalId) clearInterval(intervalId);
-            window.removeEventListener('focus', onTabActive);
-            document.removeEventListener('visibilitychange', onTabActive);
-
-            // Set real Supabase Auth session if available
-            if (data.access_token && data.refresh_token) {
-              await setSupabaseSession(data.access_token, data.refresh_token)
-            }
-
-            setUserId(data.userId);
-            localStorage.setItem('user_id_v1', data.userId);
-            if (data.sessionToken) {
-              localStorage.setItem('user_session_token_v1', data.sessionToken);
-            }
-            localStorage.setItem('user_logged_in_v1', 'true');
-
-            const currentOnboarding = JSON.parse(localStorage.getItem('user_onboarding_v1') || '{}');
-            const savedLang = localStorage.getItem('user_selected_language_v1');
-            const updatedOnboarding = {
-              ...currentOnboarding,
-              ...(data.onboarding || {}),
-              completed: true,
-              language: savedLang || data.onboarding?.language || currentOnboarding.language || 'uz',
-              phone: data.phone || data.onboarding?.phone || currentOnboarding.phone || '',
-            };
-
-            setOnboarding(updatedOnboarding);
-            localStorage.setItem('user_onboarding_v1', JSON.stringify(updatedOnboarding));
-
-            window.dispatchEvent(new Event('user_logged_in_updated'));
-            if (onVerified) onVerified();
-          }
-        }
-      } catch (err) {
-        console.error('[AUTH] Polling error:', err);
+    return {
+      requestId,
+      cancel: () => {
+        localStorage.removeItem('moliya_pending_request_id')
       }
     };
-
-    const onTabActive = () => {
-      if (document.visibilityState === 'visible' || document.hasFocus()) {
-        checkVerification();
-      }
-    };
-
-    window.addEventListener('focus', onTabActive);
-    document.addEventListener('visibilitychange', onTabActive);
-
-    intervalId = setInterval(checkVerification, 1000);
-
-    const cancel = () => {
-      isFinished = true;
-      if (intervalId) clearInterval(intervalId);
-      window.removeEventListener('focus', onTabActive);
-      document.removeEventListener('visibilitychange', onTabActive);
-    };
-
-    setTimeout(() => {
-      cancel();
-    }, 120000);
-
-    return { requestId, cancel };
   };
 
-  // 3. Supabase Real-Time User & Data Syncing
+  // ═══════════════════════════════════════════════════════════
+  // Supabase Real-Time User & Data Syncing
+  // ═══════════════════════════════════════════════════════════
   useEffect(() => {
     if (!userId || !isAuthReady) return;
 
@@ -527,7 +607,9 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     };
   }, [userId, isAuthReady]);
 
+  // ═══════════════════════════════════════════════════════════
   // Context Functions with Supabase Persistence
+  // ═══════════════════════════════════════════════════════════
   const updateOnboarding = async (newData: Partial<OnboardingResult>) => {
     const updated = onboarding ? { ...onboarding, ...newData } : (newData as OnboardingResult);
     setOnboarding(updated);
@@ -646,6 +728,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     localStorage.removeItem('user_session_token_v1');
     localStorage.removeItem('user_id_v1');
     localStorage.removeItem('user_onboarding_v1');
+    localStorage.removeItem('moliya_pending_request_id');
     setUserId(null);
     setOnboarding(null);
     setCards([]);

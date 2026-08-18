@@ -71,8 +71,20 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone
       updated_at: now.toISOString()
     }, { onConflict: 'id' });
 
+    // 4. Generate short-lived exchange code (5-minute TTL, single-use)
+    const exchangeCode = crypto.randomBytes(24).toString('hex'); // 48-char random code
+    const codeExpiresAt = new Date(now.getTime() + 5 * 60 * 1000).toISOString(); // 5 minutes
+    await supabase.from('users').upsert({
+      id: `exchange_${exchangeCode}`,
+      telegram_id: tgId,
+      session_token: sessionToken,
+      login_request_status: 'VALID',
+      session_expires_at: codeExpiresAt,
+      updated_at: now.toISOString()
+    }, { onConflict: 'id' });
+
     console.log('[BOT] ✅ Login request verified in Supabase for user:', userId);
-    return { sessionToken, userId, onboarding: updatedOnboarding };
+    return { sessionToken, userId, onboarding: updatedOnboarding, exchangeCode };
   } catch (err) {
     console.error('[BOT] ❌ Error verifying login request:', err);
     return null;
@@ -168,8 +180,8 @@ async function checkAndIncrementAiLimitAsync(fromUser: any): Promise<{ allowed: 
   }
 }
 
-const getCleanInlineKeyboard = (sessionToken?: string) => {
-  const urlWithAuth = sessionToken ? `${appUrl}?s=${sessionToken}` : appUrl;
+const getCleanInlineKeyboard = (exchangeCode?: string) => {
+  const urlWithAuth = exchangeCode ? `${appUrl}?code=${exchangeCode}` : appUrl;
   return {
     inline_keyboard: [
       [
@@ -617,8 +629,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const successText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n✅ <b>Profilingiz muvaffaqiyatli tasdiqlandi!</b> 🚀\nBrauzeringizdagi Moliya AI sahifasiga qaytsangiz, profilingiz avtomatik ochiladi.\n\n👇 <i>Ilovani to'g'ridan-to'g'ri ochish:</i>`;
 
         const verifyResult = await verifyAndMarkLoginRequest(requestId, fromUser);
-        const token = verifyResult?.sessionToken || undefined;
-        await sendTelegramMessage(chatId, successText, getCleanInlineKeyboard(token));
+        const code = verifyResult?.exchangeCode || undefined;
+        await sendTelegramMessage(chatId, successText, getCleanInlineKeyboard(code));
         return res.status(200).json({ status: 'ok' });
       }
 
