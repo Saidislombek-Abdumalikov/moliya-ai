@@ -402,6 +402,8 @@ export default function Onboarding({ onComplete }: Props) {
                     <input
                       autoFocus
                       type="tel"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
                       placeholder={t.enterAmount}
                       value={customGoal ? Number(customGoal).toLocaleString('en-US').replace(/,/g, ' ') : ''}
                       onClick={(e) => e.stopPropagation()}

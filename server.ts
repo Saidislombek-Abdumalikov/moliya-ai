@@ -80,8 +80,11 @@ async function startServer() {
 
       await supabase.from('users').upsert({
         id: `req_${cleanId}`,
-        login_request_id: cleanId,
-        login_request_status: 'PENDING',
+        onboarding: {
+          login_request_id: cleanId,
+          login_request_status: 'PENDING',
+          created_at: nowIso
+        },
         updated_at: nowIso
       }, { onConflict: 'id' });
 
@@ -108,14 +111,18 @@ async function startServer() {
         .maybeSingle();
 
       if (!error && reqDoc) {
-        if (reqDoc.login_request_status === 'VERIFIED' && reqDoc.telegram_id && reqDoc.session_token) {
-          const userId = `moliya_user_tg_${reqDoc.telegram_id}`;
+        const status = reqDoc.onboarding?.login_request_status || reqDoc.login_request_status;
+        const tgId = reqDoc.telegram_id || reqDoc.onboarding?.telegram_id;
+        const sessionToken = reqDoc.onboarding?.session_token || reqDoc.session_token;
+
+        if (status === 'VERIFIED' && tgId && sessionToken) {
+          const userId = `moliya_user_tg_${tgId}`;
           const { data: userDoc } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
 
           res.json({
             status: "VERIFIED",
             userId,
-            sessionToken: reqDoc.session_token,
+            sessionToken,
             onboarding: userDoc?.onboarding || null,
             phone: userDoc?.phone || "",
             cards: userDoc?.cards || [],
@@ -123,7 +130,7 @@ async function startServer() {
           });
           return;
         }
-        res.json({ status: reqDoc.login_request_status || "PENDING" });
+        res.json({ status: status || "PENDING" });
         return;
       }
       res.json({ status: "PENDING" });
@@ -144,11 +151,12 @@ async function startServer() {
       const { data: userDoc, error } = await supabase
         .from('users')
         .select('*')
-        .eq('session_token', sessionToken)
+        .eq('onboarding->>session_token', sessionToken)
         .maybeSingle();
 
       if (!error && userDoc) {
-        if (userDoc.session_expires_at && new Date(userDoc.session_expires_at).getTime() < Date.now()) {
+        const expiresAt = userDoc.onboarding?.session_expires_at || userDoc.onboarding?.expires_at;
+        if (expiresAt && new Date(expiresAt).getTime() < Date.now()) {
           res.json({ valid: false, reason: "Session expired" });
           return;
         }
@@ -216,6 +224,12 @@ async function startServer() {
         telegramId: tgId,
       };
 
+      const onboardingPayload = {
+        ...updatedOnboarding,
+        session_token: sessionToken,
+        session_expires_at: expiresAt,
+      };
+
       await supabase.from('users').upsert({
         id: userId,
         name: tgName,
@@ -224,9 +238,7 @@ async function startServer() {
         phone: existingUser?.phone || null,
         language: updatedOnboarding.language,
         is_premium: existingUser?.is_premium || false,
-        session_token: sessionToken,
-        session_expires_at: expiresAt,
-        onboarding: updatedOnboarding,
+        onboarding: onboardingPayload,
         updated_at: now.toISOString()
       }, { onConflict: 'id' });
 
@@ -271,13 +283,14 @@ async function startServer() {
         return;
       }
 
-      if (otpDoc.session_expires_at && new Date(otpDoc.session_expires_at).getTime() < Date.now()) {
+      const expiresAtStr = otpDoc.onboarding?.expires_at || otpDoc.session_expires_at;
+      if (expiresAtStr && new Date(expiresAtStr).getTime() < Date.now()) {
         await supabase.from('users').delete().eq('id', otpId);
         res.status(400).json({ success: false, errorType: 'EXPIRED_CODE', error: "Kod muddati tugagan. Yangi kod oling." });
         return;
       }
 
-      const tgId = String(otpDoc.telegram_id || otpDoc.login_request_id || '');
+      const tgId = String(otpDoc.telegram_id || otpDoc.onboarding?.telegram_id || '');
       if (!tgId) {
         await supabase.from('users').delete().eq('id', otpId);
         res.status(400).json({ success: false, errorType: 'INVALID_CODE', error: "Kod ma'lumotlarida xatolik yuz berdi. Yangi kod oling." });
@@ -296,7 +309,7 @@ async function startServer() {
       const now = new Date();
       const expiresAt = new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString();
       const randomHex = crypto.randomBytes(16).toString('hex');
-      const sessionToken = existingUser?.session_token || ('sess_' + randomHex);
+      const sessionToken = existingUser?.onboarding?.session_token || ('sess_' + randomHex);
 
       const tgName = otpDoc.name || existingUser?.name || 'Telegram Foydalanuvchi';
       const tgUsername = otpDoc.telegram || existingUser?.telegram || '@moliya_user';
@@ -318,7 +331,9 @@ async function startServer() {
           telegram: tgUsername,
           telegramId: tgId,
           language: existingUser.language || existingUser.onboarding?.language || 'uz',
-          completed: onboardingCompleted
+          completed: onboardingCompleted,
+          session_token: sessionToken,
+          session_expires_at: expiresAt,
         };
         userCards = Array.isArray(existingUser.cards) ? existingUser.cards : [];
         userTransactions = Array.isArray(existingUser.transactions) ? existingUser.transactions : [];
@@ -330,8 +345,6 @@ async function startServer() {
           telegram: tgUsername,
           telegram_id: tgId,
           phone: userPhone || existingUser.phone || null,
-          session_token: sessionToken,
-          session_expires_at: expiresAt,
           onboarding: updatedOnboarding,
           updated_at: now.toISOString()
         }).eq('id', userId);
@@ -348,7 +361,9 @@ async function startServer() {
           monthlyGoal: 1000000,
           monthlyIncome: 0,
           isPremium: false,
-          budgets: {}
+          budgets: {},
+          session_token: sessionToken,
+          session_expires_at: expiresAt,
         };
 
         await supabase.from('users').insert({
@@ -359,8 +374,6 @@ async function startServer() {
           phone: userPhone || null,
           language: 'uz',
           is_premium: false,
-          session_token: sessionToken,
-          session_expires_at: expiresAt,
           onboarding: updatedOnboarding,
           cards: [],
           transactions: [],
@@ -369,7 +382,7 @@ async function startServer() {
         });
       }
 
-      const authSession = await createSupabaseAuthSession(tgId, sessionToken, tgName, tgUsername);
+      const authSession = await createSupabaseAuthSession(tgId, { name: tgName, telegram: tgUsername });
 
       res.status(200).json({
         success: true,
@@ -602,9 +615,12 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
       name: tgName,
       telegram: tgUsername,
       phone: userDoc?.phone || userDoc?.onboarding?.phone || null,
-      login_request_id: tgId,
-      login_request_status: 'PENDING_OTP',
-      session_expires_at: expiresAt,
+      onboarding: {
+        otp_code: otpCode,
+        telegram_id: tgId,
+        login_request_status: 'PENDING_OTP',
+        expires_at: expiresAt
+      },
       updated_at: now.toISOString()
     }, { onConflict: 'id' });
 
@@ -854,6 +870,12 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
               telegramId: tgId,
             };
 
+            const onboardingPayload = {
+              ...updatedOnboarding,
+              session_token: sessionToken,
+              session_expires_at: expiresAt,
+            };
+
             await supabase.from('users').upsert({
               id: userId,
               name: tgName,
@@ -862,19 +884,22 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
               phone: existingUser?.phone || null,
               language: updatedOnboarding.language,
               is_premium: existingUser?.is_premium || false,
-              session_token: sessionToken,
-              session_expires_at: expiresAt,
-              onboarding: updatedOnboarding,
+              onboarding: onboardingPayload,
               updated_at: now.toISOString()
             }, { onConflict: 'id' });
 
             const cleanId = requestId.replace(/^req_/, '').trim();
             await supabase.from('users').upsert({
               id: `req_${cleanId}`,
-              login_request_id: cleanId,
-              login_request_status: 'VERIFIED',
               telegram_id: tgId,
-              session_token: sessionToken,
+              name: tgName,
+              telegram: tgUsername,
+              onboarding: {
+                login_request_id: cleanId,
+                login_request_status: 'VERIFIED',
+                telegram_id: tgId,
+                session_token: sessionToken,
+              },
               updated_at: now.toISOString()
             }, { onConflict: 'id' });
           } catch (e) {

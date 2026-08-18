@@ -1,7 +1,7 @@
 {
   "name": "Moliya AI",
   "private": true,
-  "version": "3.9.0",
+  "version": "3.10.0",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "format": "oxfmt",
     "lint": "tsc --noEmit",
+    "test": "tsx tests/auth_suite.ts",
     "start": "node dist/server.cjs",
     "cap:sync": "cap sync",
     "cap:open": "cap open android",

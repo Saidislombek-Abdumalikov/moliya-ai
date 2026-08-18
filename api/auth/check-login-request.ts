@@ -27,20 +27,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .maybeSingle();
 
     if (!error && reqDoc) {
-      if (reqDoc.login_request_status === 'VERIFIED' && reqDoc.telegram_id && reqDoc.session_token) {
-        const userId = `moliya_user_tg_${reqDoc.telegram_id}`;
+      const status = reqDoc.onboarding?.login_request_status || reqDoc.login_request_status;
+      const tgId = reqDoc.telegram_id || reqDoc.onboarding?.telegram_id;
+      const sessionToken = reqDoc.onboarding?.session_token || reqDoc.session_token;
+
+      if (status === 'VERIFIED' && tgId && sessionToken) {
+        const userId = `moliya_user_tg_${tgId}`;
         const { data: userDoc } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
 
         // Create real Supabase Auth session
         const authSession = await createSupabaseAuthSession(
-          reqDoc.telegram_id,
+          String(tgId),
           { name: userDoc?.name || '', telegram: userDoc?.telegram || '' }
         );
 
         return res.status(200).json({
           status: 'VERIFIED',
           userId,
-          sessionToken: reqDoc.session_token,
+          sessionToken,
           // Real Supabase Auth tokens
           access_token: authSession?.access_token || null,
           refresh_token: authSession?.refresh_token || null,
@@ -50,7 +54,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           transactions: userDoc?.transactions || []
         });
       }
-      return res.status(200).json({ status: reqDoc.login_request_status || 'PENDING' });
+      return res.status(200).json({ status: status || 'PENDING' });
     }
 
     return res.status(200).json({ status: 'PENDING' });

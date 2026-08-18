@@ -23,8 +23,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Upsert pending login request to Supabase users table
     await supabase.from('users').upsert({
       id: `req_${cleanId}`,
-      login_request_id: cleanId,
-      login_request_status: 'PENDING',
+      onboarding: {
+        login_request_id: cleanId,
+        login_request_status: 'PENDING',
+        created_at: nowIso
+      },
       updated_at: nowIso
     }, { onConflict: 'id' });
 

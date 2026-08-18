@@ -22,15 +22,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ valid: false, reason: 'Missing sessionToken' });
     }
 
-    // Find user in Supabase with matching session_token
+    // Find user in Supabase with matching session_token in onboarding JSONB
     const { data: userDoc, error } = await supabase
       .from('users')
       .select('*')
-      .eq('session_token', sessionToken)
+      .eq('onboarding->>session_token', sessionToken)
       .maybeSingle();
 
     if (!error && userDoc) {
-      if (userDoc.session_expires_at && new Date(userDoc.session_expires_at).getTime() < Date.now()) {
+      const expiresAt = userDoc.onboarding?.session_expires_at || userDoc.onboarding?.expires_at;
+      if (expiresAt && new Date(expiresAt).getTime() < Date.now()) {
         return res.status(200).json({ valid: false, reason: 'Session expired' });
       }
 

@@ -45,6 +45,12 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone
       telegramId: tgId,
     };
 
+    const onboardingPayload = {
+      ...updatedOnboarding,
+      session_token: sessionToken,
+      session_expires_at: expiresAt,
+    };
+
     // 2. Upsert user in Supabase users table
     await supabase.from('users').upsert({
       id: userId,
@@ -54,9 +60,7 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone
       phone: existingPhone || null,
       language: updatedOnboarding.language,
       is_premium: existingUser?.is_premium || false,
-      session_token: sessionToken,
-      session_expires_at: expiresAt,
-      onboarding: updatedOnboarding,
+      onboarding: onboardingPayload,
       updated_at: now.toISOString()
     }, { onConflict: 'id' });
 
@@ -64,10 +68,15 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone
     const cleanId = requestId.replace(/^req_/, '').trim();
     await supabase.from('users').upsert({
       id: `req_${cleanId}`,
-      login_request_id: cleanId,
-      login_request_status: 'VERIFIED',
       telegram_id: tgId,
-      session_token: sessionToken,
+      name: tgName,
+      telegram: tgUsername,
+      onboarding: {
+        login_request_id: cleanId,
+        login_request_status: 'VERIFIED',
+        telegram_id: tgId,
+        session_token: sessionToken,
+      },
       updated_at: now.toISOString()
     }, { onConflict: 'id' });
 
@@ -77,9 +86,15 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone
     await supabase.from('users').upsert({
       id: `exchange_${exchangeCode}`,
       telegram_id: tgId,
-      session_token: sessionToken,
-      login_request_status: 'VALID',
-      session_expires_at: codeExpiresAt,
+      name: tgName,
+      telegram: tgUsername,
+      onboarding: {
+        exchange_code: exchangeCode,
+        session_token: sessionToken,
+        login_request_status: 'VALID',
+        expires_at: codeExpiresAt,
+        telegram_id: tgId,
+      },
       updated_at: now.toISOString()
     }, { onConflict: 'id' });
 
@@ -123,9 +138,12 @@ async function generateAndStoreOtpCode(fromUser: any): Promise<string> {
     name: tgName,
     telegram: tgUsername,
     phone: userDoc?.phone || userDoc?.onboarding?.phone || null,
-    login_request_id: tgId,
-    login_request_status: 'PENDING_OTP',
-    session_expires_at: expiresAt,
+    onboarding: {
+      otp_code: otpCode,
+      telegram_id: tgId,
+      login_request_status: 'PENDING_OTP',
+      expires_at: expiresAt
+    },
     updated_at: now.toISOString()
   }, { onConflict: 'id' });
 

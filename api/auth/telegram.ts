@@ -108,6 +108,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       telegramId: tgId,
     };
 
+    const onboardingPayload = {
+      ...updatedOnboarding,
+      session_token: sessionToken,
+      session_expires_at: expiresAt,
+    };
+
     // 2. Upsert user in Supabase
     await supabase.from('users').upsert({
       id: userId,
@@ -117,9 +123,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       phone: existingUser?.phone || null,
       language: updatedOnboarding.language,
       is_premium: existingUser?.is_premium || false,
-      session_token: sessionToken,
-      session_expires_at: expiresAt,
-      onboarding: updatedOnboarding,
+      onboarding: onboardingPayload,
       updated_at: now.toISOString()
     }, { onConflict: 'id' });
 

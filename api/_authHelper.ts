@@ -22,13 +22,19 @@ function generateAuthPassword(tgId: string): string {
  */
 export async function createSupabaseAuthSession(
   tgId: string,
-  metadata?: { name?: string; telegram?: string }
+  metadataOrToken?: string | { name?: string; telegram?: string },
+  name?: string,
+  telegram?: string
 ): Promise<{
   access_token: string;
   refresh_token: string;
   expires_in: number;
   auth_user_id: string;
 } | null> {
+  const meta: { name: string; telegram: string } = {
+    name: typeof metadataOrToken === 'object' ? (metadataOrToken?.name || '') : (name || ''),
+    telegram: typeof metadataOrToken === 'object' ? (metadataOrToken?.telegram || '') : (telegram || '')
+  };
   const email = generateAuthEmail(tgId);
   const password = generateAuthPassword(tgId);
 
@@ -40,8 +46,8 @@ export async function createSupabaseAuthSession(
       email_confirm: true,
       user_metadata: {
         telegram_id: tgId,
-        name: metadata?.name || '',
-        telegram: metadata?.telegram || '',
+        name: meta.name || '',
+        telegram: meta.telegram || '',
         provider: 'telegram'
       }
     });
@@ -59,8 +65,8 @@ export async function createSupabaseAuthSession(
               email_confirm: true,
               user_metadata: {
                 telegram_id: tgId,
-                name: metadata?.name || existingUser.user_metadata?.name || '',
-                telegram: metadata?.telegram || existingUser.user_metadata?.telegram || '',
+                name: meta.name || existingUser.user_metadata?.name || '',
+                telegram: meta.telegram || existingUser.user_metadata?.telegram || '',
                 provider: 'telegram'
               }
             });

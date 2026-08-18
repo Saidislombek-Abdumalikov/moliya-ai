@@ -96,7 +96,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // 2. Check 10-minute expiry
-    if (otpDoc.session_expires_at && new Date(otpDoc.session_expires_at).getTime() < Date.now()) {
+    const expiresAtStr = otpDoc.onboarding?.expires_at || otpDoc.session_expires_at;
+    if (expiresAtStr && new Date(expiresAtStr).getTime() < Date.now()) {
       await supabase.from('users').delete().eq('id', otpId);
       return res.status(400).json({
         success: false,
@@ -105,7 +106,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    const tgId = String(otpDoc.telegram_id || otpDoc.login_request_id || '');
+    const tgId = String(otpDoc.telegram_id || otpDoc.onboarding?.telegram_id || '');
     if (!tgId) {
       await supabase.from('users').delete().eq('id', otpId);
       return res.status(400).json({
@@ -132,7 +133,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString();
     const randomHex = Array.from({ length: 32 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
-    const sessionToken = existingUser?.session_token || ('sess_' + randomHex);
+    const sessionToken = existingUser?.onboarding?.session_token || ('sess_' + randomHex);
 
     const tgName = otpDoc.name || existingUser?.name || 'Telegram Foydalanuvchi';
     const tgUsername = otpDoc.telegram || existingUser?.telegram || '@moliya_user';
@@ -154,7 +155,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         telegram: tgUsername,
         telegramId: tgId,
         language: existingUser.language || existingUser.onboarding?.language || 'uz',
-        completed: onboardingCompleted
+        completed: onboardingCompleted,
+        session_token: sessionToken,
+        session_expires_at: expiresAt,
       };
       userCards = Array.isArray(existingUser.cards) ? existingUser.cards : [];
       userTransactions = Array.isArray(existingUser.transactions) ? existingUser.transactions : [];
@@ -166,8 +169,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         telegram: tgUsername,
         telegram_id: tgId,
         phone: userPhone || existingUser.phone || null,
-        session_token: sessionToken,
-        session_expires_at: expiresAt,
         onboarding: updatedOnboarding,
         updated_at: now.toISOString()
       }).eq('id', userId);
@@ -184,7 +185,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         monthlyGoal: 1000000,
         monthlyIncome: 0,
         isPremium: false,
-        budgets: {}
+        budgets: {},
+        session_token: sessionToken,
+        session_expires_at: expiresAt,
       };
 
       await supabase.from('users').insert({
@@ -195,8 +198,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         phone: userPhone || null,
         language: 'uz',
         is_premium: false,
-        session_token: sessionToken,
-        session_expires_at: expiresAt,
         onboarding: updatedOnboarding,
         cards: [],
         transactions: [],
@@ -208,9 +209,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // 5. Generate Supabase Auth session
     const authSession = await createSupabaseAuthSession(
       tgId,
-      sessionToken,
-      tgName,
-      tgUsername
+      { name: tgName, telegram: tgUsername }
     );
 
     return res.status(200).json({

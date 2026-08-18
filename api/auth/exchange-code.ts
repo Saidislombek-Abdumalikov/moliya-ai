@@ -45,27 +45,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // 2. Check expiry (5-minute TTL)
-    if (codeDoc.session_expires_at && new Date(codeDoc.session_expires_at).getTime() < Date.now()) {
+    const expiresAtStr = codeDoc.onboarding?.expires_at || codeDoc.session_expires_at;
+    if (expiresAtStr && new Date(expiresAtStr).getTime() < Date.now()) {
       // Delete expired code
       await supabase.from('users').delete().eq('id', codeId);
       return res.status(400).json({ error: 'Code expired' });
     }
 
     // 3. Check if code was already used
-    if (codeDoc.login_request_status === 'USED') {
+    const status = codeDoc.onboarding?.login_request_status || codeDoc.login_request_status;
+    if (status === 'USED') {
       return res.status(400).json({ error: 'Code already used' });
     }
 
-    const tgId = codeDoc.telegram_id;
+    const tgId = codeDoc.telegram_id || codeDoc.onboarding?.telegram_id;
     if (!tgId) {
       return res.status(400).json({ error: 'Invalid code: no telegram_id' });
     }
 
-    // 4. Mark code as used immediately (single-use)
-    await supabase.from('users').update({
-      login_request_status: 'USED',
-      updated_at: new Date().toISOString()
-    }).eq('id', codeId);
+    // 4. Delete code immediately upon use (enforces single-use)
+    await supabase.from('users').delete().eq('id', codeId);
 
     // 5. Get the real user document
     const userId = `moliya_user_tg_${tgId}`;
@@ -90,7 +89,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       access_token: authSession.access_token,
       refresh_token: authSession.refresh_token,
       userId,
-      sessionToken: userDoc?.session_token || codeDoc.session_token || null,
+      sessionToken: userDoc?.onboarding?.session_token || codeDoc.onboarding?.session_token || null,
       onboarding: userDoc?.onboarding || null,
       cards: userDoc?.cards || [],
       transactions: userDoc?.transactions || [],
