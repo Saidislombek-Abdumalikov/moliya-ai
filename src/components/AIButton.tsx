@@ -2,6 +2,7 @@ import { useState, useRef } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 import { useFinance } from '../FinanceContext'
 import { parseAITransaction } from '../utils/aiParser'
+import { getApiUrl } from '../utils/apiUrl'
 
 type EntryType = 'expense' | 'income' | 'debt' | 'lending'
 
@@ -40,7 +41,7 @@ const voicePrompts: Record<EntryType, string> = {
 
 async function parseAIText(text: string, cardsList: any[] = [], userId?: string): Promise<{ type: EntryType; amount: string; category: string; note: string; title?: string; debtWho?: string; date?: string; cardId?: string }> {
   try {
-    const res = await fetch('/api/parse-expense', {
+    const res = await fetch(getApiUrl('/api/parse-expense'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, cards: cardsList, userId })
@@ -94,7 +95,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
       reader.onload = async () => {
         const base64Data = reader.result as string
         try {
-          const res = await fetch('/api/parse-receipt', {
+          const res = await fetch(getApiUrl('/api/parse-receipt'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ base64Image: base64Data, mimeType: file.type })

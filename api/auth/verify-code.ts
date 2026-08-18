@@ -115,30 +115,66 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const tgUsername = otpDoc.telegram || existingUser?.telegram || '@moliya_user';
     const userPhone = otpDoc.phone || existingUser?.phone || existingUser?.onboarding?.phone || '';
 
-    const updatedOnboarding = {
-      ...(existingUser?.onboarding || {}),
-      completed: true,
-      language: existingUser?.language || existingUser?.onboarding?.language || 'uz',
-      name: tgName,
-      phone: userPhone,
-      telegram: tgUsername,
-      telegramId: tgId,
-    };
+    let updatedOnboarding: any;
+    let userCards: any[] = [];
+    let userTransactions: any[] = [];
+    let isPremium = false;
 
-    // Upsert to ensure profile is active and session token is valid
-    await supabase.from('users').upsert({
-      id: userId,
-      name: tgName,
-      telegram: tgUsername,
-      telegram_id: tgId,
-      phone: userPhone || null,
-      language: updatedOnboarding.language,
-      is_premium: existingUser?.is_premium || false,
-      session_token: sessionToken,
-      session_expires_at: expiresAt,
-      onboarding: updatedOnboarding,
-      updated_at: now.toISOString()
-    }, { onConflict: 'id' });
+    if (existingUser) {
+      updatedOnboarding = {
+        ...(existingUser.onboarding || {}),
+        completed: true,
+        language: existingUser.language || existingUser.onboarding?.language || userPhone ? 'uz' : 'uz',
+        name: tgName,
+        phone: userPhone || existingUser.phone || '',
+        telegram: tgUsername,
+        telegramId: tgId,
+      };
+      userCards = Array.isArray(existingUser.cards) ? existingUser.cards : [];
+      userTransactions = Array.isArray(existingUser.transactions) ? existingUser.transactions : [];
+      isPremium = Boolean(existingUser.is_premium);
+
+      await supabase.from('users').update({
+        name: tgName,
+        telegram: tgUsername,
+        telegram_id: tgId,
+        phone: userPhone || existingUser.phone || null,
+        session_token: sessionToken,
+        session_expires_at: expiresAt,
+        onboarding: updatedOnboarding,
+        updated_at: now.toISOString()
+      }).eq('id', userId);
+    } else {
+      updatedOnboarding = {
+        completed: true,
+        language: 'uz',
+        name: tgName,
+        phone: userPhone,
+        telegram: tgUsername,
+        telegramId: tgId,
+        monthlyGoal: 1000000,
+        monthlyIncome: 0,
+        isPremium: false,
+        budgets: {}
+      };
+
+      await supabase.from('users').insert({
+        id: userId,
+        name: tgName,
+        telegram: tgUsername,
+        telegram_id: tgId,
+        phone: userPhone || null,
+        language: 'uz',
+        is_premium: false,
+        session_token: sessionToken,
+        session_expires_at: expiresAt,
+        onboarding: updatedOnboarding,
+        cards: [],
+        transactions: [],
+        created_at: now.toISOString(),
+        updated_at: now.toISOString()
+      });
+    }
 
     // 5. Generate Supabase Auth session
     const authSession = await createSupabaseAuthSession(
@@ -153,9 +189,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       access_token: authSession?.access_token || null,
       refresh_token: authSession?.refresh_token || null,
       onboarding: updatedOnboarding,
-      cards: existingUser?.cards || [],
-      transactions: existingUser?.transactions || [],
-      isPremium: existingUser?.is_premium || false
+      cards: userCards,
+      transactions: userTransactions,
+      isPremium
     });
   } catch (error: any) {
     console.error('[VERIFY-CODE] Error:', error);

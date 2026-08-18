@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react'
 import { supabase } from './supabase'
 import type { OnboardingResult } from './components/Onboarding'
+import { getApiUrl } from './utils/apiUrl'
 
 export interface Card {
   id: string
@@ -269,7 +270,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         if (exchangeCode && exchangeCode.length >= 16) {
           try {
             console.log('[AUTH] Found ?code= URL parameter, exchanging...')
-            const res = await fetch('/api/auth/exchange-code', {
+            const res = await fetch(getApiUrl('/api/auth/exchange-code'), {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ code: exchangeCode }),
@@ -306,7 +307,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         if (sessionParam) {
           try {
             console.log('[AUTH] Found ?s= URL parameter, validating session token...')
-            const res = await fetch('/api/auth/validate-session', {
+            const res = await fetch(getApiUrl('/api/auth/validate-session'), {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ sessionToken: sessionParam }),
@@ -334,7 +335,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         const reqParam = urlParams.get('req')
         if (reqParam) {
           try {
-            const res = await fetch(`/api/auth/check-login-request?requestId=${reqParam}`)
+            const res = await fetch(getApiUrl(`/api/auth/check-login-request?requestId=${reqParam}`))
             if (res.ok) {
               const data = await res.json()
               if (data.status === 'VERIFIED' && data.userId) {
@@ -358,7 +359,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         const sessionToken = localStorage.getItem('user_session_token_v1')
         if (sessionToken) {
           try {
-            const res = await fetch('/api/auth/validate-session', {
+            const res = await fetch(getApiUrl('/api/auth/validate-session'), {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ sessionToken }),
@@ -395,7 +396,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         if (tg && (initData || initDataUnsafe?.user?.id)) {
           try {
             console.log('[AUTH] Telegram Mini App detected, verifying initData...')
-            const res = await fetch('/api/auth/telegram', {
+            const res = await fetch(getApiUrl('/api/auth/telegram'), {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ initData, initDataUnsafe })
@@ -478,7 +479,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const checkVerification = async () => {
       if (isFinished) return
       try {
-        const res = await fetch(`/api/auth/check-login-request?requestId=${requestId}`)
+        const res = await fetch(getApiUrl(`/api/auth/check-login-request?requestId=${requestId}`))
         if (res.ok) {
           const data = await res.json()
           if (data.status === 'VERIFIED' && data.userId) {
@@ -568,7 +569,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     localStorage.setItem('moliya_pending_request_id', requestId)
 
     // Register with backend first
-    fetch('/api/auth/create-login-request', {
+    fetch(getApiUrl('/api/auth/create-login-request'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ requestId }),
@@ -676,7 +677,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         return { success: false, error: "Kod 6 ta raqamdan iborat bo'lishi kerak" }
       }
 
-      const res = await fetch('/api/auth/verify-code', {
+      const res = await fetch(getApiUrl('/api/auth/verify-code'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code: cleanCode }),
