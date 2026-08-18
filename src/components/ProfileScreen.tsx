@@ -523,6 +523,34 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
   // Notifications states
   const [notifOpts, setNotifOpts] = useState<any>(() => onboarding?.notifications || { opt1: true, opt2: true, opt3: false })
 
+  // Security & PIN states
+  const [pinEnabled, setPinEnabled] = useState<boolean>(() => {
+    try {
+      const s = localStorage.getItem('user_security_v1')
+      return s ? JSON.parse(s).pinEnabled === true : false
+    } catch {
+      return false
+    }
+  })
+  const [faceIdEnabled, setFaceIdEnabled] = useState<boolean>(() => {
+    try {
+      const s = localStorage.getItem('user_security_v1')
+      return s ? JSON.parse(s).faceIdEnabled !== false : true
+    } catch {
+      return true
+    }
+  })
+  const [pinInput, setPinInput] = useState<string>(() => {
+    try {
+      const s = localStorage.getItem('user_security_v1')
+      return s ? JSON.parse(s).pinCode || '' : ''
+    } catch {
+      return ''
+    }
+  })
+  const [pinConfirmInput, setPinConfirmInput] = useState<string>('')
+  const [securityError, setSecurityError] = useState<string | null>(null)
+
   // Export states
   const [exportFormat, setExportFormat] = useState<'PDF' | 'Excel' | 'CSV'>('PDF')
   const [exportPeriod, setExportPeriod] = useState<'current' | 'last' | 'quarter'>('current')
@@ -1053,14 +1081,13 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
             </svg>
           </div>
 
-
           {/* Payment Methods */}
           <div 
             id="menu_item_payments"
             onClick={() => setActiveModal('payments')}
             style={{
               display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px',
-              cursor: 'pointer',
+              borderBottom: '1px solid #E4E1F4', cursor: 'pointer',
             }}
           >
             <span style={{ fontSize: 18, width: 28, textAlign: 'center' }}>💳</span>
@@ -1074,9 +1101,39 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
               <path d="M5 3L9 7L5 11" stroke="#C4BDE8" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </div>
+
+          {/* Security & PIN Lock */}
+          <div 
+            id="menu_item_security"
+            onClick={() => {
+              setSecurityError(null)
+              setPinConfirmInput('')
+              setActiveModal('security')
+            }}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px',
+              cursor: 'pointer',
+            }}
+          >
+            <span style={{ fontSize: 18, width: 28, textAlign: 'center' }}>🔒</span>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: 14, fontWeight: 600, color: '#1E1A3C' }}>
+                {lang === 'uz' ? 'Xavfsizlik va PIN-kod' : lang === 'uz_cyrl' ? 'Хавфсизлик ва PIN-код' : lang === 'ru' ? 'Безопасность и PIN-код' : 'Security & PIN lock'}
+              </p>
+              <p style={{ fontSize: 11.5, color: '#8B82C4' }}>
+                {pinEnabled 
+                  ? (lang === 'uz' ? 'PIN-kod yoqilgan 🛡️' : lang === 'uz_cyrl' ? 'PIN-код ёқилган 🛡️' : lang === 'ru' ? 'PIN-код включен 🛡️' : 'PIN lock active 🛡️')
+                  : (lang === 'uz' ? "PIN-kod o'chirilgan" : lang === 'uz_cyrl' ? "PIN-код ўчирилган" : lang === 'ru' ? 'PIN-код выключен' : 'PIN lock disabled')}
+              </p>
+            </div>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M5 3L9 7L5 11" stroke="#C4BDE8" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
         </div>
       </motion.div>
 
+      {/* CATEGORY 2: ILOVA VA SOZLAMALAR */}
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
@@ -1161,7 +1218,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
             onClick={() => setActiveModal('help')}
             style={{
               display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px',
-              borderBottom: '1px solid #E4E1F4', cursor: 'pointer',
+              cursor: 'pointer',
             }}
           >
             <span style={{ fontSize: 18, width: 28, textAlign: 'center' }}>❓</span>
@@ -1173,7 +1230,23 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
               <path d="M5 3L9 7L5 11" stroke="#C4BDE8" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </div>
+        </div>
+      </motion.div>
 
+      {/* CATEGORY 3: ULANISHLAR VA EKOTIZIM (DEDICATED CATEGORY) */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, delay: 0.42 }}
+        style={{ padding: '0 20px 20px' }}
+      >
+        <p style={{ fontSize: 11, fontWeight: 700, color: '#B8B0DC', marginBottom: 10, letterSpacing: 0.6 }}>
+          {(lang === 'uz' || lang === 'uz_cyrl') ? (lang === 'uz_cyrl' ? 'УЛАНИШЛАР ВА ЭКОТИЗИМ' : 'ULANISHLAR VA EKOTIZIM') : lang === 'ru' ? 'ПОДКЛЮЧЕНИЯ И ЭКОСИСТЕМА' : 'ECOSYSTEM & INTEGRATIONS'}
+        </p>
+        <div style={{
+          background: '#FAF9FD', borderRadius: 20, border: '1.5px solid #E4E1F4', overflow: 'hidden',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.01)'
+        }}>
           {/* Official Telegram Bot Link */}
           <div 
             id="menu_item_telegram_bot"
@@ -1207,7 +1280,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
             }}
             style={{
               display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px',
-              borderBottom: '1px solid #E4E1F4', cursor: 'pointer',
+              cursor: 'pointer',
             }}
           >
             <span style={{ fontSize: 18, width: 28, textAlign: 'center' }}>🌐</span>
@@ -1223,7 +1296,23 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
               <path d="M5 3L9 7L5 11" stroke="#7C3AED" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </div>
+        </div>
+      </motion.div>
 
+      {/* CATEGORY 4: XAVFLI HUDUD */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, delay: 0.48 }}
+        style={{ padding: '0 20px 30px' }}
+      >
+        <p style={{ fontSize: 11, fontWeight: 700, color: '#B8B0DC', marginBottom: 10, letterSpacing: 0.6 }}>
+          {(lang === 'uz' || lang === 'uz_cyrl') ? (lang === 'uz_cyrl' ? 'ХАВФЛИ ҲУДУД' : 'XAVFLI HUDUD') : lang === 'ru' ? 'ОПАСНАЯ ЗОНА' : 'DANGER ZONE'}
+        </p>
+        <div style={{
+          background: '#FAF9FD', borderRadius: 20, border: '1.5px solid #E4E1F4', overflow: 'hidden',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.01)'
+        }}>
           {/* Option A: Clear My Data */}
           <div 
             id="menu_item_clear_data"
@@ -1258,7 +1347,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
             }}
             style={{
               display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px',
-              cursor: 'pointer',
+              borderBottom: '1px solid #E4E1F4', cursor: 'pointer',
             }}
           >
             <span style={{ fontSize: 18, width: 28, textAlign: 'center' }}>🗑️</span>
@@ -1270,27 +1359,28 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
               <path d="M5 3L9 7L5 11" stroke="#FCA3A3" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </div>
-        </div>
-      </motion.div>
 
-      {/* Logout button */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4, delay: 0.44 }}
-        style={{ padding: '10px 20px 40px' }}
-      >
-        <button
-          onClick={() => setActiveModal('logout_confirm')}
-          style={{
-            width: '100%', padding: '14px', borderRadius: 16,
-            border: '1.5px solid #FCA3A3', background: '#FEF2F2',
-            color: '#DC2626', fontSize: 15, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
-            transition: 'all 0.2s'
-          }}
-        >
-          {t.logout}
-        </button>
+          {/* Logout */}
+          <div 
+            id="menu_item_logout"
+            onClick={() => setActiveModal('logout_confirm')}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px',
+              cursor: 'pointer',
+            }}
+          >
+            <span style={{ fontSize: 18, width: 28, textAlign: 'center' }}>🚪</span>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: 14, fontWeight: 600, color: '#DC2626' }}>{t.logout}</p>
+              <p style={{ fontSize: 11.5, color: '#FCA3A3' }}>
+                {lang === 'uz' ? "Tizimdan chiqish" : lang === 'uz_cyrl' ? "Тизимдан чиқиш" : lang === 'ru' ? 'Выйти из аккаунта' : 'Sign out'}
+              </p>
+            </div>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M5 3L9 7L5 11" stroke="#FCA3A3" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+        </div>
       </motion.div>
 
       {/* Global Simple Toast */}
@@ -1908,6 +1998,228 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
         )}
       </AnimatePresence>
 
+
+      {/* 4. SECURITY & PIN MODAL */}
+      <AnimatePresence>
+        {activeModal === 'security' && (
+          <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setActiveModal(null)}
+              style={{ position: 'absolute', inset: 0, background: 'rgba(30, 26, 60, 0.5)', backdropFilter: 'blur(4px)' }}
+            />
+            <motion.div
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              drag="y"
+              dragConstraints={{ top: 0, bottom: 0 }}
+              dragElastic={0.5}
+              onDragEnd={(_: any, info: any) => {
+                if (info.offset.y > 100) setActiveModal(null)
+              }}
+              transition={{ type: 'spring', damping: 26, stiffness: 220 }}
+              style={{
+                position: 'relative',
+                background: '#FFFFFF', width: '100%', maxWidth: 440,
+                borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: '16px 20px 36px',
+                boxShadow: '0 -10px 40px rgba(0,0,0,0.15)', zIndex: 1001,
+                maxHeight: '90vh', overflowY: 'auto'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <div style={{ width: 28 }} />
+                <div style={{ width: 40, height: 4, background: '#E8E3F8', borderRadius: 2 }} />
+                <button 
+                  id="btn_close_security_modal"
+                  onClick={() => setActiveModal(null)}
+                  style={{
+                    width: 28, height: 28, borderRadius: '50%', background: '#F5F4FA',
+                    border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 14, color: '#5C548A', cursor: 'pointer', fontWeight: 700
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              <h3 style={{ fontSize: 18, fontWeight: 700, color: '#1E1A3C', marginBottom: 18 }}>
+                {t.securityModal.title}
+              </h3>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+                {/* Toggle PIN Lock */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: '#1E1A3C', display: 'block' }}>
+                      {t.securityModal.pinEnable}
+                    </span>
+                    <span style={{ fontSize: 11.5, color: '#8B82C4' }}>
+                      {lang === 'uz' ? "Ilovaga kirishda 4 xonali kod so'rash" : lang === 'uz_cyrl' ? "Иловага киришда 4 хонали код сўраш" : lang === 'ru' ? 'Запрашивать 4-значный PIN при входе' : 'Require 4-digit PIN upon app start'}
+                    </span>
+                  </div>
+                  <button 
+                    id="toggle_pin_enabled"
+                    onClick={() => {
+                      setPinEnabled(!pinEnabled)
+                      setSecurityError(null)
+                    }}
+                    style={{
+                      width: 48, height: 26, borderRadius: 15, border: 'none',
+                      background: pinEnabled ? '#7C3AED' : '#E4E1F4', position: 'relative',
+                      cursor: 'pointer', transition: 'background-color 0.2s', flexShrink: 0
+                    }}
+                  >
+                    <div style={{
+                      width: 20, height: 20, borderRadius: '50%', background: '#FFFFFF',
+                      position: 'absolute', top: 3, left: pinEnabled ? 25 : 3,
+                      transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.15)'
+                    }} />
+                  </button>
+                </div>
+
+                {/* PIN Configuration Fields */}
+                {pinEnabled && (
+                  <div style={{
+                    background: '#F9F8FD', borderRadius: 16, padding: '16px',
+                    border: '1.5px solid #E4E1F4', display: 'flex', flexDirection: 'column', gap: 12
+                  }}>
+                    <div>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: '#8B82C4', textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>
+                        {t.securityModal.enterPin} (4 ta raqam)
+                      </label>
+                      <input 
+                        id="security_pin_input"
+                        type="password"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        maxLength={4}
+                        placeholder="••••"
+                        value={pinInput}
+                        onChange={(e) => {
+                          setSecurityError(null)
+                          setPinInput(e.target.value.replace(/\D/g, '').slice(0, 4))
+                        }}
+                        onPaste={(e) => {
+                          e.preventDefault()
+                          const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 4)
+                          if (pasted) setPinInput(pasted)
+                        }}
+                        style={{
+                          width: '100%', padding: '12px 14px', borderRadius: 12,
+                          border: '1.5px solid #E4E1F4', fontSize: 18, fontWeight: 700,
+                          textAlign: 'center', letterSpacing: 8, outline: 'none'
+                        }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: '#8B82C4', textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>
+                        {lang === 'uz' ? 'PIN-kodni tasdiqlang' : lang === 'uz_cyrl' ? 'PIN-кодни тасдиқланг' : lang === 'ru' ? 'Повторите PIN-код' : 'Confirm PIN code'}
+                      </label>
+                      <input 
+                        id="security_pin_confirm_input"
+                        type="password"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        maxLength={4}
+                        placeholder="••••"
+                        value={pinConfirmInput}
+                        onChange={(e) => {
+                          setSecurityError(null)
+                          setPinConfirmInput(e.target.value.replace(/\D/g, '').slice(0, 4))
+                        }}
+                        onPaste={(e) => {
+                          e.preventDefault()
+                          const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 4)
+                          if (pasted) setPinConfirmInput(pasted)
+                        }}
+                        style={{
+                          width: '100%', padding: '12px 14px', borderRadius: 12,
+                          border: '1.5px solid #E4E1F4', fontSize: 18, fontWeight: 700,
+                          textAlign: 'center', letterSpacing: 8, outline: 'none'
+                        }}
+                      />
+                    </div>
+
+                    {/* Biometrics / Face ID */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4, paddingTop: 10, borderTop: '1px solid #E4E1F4' }}>
+                      <div>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: '#1E1A3C', display: 'block' }}>
+                          {t.securityModal.faceIdEnable}
+                        </span>
+                        <span style={{ fontSize: 11, color: '#8B82C4' }}>
+                          {lang === 'uz' ? 'Biometriya orqali tezkor ochish' : lang === 'uz_cyrl' ? 'Биометрия орқали тезкор очиш' : lang === 'ru' ? 'Быстрый вход по биометрии' : 'Quick biometric login'}
+                        </span>
+                      </div>
+                      <button 
+                        id="toggle_face_id_enabled"
+                        onClick={() => setFaceIdEnabled(!faceIdEnabled)}
+                        style={{
+                          width: 44, height: 24, borderRadius: 14, border: 'none',
+                          background: faceIdEnabled ? '#7C3AED' : '#E4E1F4', position: 'relative',
+                          cursor: 'pointer', transition: 'background-color 0.2s', flexShrink: 0
+                        }}
+                      >
+                        <div style={{
+                          width: 18, height: 18, borderRadius: '50%', background: '#FFFFFF',
+                          position: 'absolute', top: 3, left: faceIdEnabled ? 23 : 3,
+                          transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.15)'
+                        }} />
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {securityError && (
+                  <p style={{ fontSize: 12.5, fontWeight: 600, color: '#DC2626', margin: 0 }}>
+                    ⚠️ {securityError}
+                  </p>
+                )}
+
+                <button 
+                  id="btn_save_security"
+                  onClick={() => {
+                    if (pinEnabled) {
+                      if (pinInput.length !== 4) {
+                        setSecurityError(lang === 'uz' ? "PIN-kod 4 ta raqamdan iborat bo'lishi shart!" : lang === 'ru' ? 'PIN-код должен состоять из 4 цифр!' : 'PIN must be 4 digits!')
+                        return
+                      }
+                      if (pinConfirmInput && pinConfirmInput !== pinInput) {
+                        setSecurityError(lang === 'uz' ? 'PIN-kodlar bir-biriga mos kelmadi!' : lang === 'ru' ? 'PIN-коды не совпадают!' : 'PIN codes do not match!')
+                        return
+                      }
+                    }
+
+                    const securityData = {
+                      pinEnabled,
+                      faceIdEnabled,
+                      pinCode: pinEnabled ? pinInput : ''
+                    }
+
+                    localStorage.setItem('user_security_v1', JSON.stringify(securityData))
+                    if (onUpdateOnboarding) {
+                      onUpdateOnboarding({ security: securityData } as any)
+                    }
+
+                    setToastMessage(t.securityModal.saved)
+                    setActiveModal(null)
+                  }}
+                  style={{
+                    width: '100%', padding: '13px', borderRadius: 14, border: 'none',
+                    background: '#7C3AED', color: '#FFFFFF', fontSize: 14, fontWeight: 700,
+                    cursor: 'pointer', fontFamily: 'inherit', marginTop: 10
+                  }}
+                >
+                  {lang === 'uz' ? 'Saqlash' : lang === 'ru' ? 'Сохранить' : 'Save Settings'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* 5. PAYMENTS & CARDS MODAL */}
       <AnimatePresence>

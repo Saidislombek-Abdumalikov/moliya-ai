@@ -422,7 +422,8 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
 
   const [showPremium, setShowPremium] = useState(false)
   const [showNotifications, setShowNotifications] = useState(false)
-  const [hasNewNotifications, setHasNewNotifications] = useState(true)
+  const [hasNewNotifications, setHasNewNotifications] = useState(false)
+  const [notificationsList] = useState<any[]>([])
 
   // States for limit calculator modal
   const [showLimitModal, setShowLimitModal] = useState(false)
@@ -1154,32 +1155,51 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                 {t.notificationsTitle}
               </h3>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                {[
-                  { title: t.notiCashback, time: 'Bugun, 10:15', emoji: '💰', bg: '#F0FDF4', color: '#16A34A' },
-                  { title: t.notiMaosh, time: 'Dushanba, 09:00', emoji: '💼', bg: '#F0FDF4', color: '#16A34A' },
-                  { title: t.notiLimit, time: 'Juma, 18:40', emoji: '🎯', bg: '#FFFBEB', color: '#D97706' }
-                ].map((not, idx) => (
-                  <div key={idx} style={{
-                    display: 'flex', gap: 14, padding: '16px', borderRadius: 16,
-                    background: '#F9F8FF', border: '1px solid #F3F0FF'
+              {notificationsList.length === 0 ? (
+                <div style={{ padding: '36px 16px', textAlign: 'center' }}>
+                  <div style={{
+                    width: 56, height: 56, borderRadius: '50%',
+                    background: '#F5F3FF', color: '#7C3AED',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 26, margin: '0 auto 14px'
                   }}>
-                    <div style={{
-                      width: 38, height: 38, borderRadius: 12, background: not.bg,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: 18, flexShrink: 0
-                    }}>
-                      {not.emoji}
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <p style={{ fontSize: 13, fontWeight: 600, color: '#1E1A3C', marginBottom: 4, lineHeight: 1.4 }}>
-                        {not.title}
-                      </p>
-                      <p style={{ fontSize: 11, color: '#B8B0DC' }}>{not.time}</p>
-                    </div>
+                    🔔
                   </div>
-                ))}
-              </div>
+                  <p style={{ fontSize: 15, fontWeight: 700, color: '#1E1A3C', marginBottom: 6 }}>
+                    {t.notificationsEmpty}
+                  </p>
+                  <p style={{ fontSize: 12.5, color: '#8B82C4', lineHeight: 1.4 }}>
+                    {(lang === 'uz' || lang === 'uz_cyrl')
+                      ? (lang === 'uz_cyrl' ? 'Тизим хабарлари ва эслатмалар шу ерда кўринади' : "Tizim xabarlari va eslatmalar shu yerda ko'rinadi")
+                      : lang === 'ru'
+                      ? 'Системные сообщения и напоминания появятся здесь'
+                      : 'System notifications and reminders will appear here'}
+                  </p>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {notificationsList.map((not, idx) => (
+                    <div key={idx} style={{
+                      display: 'flex', gap: 14, padding: '16px', borderRadius: 16,
+                      background: '#F9F8FF', border: '1px solid #F3F0FF'
+                    }}>
+                      <div style={{
+                        width: 38, height: 38, borderRadius: 12, background: not.bg || '#F0FDF4',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 18, flexShrink: 0
+                      }}>
+                        {not.emoji || '📢'}
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <p style={{ fontSize: 13, fontWeight: 600, color: '#1E1A3C', marginBottom: 4, lineHeight: 1.4 }}>
+                          {not.title}
+                        </p>
+                        <p style={{ fontSize: 11, color: '#B8B0DC' }}>{not.time || 'Hozir'}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </motion.div>
           </div>
         )}

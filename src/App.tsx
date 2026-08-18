@@ -6,6 +6,7 @@ import HomeScreen from './components/HomeScreen'
 import CalendarScreen from './components/CalendarScreen'
 import AnalyticsScreen from './components/AnalyticsScreen'
 import ProfileScreen from './components/ProfileScreen'
+import PinLockScreen from './components/PinLockScreen'
 import BottomNav from './components/BottomNav'
 import AIButton from './components/AIButton'
 import AppTour from './components/AppTour'
@@ -25,6 +26,14 @@ export default function App() {
   const [showTour, setShowTour] = useState(false)
   const [stage, setStage] = useState<Stage>('loading')
   const [activeScreen, setActiveScreen] = useState<Screen>('home')
+  const [isPinLocked, setIsPinLocked] = useState<boolean>(() => {
+    try {
+      const s = localStorage.getItem('user_security_v1')
+      return s ? JSON.parse(s).pinEnabled === true : false
+    } catch {
+      return false
+    }
+  })
 
   // ═══════════════════════════════════════════════════════════
   // ALL HOOKS MUST BE BEFORE ANY CONDITIONAL RETURNS
@@ -285,6 +294,21 @@ export default function App() {
         language={onboarding?.language || 'uz'}
         onNavigateScreen={setActiveScreen}
       />
+
+      {isPinLocked && (
+        <PinLockScreen
+          language={onboarding?.language || 'uz'}
+          onUnlock={() => setIsPinLocked(false)}
+          onReset={() => {
+            if (window.confirm(onboarding?.language === 'ru' ? "Сбросить PIN-код и войти заново?" : "PIN-kodni qayta tiklash uchun tizimdan chiqib, Telegram orqali qayta kirasizmi?")) {
+              setIsPinLocked(false)
+              logout()
+              localStorage.removeItem('user_onboarding_completed_v1')
+              setStage('login')
+            }
+          }}
+        />
+      )}
     </div>
   )
 }
