@@ -44,6 +44,7 @@ interface FinanceContextType {
   loading: boolean
   isAuthReady: boolean
   isOnline: boolean
+  syncOfflineData: () => Promise<void>
   updateOnboarding: (newData: Partial<OnboardingResult>) => Promise<void>
   saveCards: (updated: Card[]) => Promise<void>
   updateSecurity: (updated: SecurityOpts) => Promise<void>
@@ -872,6 +873,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         loading,
         isAuthReady,
         isOnline,
+        syncOfflineData,
         updateOnboarding,
         saveCards,
         updateSecurity,

@@ -5,8 +5,36 @@
 const BOT_USERNAME = 'moliya_v2bot';
 
 /**
+ * Checks if the current app is running in a native wrapper (Capacitor, Cordova, WebView, or standalone PWA)
+ */
+export function isNativePlatform(): boolean {
+  if (typeof window === 'undefined') return false;
+  return Boolean(
+    (window as any).Capacitor?.isNativePlatform?.() ||
+    (window as any).AndroidBridge ||
+    window.matchMedia('(display-mode: standalone)').matches ||
+    (window.navigator as any).standalone
+  );
+}
+
+/**
+ * Safely opens an external URL in the default browser / external app
+ */
+export function openExternalUrl(url: string): void {
+  try {
+    if (typeof window !== 'undefined') {
+      window.open(url, '_blank', 'noopener,noreferrer') || (window.location.href = url);
+    }
+  } catch {
+    if (typeof window !== 'undefined') {
+      window.location.href = url;
+    }
+  }
+}
+
+/**
  * Opens the Telegram bot with an optional start parameter (e.g. 'apk', 'app', 'req_xxx').
- * Attempts deep linking via tg:// first, falling back to https://t.me/
+ * Attempts deep linking via tg:// first on mobile/native, falling back to https://t.me/
  */
 export function openTelegramBot(startParam: string = 'apk'): void {
   const cleanParam = startParam.trim();
@@ -18,30 +46,30 @@ export function openTelegramBot(startParam: string = 'apk'): void {
     ? `https://t.me/${BOT_USERNAME}?start=${cleanParam}`
     : `https://t.me/${BOT_USERNAME}`;
 
+  if (isNativePlatform()) {
+    try {
+      window.location.href = deepLink;
+      return;
+    } catch {
+      openExternalUrl(webLink);
+      return;
+    }
+  }
+
   const isMobile = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
   if (isMobile) {
     try {
-      // Try native deep link first
       window.location.href = deepLink;
-      
-      // Fallback timer if deep link doesn't trigger app switch within 1.5s
       setTimeout(() => {
         if (document.hasFocus() || document.visibilityState === 'visible') {
-          window.open(webLink, '_blank') || (window.location.href = webLink);
+          window.location.href = webLink;
         }
       }, 1500);
     } catch {
       window.location.href = webLink;
     }
   } else {
-    // Desktop: Open web link in new tab
-    const link = document.createElement('a');
-    link.href = webLink;
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    window.open(webLink, '_blank', 'noopener,noreferrer');
   }
 }

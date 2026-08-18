@@ -663,13 +663,16 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
         // Android APK OTP code request
         if (rawArg.toLowerCase().includes('apk') || rawArg.toLowerCase().includes('app')) {
           const otpCode = await generateAndStoreOtpCode(fromUser);
-          const apkMessage = `📲 <b>Moliya AI Android Ilovasi</b>\n\n` +
+          const apkMessage = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
+            `📲 <b>Moliya AI Android Ilovasi</b>\n\n` +
             `🔐 <b>Sizning bir martalik tasdiqlash kodingiz:</b>\n\n` +
             `👉 <code>${otpCode}</code> 👈\n\n` +
+            `<i>(Kodni nusxalash uchun ustiga bir marta bosing)</i>\n\n` +
             `⏱ <i>Ushbu bir martalik kod 10 daqiqa davomida amal qiladi.</i>\n` +
             `📱 <i>Moliya AI Android ilovasiga qaytib, kodni kiriting va hisobingizga kiring!</i>`;
 
           await sendTelegramMessage(chatId, apkMessage);
+          await sendTelegramMessage(chatId, "👇 Asosiy menyu:", getMainMenuKeyboard());
           return;
         }
 
