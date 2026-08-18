@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabase } from '../_supabaseClient.js';
+import { createSupabaseAuthSession } from '../_authHelper.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -30,10 +31,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const userId = `moliya_user_tg_${reqDoc.telegram_id}`;
         const { data: userDoc } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
 
+        // Create real Supabase Auth session
+        const authSession = await createSupabaseAuthSession(
+          reqDoc.telegram_id,
+          { name: userDoc?.name || '', telegram: userDoc?.telegram || '' }
+        );
+
         return res.status(200).json({
           status: 'VERIFIED',
           userId,
           sessionToken: reqDoc.session_token,
+          // Real Supabase Auth tokens
+          access_token: authSession?.access_token || null,
+          refresh_token: authSession?.refresh_token || null,
           onboarding: userDoc?.onboarding || null,
           phone: userDoc?.phone || '',
           cards: userDoc?.cards || [],

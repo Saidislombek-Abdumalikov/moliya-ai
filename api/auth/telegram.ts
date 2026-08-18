@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import crypto from 'crypto';
 import { supabase } from '../_supabaseClient.js';
+import { createSupabaseAuthSession } from '../_authHelper.js';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 
@@ -122,9 +123,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       updated_at: now.toISOString()
     }, { onConflict: 'id' });
 
+    // 3. Create real Supabase Auth session
+    const authSession = await createSupabaseAuthSession(tgId, { name: tgName, telegram: tgUsername });
+
     return res.status(200).json({
       userId,
       sessionToken,
+      // Real Supabase Auth tokens
+      access_token: authSession?.access_token || null,
+      refresh_token: authSession?.refresh_token || null,
       onboarding: updatedOnboarding,
       cards: existingUser?.cards || [],
       transactions: existingUser?.transactions || [],

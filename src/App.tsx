@@ -14,23 +14,28 @@ import InstallPromptModal from './components/InstallPromptModal'
 import OfflineStatusBanner from './components/OfflineStatusBanner'
 
 export type Screen = 'home' | 'calendar' | 'analytics' | 'profile'
-type Stage = 'onboarding' | 'app'
+type Stage = 'loading' | 'onboarding' | 'app'
 
 export default function App() {
-  const { onboarding, updateOnboarding, setHasSampleData, logout } = useFinance()
+  const { onboarding, updateOnboarding, setHasSampleData, logout, isAuthReady, userId } = useFinance()
 
   const [showTour, setShowTour] = useState(false)
 
-  // Set initial stage based on login persistence
-  const [stage, setStage] = useState<Stage>(() => {
-    const savedLoggedIn = localStorage.getItem('user_logged_in_v1')
-    if (savedLoggedIn === 'true') {
-      return 'app'
-    }
-    return 'onboarding'
-  })
+  // Stage is determined AFTER auth is ready — no more race conditions
+  const [stage, setStage] = useState<Stage>('loading')
 
   const [activeScreen, setActiveScreen] = useState<Screen>('home')
+
+  // Determine stage ONLY after auth check completes
+  useEffect(() => {
+    if (!isAuthReady) return
+
+    if (userId || localStorage.getItem('user_logged_in_v1') === 'true') {
+      setStage('app')
+    } else {
+      setStage('onboarding')
+    }
+  }, [isAuthReady, userId])
 
   // Trigger tour on first visit to main page
   useEffect(() => {
@@ -48,14 +53,13 @@ export default function App() {
         setStage('app')
       }
     }
-    checkLoggedIn()
     window.addEventListener('storage', checkLoggedIn)
     window.addEventListener('user_logged_in_updated', checkLoggedIn)
     return () => {
       window.removeEventListener('storage', checkLoggedIn)
       window.removeEventListener('user_logged_in_updated', checkLoggedIn)
     }
-  }, [onboarding])
+  }, [])
 
   // If onboarding is null, set clean defaults
   useEffect(() => {
@@ -71,6 +75,43 @@ export default function App() {
       })
     }
   }, [onboarding, updateOnboarding])
+
+  // Loading screen while auth is being checked — prevents flash of onboarding
+  if (stage === 'loading') {
+    return (
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          minHeight: '100dvh',
+          width: '100%',
+          maxWidth: 430,
+          margin: '0 auto',
+          background: '#FAF8FE',
+        }}
+      >
+        <div style={{
+          width: 56,
+          height: 56,
+          borderRadius: '50%',
+          border: '4px solid #E5E7EB',
+          borderTopColor: '#7C3AED',
+          animation: 'spin 0.8s linear infinite',
+        }} />
+        <p style={{
+          marginTop: 16,
+          fontSize: 15,
+          color: '#6B7280',
+          fontWeight: 500,
+        }}>
+          Yuklanmoqda...
+        </p>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    )
+  }
 
   if (stage === 'onboarding') {
     return (

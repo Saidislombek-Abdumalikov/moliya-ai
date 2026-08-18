@@ -168,12 +168,13 @@ async function checkAndIncrementAiLimitAsync(fromUser: any): Promise<{ allowed: 
   }
 }
 
-const getCleanInlineKeyboard = () => {
+const getCleanInlineKeyboard = (sessionToken?: string) => {
+  const urlWithAuth = sessionToken ? `${appUrl}?s=${sessionToken}` : appUrl;
   return {
     inline_keyboard: [
       [
-        { text: "📱 Telegram Mini App", web_app: { url: appUrl } },
-        { text: "🌐 Saytga o'tish", url: appUrl }
+        { text: "📱 Telegram Mini App", web_app: { url: urlWithAuth } },
+        { text: "🌐 Saytga o'tish 🚀", url: urlWithAuth }
       ]
     ]
   };
@@ -615,10 +616,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (requestId && requestId.length >= 8) {
         const successText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n✅ <b>Profilingiz muvaffaqiyatli tasdiqlandi!</b> 🚀\nBrauzeringizdagi Moliya AI sahifasiga qaytsangiz, profilingiz avtomatik ochiladi.\n\n👇 <i>Ilovani to'g'ridan-to'g'ri ochish:</i>`;
 
-        await Promise.all([
-          verifyAndMarkLoginRequest(requestId, fromUser),
-          sendTelegramMessage(chatId, successText, getCleanInlineKeyboard())
-        ]);
+        const verifyResult = await verifyAndMarkLoginRequest(requestId, fromUser);
+        const token = verifyResult?.sessionToken || undefined;
+        await sendTelegramMessage(chatId, successText, getCleanInlineKeyboard(token));
         return res.status(200).json({ status: 'ok' });
       }
 
