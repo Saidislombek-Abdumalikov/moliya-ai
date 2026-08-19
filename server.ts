@@ -405,6 +405,155 @@ async function startServer() {
     }
   });
 
+  // ─────────────────────────────────────────────────────────────
+  // CENTRAL AI ROUTER ENDPOINT (Web App & APK)
+  // ─────────────────────────────────────────────────────────────
+  app.post("/api/ai-router", async (req, res) => {
+    try {
+      const { userId, prompt, text, queryType = 'text', imageBase64 } = req.body || {};
+      const promptText = prompt || text || '';
+
+      if (!promptText && !imageBase64) {
+        res.status(400).json({ error: 'Missing prompt or imageBase64' });
+        return;
+      }
+
+      // 1. Quota Check & Enforcement
+      const quota = await checkAndRecordAiUsage(
+        userId,
+        imageBase64 ? 'receipt' : 'text',
+        promptText || 'Receipt Scan'
+      );
+
+      if (!quota.allowed) {
+        res.status(403).json({
+          success: false,
+          error: 'AI_LIMIT_REACHED',
+          message: quota.message || 'AI Limitingiz tugadi. Davom etish uchun VIP Premium obunasini faollashtiring!',
+          usage: {
+            used: quota.usedCount,
+            limit: quota.limit,
+            remaining: 0,
+            isPremium: quota.isPremium
+          }
+        });
+        return;
+      }
+
+      // 2. Receipt OCR Scan
+      if (imageBase64 || queryType === 'receipt') {
+        const cleanBase64 = String(imageBase64).replace(/^data:image\/\w+;base64,/, '');
+        const candidateKeys = await getCandidateAiKeys();
+        const receiptPrompt = `Analyze this receipt image (Uzbekistan/Global receipt) and extract:
+- type: 'expense'
+- amount: total paid number in UZS currency (e.g. 50000, 120000)
+- category: string ('Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\'liq', 'Ta\'lim', 'Boshqa')
+- title: store name or main item (e.g. 'Korzinka', 'Makro', 'Taksi')
+- note: summary of purchased items`;
+
+        for (const key of candidateKeys) {
+          if (key.provider !== 'google') continue;
+          try {
+            const ai = new GoogleGenAI({ apiKey: key.api_key });
+            const response = await ai.models.generateContent({
+              model: key.model || "gemini-2.5-flash",
+              contents: [
+                {
+                  inlineData: {
+                    mimeType: 'image/jpeg',
+                    data: cleanBase64
+                  }
+                },
+                receiptPrompt
+              ],
+              config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                  type: Type.OBJECT,
+                  properties: {
+                    type: { type: Type.STRING },
+                    amount: { type: Type.NUMBER },
+                    category: { type: Type.STRING },
+                    title: { type: Type.STRING },
+                    note: { type: Type.STRING },
+                  },
+                  required: ["type", "amount", "category", "title"],
+                }
+              }
+            });
+
+            if (response?.text) {
+              const parsed = JSON.parse(response.text);
+              if (parsed.amount) {
+                await recordKeyResult(key.id, true);
+                const fmtAmt = parsed.amount.toLocaleString('en-US').replace(/,/g, ' ');
+                res.json({
+                  success: true,
+                  response: `Chek muvaffaqiyatli tahlil qilindi: ${fmtAmt} so'm (${parsed.category || 'Oziq-ovqat'})`,
+                  parsed: {
+                    type: parsed.type || 'expense',
+                    amount: fmtAmt,
+                    category: parsed.category || 'Oziq-ovqat',
+                    title: parsed.title || 'Chek xarajati',
+                    note: parsed.note || parsed.title || 'Chekdan olindi',
+                  },
+                  usage: {
+                    used: quota.usedCount,
+                    limit: quota.limit,
+                    remaining: quota.limit ? Math.max(0, quota.limit - quota.usedCount) : 999999,
+                    isPremium: quota.isPremium
+                  }
+                });
+                return;
+              }
+            }
+          } catch (err: any) {
+            console.warn(`[SERVER_AI_ROUTER] Key ${key.name} receipt failed:`, err?.message);
+            await recordKeyResult(key.id, false, err?.message, 'temporary');
+          }
+        }
+
+        res.status(503).json({
+          error: 'AI_PROVIDERS_UNAVAILABLE',
+          message: 'AI xizmati hozirda band. Iltimos, 1 daqiqadan so\'ng qayta urinib ko\'ring.'
+        });
+        return;
+      }
+
+      // 3. Text Prompt Parsing
+      const aiResult = await executeAiWithRotation(promptText);
+
+      if (aiResult.success) {
+        res.json({
+          success: true,
+          response: `Tranzaksiya aniqlandi: ${aiResult.amount} so'm (${aiResult.category})`,
+          parsed: {
+            type: aiResult.type || 'expense',
+            amount: aiResult.amount,
+            category: aiResult.category || 'Boshqa',
+            note: aiResult.note || promptText,
+            title: aiResult.title || aiResult.note || promptText,
+            debtWho: aiResult.debtWho || '',
+          },
+          usage: {
+            used: quota.usedCount,
+            limit: quota.limit,
+            remaining: quota.limit ? Math.max(0, quota.limit - quota.usedCount) : 999999,
+            isPremium: quota.isPremium
+          }
+        });
+      } else {
+        res.status(503).json({
+          error: 'AI_PROVIDERS_UNAVAILABLE',
+          message: 'AI xizmati hozirda band. Iltimos, 1 daqiqadan so\'ng qayta urinib ko\'ring.'
+        });
+      }
+    } catch (e: any) {
+      console.error('AI Router error in server:', e);
+      res.status(500).json({ error: 'AI Router internal error', details: e?.message });
+    }
+  });
+
   app.post("/api/parse-expense", async (req, res) => {
     try {
       const { text, userId } = req.body || {};

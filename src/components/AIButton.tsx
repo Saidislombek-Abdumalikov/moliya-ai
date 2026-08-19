@@ -39,28 +39,89 @@ const voicePrompts: Record<EntryType, string> = {
   lending: "Kimga qancha pul berdingiz?",
 }
 
-async function parseAIText(text: string, cardsList: any[] = [], userId?: string): Promise<{ type: EntryType; amount: string; category: string; note: string; title?: string; debtWho?: string; date?: string; cardId?: string }> {
+export interface AiResponseData {
+  success: boolean
+  response?: string
+  parsed?: {
+    type?: EntryType
+    amount?: string
+    category?: string
+    note?: string
+    title?: string
+    debtWho?: string
+    date?: string
+    cardId?: string
+  }
+  usage?: {
+    used: number
+    limit: number | null
+    remaining: number
+    isPremium: boolean
+  }
+  error?: string
+  message?: string
+}
+
+export async function requestAiAssistant(
+  userId: string | undefined,
+  prompt: string,
+  imageBase64: string | null = null
+): Promise<AiResponseData | null> {
   try {
-    const res = await fetch(getApiUrl('/api/parse-expense'), {
+    const response = await fetch(getApiUrl('/api/ai-router'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, cards: cardsList, userId })
-    });
-    if (res.status === 429) {
-      const errData = await res.json();
-      throw new Error(errData.message || 'Bepul AI so\'rov limiti tugadi. Davom etish uchun VIP Premium obunasini faollashtiring!');
+      body: JSON.stringify({
+        userId: userId || undefined,
+        prompt: prompt,
+        queryType: imageBase64 ? 'receipt' : 'text',
+        imageBase64: imageBase64
+      })
+    })
+
+    const data = await response.json()
+
+    // 1. User Quota Limit Reached
+    if (response.status === 403 && data.error === 'AI_LIMIT_REACHED') {
+      throw new Error(data.message || 'AI Limitingiz tugadi. Davom etish uchun VIP Premium obunasini faollashtiring!')
     }
-    if (res.ok) {
-      const data = await res.json();
-      if (data.amount && data.category) {
-        return { type: data.type || 'expense', amount: data.amount, category: data.category, note: data.note || text, title: data.title, debtWho: data.debtWho, date: data.date, cardId: data.cardId };
+
+    // 2. All AI Provider Keys Temporarily Busy
+    if (response.status === 503) {
+      throw new Error(data.message || "AI xizmati hozirda band. Iltimos, 1 daqiqadan so'ng qayta urinib ko'ring.")
+    }
+
+    if (!response.ok) {
+      throw new Error(data.error || 'AI request failed')
+    }
+
+    return data
+  } catch (error: any) {
+    console.error('[AI_ROUTER_CLIENT] Error:', error)
+    throw error
+  }
+}
+
+async function parseAIText(text: string, cardsList: any[] = [], userId?: string): Promise<{ type: EntryType; amount: string; category: string; note: string; title?: string; debtWho?: string; date?: string; cardId?: string }> {
+  try {
+    const data = await requestAiAssistant(userId, text, null)
+    if (data && data.parsed && data.parsed.amount) {
+      return {
+        type: data.parsed.type || 'expense',
+        amount: data.parsed.amount,
+        category: data.parsed.category || 'Boshqa',
+        note: data.parsed.note || text,
+        title: data.parsed.title,
+        debtWho: data.parsed.debtWho,
+        date: data.parsed.date,
+        cardId: data.parsed.cardId
       }
     }
   } catch (err: any) {
-    if (err.message && (err.message.includes('limiti tugadi') || err.message.includes('Premium'))) {
-      throw err;
+    if (err.message && (err.message.includes('tugadi') || err.message.includes('Premium') || err.message.includes('band'))) {
+      throw err
     }
-    // API endpoint unavailable in dev server, fall back to smart local NLP parser
+    // Fall back to local NLP parser if offline
   }
 
   const parsed = parseAITransaction(text, cardsList)
@@ -86,8 +147,6 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
     const file = e.target.files?.[0]
     if (!file) return
 
-    if (!checkAndDeductAIQuery()) return
-
     setIsProcessing(true)
     setAiError('')
     try {
@@ -95,16 +154,8 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
       reader.onload = async () => {
         const base64Data = reader.result as string
         try {
-          const res = await fetch(getApiUrl('/api/parse-receipt'), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ base64Image: base64Data, mimeType: file.type })
-          })
-
-          let parsed: any = null
-          if (res.ok) {
-            parsed = await res.json()
-          }
+          const aiData = await requestAiAssistant(userId || undefined, 'Receipt scan', base64Data)
+          let parsed = aiData?.parsed
 
           if (!parsed || !parsed.amount) {
             parsed = {
@@ -130,16 +181,15 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
             cardId: prev.cardId || 'cash',
           }))
           setStep('form')
-        } catch (err) {
-          console.error(err)
-          setAiError(language === 'uz' ? "Rasmni aniqlab bo'lmadi, matnli kiritib ko'ring" : "Couldn't read receipt image")
+        } catch (err: any) {
+          setAiError(err.message || 'Chekni skanerlashda xatolik yuz berdi')
         } finally {
           setIsProcessing(false)
         }
       }
       reader.readAsDataURL(file)
-    } catch (err) {
-      console.error(err)
+    } catch (err: any) {
+      console.error('File reading error:', err)
       setIsProcessing(false)
     }
   }

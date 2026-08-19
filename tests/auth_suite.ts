@@ -339,7 +339,7 @@ async function runAuthAuditSuite() {
       platform: 'android_apk',
       model: 'Samsung Galaxy S24',
       os: 'Android 14',
-      app_version: 'v3.17.0',
+      app_version: 'v3.18.0',
       last_login: new Date().toISOString()
     };
 
@@ -354,7 +354,7 @@ async function runAuthAuditSuite() {
 
     const { data: multiDevDoc } = await supabase.from('users').select('*').eq('id', testUserId).maybeSingle();
     assert(multiDevDoc?.device_info?.platform === 'android_apk', 'Device info (platform: android_apk) persisted on login');
-    assert(multiDevDoc?.device_info?.app_version === 'v3.17.0', 'Device info app version (v3.17.0) persisted correctly');
+    assert(multiDevDoc?.device_info?.app_version === 'v3.18.0', 'Device info app version (v3.18.0) persisted correctly');
 
     // Clean up test user
     await supabase.from('users').delete().eq('telegram_id', testTgId);
