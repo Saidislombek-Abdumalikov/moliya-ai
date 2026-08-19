@@ -34,6 +34,21 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
     return () => clearInterval(interval)
   }, [timerSeconds])
 
+  // Global clipboard paste listener
+  useEffect(() => {
+    const handleGlobalPaste = (e: ClipboardEvent) => {
+      const pasted = e.clipboardData?.getData('text').replace(/\D/g, '').slice(0, 6)
+      if (pasted && pasted.length === 6) {
+        const newDigits = pasted.split('')
+        setOtpDigits(newDigits)
+        otpInputsRef.current[5]?.focus()
+        submitOtpCode(pasted)
+      }
+    }
+    window.addEventListener('paste', handleGlobalPaste)
+    return () => window.removeEventListener('paste', handleGlobalPaste)
+  }, [])
+
   const formatTimer = (seconds: number) => {
     const m = Math.floor(seconds / 60)
     const s = seconds % 60
@@ -42,7 +57,28 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
 
   const handleOtpChange = (index: number, value: string) => {
     if (otpError) setOtpError(null)
-    const digit = value.replace(/\D/g, '').slice(-1)
+    const clean = value.replace(/\D/g, '')
+
+    // Case A: Pasted or autofilled multi-character string (e.g. "482731")
+    if (clean.length > 1) {
+      const pastedDigits = clean.slice(0, 6).split('')
+      const newDigits = [...otpDigits]
+      const startIdx = clean.length >= 6 ? 0 : index
+      for (let i = 0; i < pastedDigits.length && (startIdx + i) < 6; i++) {
+        newDigits[startIdx + i] = pastedDigits[i]
+      }
+      setOtpDigits(newDigits)
+      const nextFocus = Math.min(startIdx + pastedDigits.length - 1, 5)
+      otpInputsRef.current[nextFocus]?.focus()
+      const fullCode = newDigits.join('')
+      if (fullCode.length === 6 && !newDigits.includes('')) {
+        submitOtpCode(fullCode)
+      }
+      return
+    }
+
+    // Case B: Single digit typed
+    const digit = clean.slice(-1)
     const newDigits = [...otpDigits]
     newDigits[index] = digit
     setOtpDigits(newDigits)
@@ -58,8 +94,18 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
   }
 
   const handleOtpKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Backspace' && !otpDigits[index] && index > 0) {
+    if (e.key === 'Backspace') {
+      if (!otpDigits[index] && index > 0) {
+        otpInputsRef.current[index - 1]?.focus()
+      } else if (otpDigits[index]) {
+        const newDigits = [...otpDigits]
+        newDigits[index] = ''
+        setOtpDigits(newDigits)
+      }
+    } else if (e.key === 'ArrowLeft' && index > 0) {
       otpInputsRef.current[index - 1]?.focus()
+    } else if (e.key === 'ArrowRight' && index < 5) {
+      otpInputsRef.current[index + 1]?.focus()
     }
   }
 
@@ -72,7 +118,7 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
       newDigits[i] = pasted[i]
     }
     setOtpDigits(newDigits)
-    const nextFocusIdx = Math.min(pasted.length, 5)
+    const nextFocusIdx = Math.min(pasted.length - 1, 5)
     otpInputsRef.current[nextFocusIdx]?.focus()
     if (pasted.length === 6) {
       submitOtpCode(pasted)
@@ -255,10 +301,11 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
                 inputMode="numeric"
                 pattern="[0-9]*"
                 autoComplete="one-time-code"
-                maxLength={1}
+                maxLength={6}
                 value={digit}
                 onChange={(e) => handleOtpChange(idx, e.target.value)}
                 onKeyDown={(e) => handleOtpKeyDown(idx, e)}
+                onPaste={handleOtpPaste}
                 style={{
                   width: 44,
                   height: 52,

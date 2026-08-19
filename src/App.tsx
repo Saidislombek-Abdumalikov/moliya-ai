@@ -23,8 +23,26 @@ type Stage = 'loading' | 'login' | 'onboarding' | 'app'
 export default function App() {
   const { onboarding, updateOnboarding, setHasSampleData, logout, isAuthReady, userId } = useFinance()
 
+  const getInitialStage = (): Stage => {
+    try {
+      const isLoggedIn = localStorage.getItem('user_logged_in_v1') === 'true'
+      if (isLoggedIn) {
+        const isOnboarded = localStorage.getItem('user_onboarding_completed_v1') === 'true'
+        return isOnboarded ? 'app' : 'onboarding'
+      }
+      const hasPreOnboarded = localStorage.getItem('user_onboarding_pre_completed_v1') === 'true'
+      const hasCompleted = localStorage.getItem('user_onboarding_completed_v1') === 'true'
+      if (!hasPreOnboarded && !hasCompleted) {
+        return 'onboarding'
+      }
+      return 'login'
+    } catch {
+      return 'login'
+    }
+  }
+
   const [showTour, setShowTour] = useState(false)
-  const [stage, setStage] = useState<Stage>('loading')
+  const [stage, setStage] = useState<Stage>(getInitialStage)
   const [activeScreen, setActiveScreen] = useState<Screen>('home')
   const [isPinLocked, setIsPinLocked] = useState<boolean>(() => {
     try {
@@ -45,6 +63,15 @@ export default function App() {
   useEffect(() => {
     initNativeFeatures()
   }, [])
+
+  // Failsafe timeout for loading stage: never stay stuck loading > 2.5s
+  useEffect(() => {
+    if (stage !== 'loading') return
+    const timer = setTimeout(() => {
+      setStage(getInitialStage())
+    }, 2500)
+    return () => clearTimeout(timer)
+  }, [stage])
 
   // Android hardware back button navigation handling
   useEffect(() => {

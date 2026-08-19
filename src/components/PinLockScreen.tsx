@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 
 interface Props {
   language?: 'uz' | 'uz_cyrl' | 'ru' | 'en'
@@ -38,7 +38,6 @@ export default function PinLockScreen({ language = 'uz', onUnlock, onReset }: Pr
   const [pin, setPin] = useState('')
   const [error, setError] = useState(false)
   const [shake, setShake] = useState(false)
-  const hiddenInputRef = useRef<HTMLInputElement | null>(null)
 
   // Load user security preferences
   const getSecurityPrefs = () => {
@@ -53,12 +52,7 @@ export default function PinLockScreen({ language = 'uz', onUnlock, onReset }: Pr
   const prefs = getSecurityPrefs()
   const correctPin = prefs.pinCode || '2580'
 
-  // Auto-focus hidden input for physical keyboard / clipboard paste support
-  useEffect(() => {
-    hiddenInputRef.current?.focus()
-  }, [])
-
-  // Handle global paste event
+  // Handle global paste event (clipboard)
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
       const text = e.clipboardData?.getData('text') || ''
@@ -74,7 +68,7 @@ export default function PinLockScreen({ language = 'uz', onUnlock, onReset }: Pr
     return () => window.removeEventListener('paste', handlePaste)
   }, [correctPin])
 
-  // Handle global keyboard typing
+  // Handle physical / desktop keyboard typing without opening mobile soft keyboard
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key >= '0' && e.key <= '9') {
@@ -134,7 +128,6 @@ export default function PinLockScreen({ language = 'uz', onUnlock, onReset }: Pr
 
   return (
     <div
-      onClick={() => hiddenInputRef.current?.focus()}
       style={{
         position: 'fixed',
         inset: 0,
@@ -150,24 +143,6 @@ export default function PinLockScreen({ language = 'uz', onUnlock, onReset }: Pr
         boxSizing: 'border-box'
       }}
     >
-      {/* Hidden input for receiving paste and hardware numpad keystrokes */}
-      <input
-        ref={hiddenInputRef}
-        type="tel"
-        inputMode="numeric"
-        pattern="[0-9]*"
-        maxLength={4}
-        value={pin}
-        onChange={(e) => {
-          const digits = e.target.value.replace(/\D/g, '').slice(0, 4)
-          if (digits.length === 4) {
-            verifyPin(digits)
-          } else {
-            setPin(digits)
-          }
-        }}
-        style={{ position: 'absolute', opacity: 0, pointerEvents: 'none', width: 1, height: 1 }}
-      />
 
       {/* Top Header */}
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: 10 }}>

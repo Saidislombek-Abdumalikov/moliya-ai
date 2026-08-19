@@ -297,11 +297,22 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     window.dispatchEvent(new Event('user_logged_in_updated'))
   }
 
+const fetchWithTimeout = (url: string, options: RequestInit = {}, timeoutMs = 2500): Promise<Response> => {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timeoutId))
+}
+
   // ═══════════════════════════════════════════════════════════
   // MAIN AUTHENTICATION EFFECT
   // Auth state: AUTH_INITIALIZING → AUTHENTICATED | UNAUTHENTICATED
   // ═══════════════════════════════════════════════════════════
   useEffect(() => {
+    // Failsafe timer: Ensure isAuthReady is unconditionally true after 2.5s
+    const failsafeTimer = setTimeout(() => {
+      setIsAuthReady(true)
+    }, 2500)
+
     async function authenticate() {
       try {
         console.log('[AUTH] Initializing authentication...');
@@ -330,7 +341,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         if (exchangeCode && exchangeCode.length >= 16) {
           try {
             console.log('[AUTH] Found ?code= URL parameter, exchanging...')
-            const res = await fetch(getApiUrl('/api/auth/exchange-code'), {
+            const res = await fetchWithTimeout(getApiUrl('/api/auth/exchange-code'), {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ code: exchangeCode }),
@@ -351,6 +362,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 window.history.replaceState({}, document.title, cleanUrl)
                 console.log('[AUTH] ✅ Authenticated via exchange code')
                 setIsAuthReady(true)
+                clearTimeout(failsafeTimer)
                 return
               }
             }
@@ -367,7 +379,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         if (sessionParam) {
           try {
             console.log('[AUTH] Found ?s= URL parameter, validating session token...')
-            const res = await fetch(getApiUrl('/api/auth/validate-session'), {
+            const res = await fetchWithTimeout(getApiUrl('/api/auth/validate-session'), {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ sessionToken: sessionParam }),
@@ -383,6 +395,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 window.history.replaceState({}, document.title, cleanUrl)
                 console.log('[AUTH] ✅ Authenticated via ?s= URL token')
                 setIsAuthReady(true)
+                clearTimeout(failsafeTimer)
                 return
               }
             }
@@ -395,7 +408,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         const reqParam = urlParams.get('req')
         if (reqParam) {
           try {
-            const res = await fetch(getApiUrl(`/api/auth/check-login-request?requestId=${reqParam}`))
+            const res = await fetchWithTimeout(getApiUrl(`/api/auth/check-login-request?requestId=${reqParam}`))
             if (res.ok) {
               const data = await res.json()
               if (data.status === 'VERIFIED' && data.userId) {
@@ -407,6 +420,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 window.history.replaceState({}, document.title, cleanUrl)
                 console.log('[AUTH] ✅ Authenticated via ?req= URL parameter')
                 setIsAuthReady(true)
+                clearTimeout(failsafeTimer)
                 return
               }
             }
@@ -419,7 +433,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         const sessionToken = localStorage.getItem('user_session_token_v1')
         if (sessionToken) {
           try {
-            const res = await fetch(getApiUrl('/api/auth/validate-session'), {
+            const res = await fetchWithTimeout(getApiUrl('/api/auth/validate-session'), {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ sessionToken }),
@@ -433,6 +447,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 persistAuthState({ userId: data.userId, sessionToken, onboarding: data.onboarding, cards: data.cards, transactions: data.transactions })
                 console.log('[AUTH] ✅ Authenticated via stored session token')
                 setIsAuthReady(true)
+                clearTimeout(failsafeTimer)
                 return
               }
             }
@@ -456,7 +471,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         if (tg && (initData || initDataUnsafe?.user?.id)) {
           try {
             console.log('[AUTH] Telegram Mini App detected, verifying initData...')
-            const res = await fetch(getApiUrl('/api/auth/telegram'), {
+            const res = await fetchWithTimeout(getApiUrl('/api/auth/telegram'), {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ initData, initDataUnsafe })
@@ -470,6 +485,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 persistAuthState({ userId: data.userId, sessionToken: data.sessionToken, onboarding: data.onboarding, cards: data.cards, transactions: data.transactions })
                 console.log('[AUTH] ✅ Authenticated via Telegram Mini App initData')
                 setIsAuthReady(true)
+                clearTimeout(failsafeTimer)
                 return
               }
             } else {
@@ -500,9 +516,11 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         console.error('[AUTH] Authentication error:', e)
       } finally {
         setIsAuthReady(true)
+        clearTimeout(failsafeTimer)
       }
     }
     authenticate()
+    return () => clearTimeout(failsafeTimer)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

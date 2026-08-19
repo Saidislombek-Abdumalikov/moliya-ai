@@ -4,6 +4,7 @@ import type { OnboardingResult } from './Onboarding'
 import { useFinance, Transaction } from '../FinanceContext'
 import BankCard from './BankCard'
 import { openTelegramBot, openExternalUrl, isNativePlatform } from '../utils/nativeBridge'
+import { exportFinancialReport } from '../utils/exportHelper'
 
 interface Props {
   onLogout: () => void
@@ -466,8 +467,11 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
   const lang = (initialLang in translations) ? initialLang : 'uz'
   const t = translations[lang as keyof typeof translations]
 
-  // Global premium state (can read from onboarding, default false)
-  const isPremium = onboarding?.monthlyIncome === undefined && onboarding?.monthlyGoal === 999999 ? true : (onboarding as any)?.isPremium || false
+  const { cards: rawCards, saveCards, clearAllData, clearOnlyFinancialData, customTransactions, addTransaction, userSubscription } = useFinance()
+  const cards = Array.isArray(rawCards) ? rawCards : []
+
+  // Global premium state
+  const isPremium = Boolean(userSubscription?.isVip ?? ((onboarding as any)?.isPremium || false))
 
   // Profile data
   const userName = (onboarding as any)?.name || 'Jasur Toshmatov'
@@ -486,9 +490,6 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
   const [editName, setEditName] = useState(userName)
   const [editPhone, setEditPhone] = useState(userPhone)
   const [editTelegram, setEditTelegram] = useState(userTelegram)
-
-  const { cards: rawCards, saveCards, clearAllData, clearOnlyFinancialData, customTransactions, addTransaction } = useFinance()
-  const cards = Array.isArray(rawCards) ? rawCards : []
 
   const getCardBalance = (cardId: string) => {
     const c = cards.find(x => x.id === cardId)
@@ -663,132 +664,37 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
     setShowAddCardForm(false)
   }
 
-  // Handle report export with real file download
+  // Handle report export with real native Android & Web file download
   const handleExportStart = () => {
-    setExportProgress(10)
+    setExportProgress(15)
     const interval = setInterval(() => {
       setExportProgress((p) => {
         if (p === null) return null
         if (p >= 100) {
           clearInterval(interval)
-          setTimeout(() => {
+          setTimeout(async () => {
             try {
-              const now = new Date()
-              let filteredTxs = [...customTransactions]
-
-              if (exportPeriod === 'current') {
-                filteredTxs = filteredTxs.filter(t => {
-                  const d = new Date(t.date || Date.now())
-                  return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
-                })
-              } else if (exportPeriod === 'last') {
-                const lastM = new Date(now.getFullYear(), now.getMonth() - 1, 1)
-                filteredTxs = filteredTxs.filter(t => {
-                  const d = new Date(t.date || Date.now())
-                  return d.getMonth() === lastM.getMonth() && d.getFullYear() === lastM.getFullYear()
-                })
-              } else if (exportPeriod === 'quarter') {
-                const threeM = new Date(now.getFullYear(), now.getMonth() - 3, 1)
-                filteredTxs = filteredTxs.filter(t => new Date(t.date || Date.now()) >= threeM)
-              }
-
-              if (exportFormat === 'PDF') {
-                const printWin = window.open('', '_blank')
-                if (printWin) {
-                  printWin.document.write(`
-                    <!DOCTYPE html>
-                    <html>
-                    <head>
-                      <meta charset="utf-8">
-                      <title>Moliya Financial Report - ${userName}</title>
-                      <style>
-                        body { font-family: system-ui, -apple-system, sans-serif; padding: 30px; color: #1E1A3C; max-width: 800px; margin: 0 auto; }
-                        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #7C3AED; padding-bottom: 16px; margin-bottom: 24px; }
-                        h1 { color: #7C3AED; margin: 0; font-size: 24px; }
-                        .meta { font-size: 13px; color: #5C548A; margin-bottom: 20px; line-height: 1.6; }
-                        table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 14px; }
-                        th, td { border: 1px solid #E4E2F0; padding: 12px; text-align: left; }
-                        th { background: #F5F3FF; color: #7C3AED; font-weight: 700; }
-                        tr:nth-child(even) { background: #FAF9FD; }
-                        .type-income { color: #16A34A; font-weight: 600; }
-                        .type-expense { color: #DC2626; font-weight: 600; }
-                      </style>
-                    </head>
-                    <body>
-                      <div class="header">
-                        <h1>Moliya Financial Report</h1>
-                        <span>${now.toLocaleDateString()}</span>
-                      </div>
-                      <div class="meta">
-                        <strong>Foydalanuvchi:</strong> ${userName} (${userPhone})<br>
-                        <strong>Hisobot davri:</strong> ${exportPeriod === 'current' ? 'Shu oy' : exportPeriod === 'last' ? 'O\'tgan oy' : '3 oy'}<br>
-                        <strong>Jami tranzaksiyalar:</strong> ${filteredTxs.length} ta
-                      </div>
-                      <table>
-                        <thead>
-                          <tr>
-                            <th>Sana</th>
-                            <th>Turi</th>
-                            <th>Kategoriya</th>
-                            <th>Summa</th>
-                            <th>Izoh</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          ${filteredTxs.map(t => {
-                            const numAmt = Number(String(t.amount).replace(/\s/g, '').replace(/,/g, '')) || 0
-                            const isInc = numAmt > 0
-                            return `
-                              <tr>
-                                <td>${new Date(t.date || Date.now()).toLocaleDateString()}</td>
-                                <td class="${isInc ? 'type-income' : 'type-expense'}">${isInc ? 'Daromad' : 'Xarajat'}</td>
-                                <td>${t.category}</td>
-                                <td class="${isInc ? 'type-income' : 'type-expense'}">${Math.abs(numAmt).toLocaleString('uz-UZ')} so'm</td>
-                                <td>${(t.note || '').replace(/</g, '&lt;')}</td>
-                              </tr>
-                            `
-                          }).join('')}
-                        </tbody>
-                      </table>
-                      <script>
-                        window.onload = function() { window.print(); }
-                      </script>
-                    </body>
-                    </html>
-                  `)
-                  printWin.document.close()
-                }
-              } else {
-                // UTF-8 BOM for Excel compatibility
-                const BOM = '\uFEFF'
-                const headers = "ID;Sana (Date);Turi (Type);Kategoriya (Category);Summa (Amount);Izoh (Note)\n"
-                const rows = filteredTxs.map(t => 
-                  `"${t.id}";"${t.date ? new Date(t.date).toLocaleDateString() : ''}";"${t.type}";"${t.category}";"${t.amount}";"${(t.note || '').replace(/"/g, '""')}"`
-                ).join("\n")
-                const content = BOM + headers + rows
-                const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' })
-                const url = URL.createObjectURL(blob)
-                const link = document.createElement("a")
-                link.href = url
-                link.download = `Moliya_Report_${exportPeriod}_${now.toISOString().slice(0, 10)}.csv`
-                document.body.appendChild(link)
-                link.click()
-                document.body.removeChild(link)
-                URL.revokeObjectURL(url)
-              }
-            } catch (err) {
-              console.error('Export error:', err)
+              const res = await exportFinancialReport({
+                format: exportFormat.toUpperCase() === 'PDF' ? 'PDF' : 'EXCEL',
+                period: exportPeriod,
+                userName,
+                userPhone,
+                transactions: customTransactions
+              })
+              setToastMessage(res.message || t.exportModal.success)
+            } catch (err: any) {
+              console.error('[EXPORT] Error exporting financial report:', err)
+              setToastMessage(lang === 'uz' ? "Hisobotni yaratishda xatolik yuz berdi" : "Hisobot yaratildi")
+            } finally {
+              setExportProgress(null)
+              setActiveModal(null)
             }
-
-            setExportProgress(null)
-            setActiveModal(null)
-            setToastMessage(t.exportModal.success)
-          }, 300)
+          }, 200)
           return 100
         }
-        return p + 30
+        return p + 35
       })
-    }, 300)
+    }, 250)
   }
 
   // Support chat trigger
@@ -970,10 +876,16 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
         })
         const activeMonths = monthSet.size
 
+        const aiUsed = userSubscription?.aiQueryCount ?? 0
+        const aiLimit = userSubscription?.aiLimit ?? (isPremium ? null : 5)
+        const aiDisplay = isPremium 
+          ? (aiLimit === null ? (lang === 'uz' ? 'Cheksiz' : lang === 'ru' ? 'Безлимит' : 'Unlimited') : `${aiUsed}/${aiLimit}`)
+          : `${aiUsed}/${aiLimit}`
+
         const dynamicStats = [
           { val: activeMonths.toString(), label: t.stats[0].label },
           { val: totalTxCount.toString(), label: t.stats[1].label },
-          { val: isPremium ? (lang === 'uz' ? 'Cheksiz' : lang === 'uz_cyrl' ? 'Чексиз' : lang === 'ru' ? 'Безлимит' : 'Unlimited') : '10/50', label: t.stats[2].label },
+          { val: aiDisplay, label: (lang === 'uz' || lang === 'uz_cyrl') ? (lang === 'uz_cyrl' ? 'AI сўровлар' : 'AI so\'rovlar') : lang === 'ru' ? 'ИИ запросы' : 'AI queries' },
         ]
         return (
           <div style={{ padding: '0 20px 20px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
@@ -1020,7 +932,9 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
               {isPremium ? t.premium.planPremium : t.premium.planName}
             </p>
             <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.75)' }}>
-              {isPremium ? t.premium.usagePremium : t.premium.usage}
+              {isPremium
+                ? (userSubscription?.premiumExpiresAt ? `Cheksiz AI • ${new Date(userSubscription.premiumExpiresAt).toLocaleDateString()} gacha` : t.premium.usagePremium)
+                : `Ishlatilgan: ${userSubscription?.aiQueryCount || 0} / ${userSubscription?.aiLimit || 5} ta AI`}
             </p>
           </div>
           <button style={{
@@ -1574,9 +1488,58 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                 </p>
               </div>
 
+              {/* Real-time AI Quotas & Subscription Status Box */}
+              <div style={{
+                background: isPremium ? '#F5F3FF' : '#F9FAFB',
+                borderRadius: 18, padding: '16px',
+                border: isPremium ? '1.5px solid #DDD6FE' : '1.5px solid #E5E7EB',
+                marginBottom: 16,
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: '#8B82C4', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    {(lang === 'uz' || lang === 'uz_cyrl') ? (lang === 'uz_cyrl' ? "Ҳозирги AI Ҳолатингиз" : "Hozirgi AI Holatingiz") : "Current AI Status"}
+                  </span>
+                  <span style={{
+                    fontSize: 11, fontWeight: 800,
+                    color: isPremium ? '#7C3AED' : '#4B5563',
+                    background: isPremium ? '#EDE9FE' : '#F3F4F6',
+                    padding: '3px 10px', borderRadius: 12
+                  }}>
+                    {isPremium ? 'Premium Pro 🌟' : 'Bepul (Free)'}
+                  </span>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div style={{ background: '#FFFFFF', padding: '10px 12px', borderRadius: 12, border: '1px solid #E5E7EB' }}>
+                    <p style={{ fontSize: 10.5, color: '#6B7280', fontWeight: 600, marginBottom: 2 }}>
+                      {(lang === 'uz' || lang === 'uz_cyrl') ? (lang === 'uz_cyrl' ? "Ишлатилди:" : "Ishlatildi:") : "Used:"}
+                    </p>
+                    <p style={{ fontSize: 15, fontWeight: 800, color: '#1E1A3C' }}>
+                      {userSubscription?.aiQueryCount || 0} ta
+                    </p>
+                  </div>
+                  <div style={{ background: '#FFFFFF', padding: '10px 12px', borderRadius: 12, border: '1px solid #E5E7EB' }}>
+                    <p style={{ fontSize: 10.5, color: '#6B7280', fontWeight: 600, marginBottom: 2 }}>
+                      {(lang === 'uz' || lang === 'uz_cyrl') ? (lang === 'uz_cyrl' ? "Қолди:" : "Qoldi:") : "Remaining:"}
+                    </p>
+                    <p style={{ fontSize: 15, fontWeight: 800, color: '#7C3AED' }}>
+                      {userSubscription?.aiLimit !== null
+                        ? `${Math.max(0, (userSubscription?.aiLimit || 5) - (userSubscription?.aiQueryCount || 0))} ta`
+                        : (lang === 'uz' ? 'Cheksiz ⚡' : 'Unlimited ⚡')}
+                    </p>
+                  </div>
+                </div>
+
+                {userSubscription?.premiumExpiresAt && (
+                  <p style={{ fontSize: 11.5, color: '#059669', fontWeight: 600, marginTop: 10, textAlign: 'center' }}>
+                    ✨ VIP muddati: {new Date(userSubscription.premiumExpiresAt).toLocaleDateString()} gacha faol
+                  </p>
+                )}
+              </div>
+
               {/* What Premium gives */}
               <div style={{
-                background: '#F5F3FF', borderRadius: 16, padding: '14px 16px',
+                background: '#FAF5FF', borderRadius: 16, padding: '14px 16px',
                 border: '1.5px solid #DDD6FE', marginBottom: 16,
                 display: 'flex', flexDirection: 'column', gap: 10
               }}>
