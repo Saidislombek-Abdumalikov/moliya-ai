@@ -4,6 +4,8 @@ import path from "path";
 
 import { createClient } from '@supabase/supabase-js';
 import crypto from "crypto";
+import { executeAiWithRotation, getCandidateAiKeys, maskApiKey, testSpecificAiKey, recordKeyResult, AiKeyRecord } from './api/_aiRouter.js';
+import { checkAndRecordAiUsage } from './api/_aiQuotaHelper.js';
 
 // Supabase client for local dev server (replaces Firebase)
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://qjumnjzbgjldbwwluggr.supabase.co';
@@ -405,156 +407,475 @@ async function startServer() {
 
   app.post("/api/parse-expense", async (req, res) => {
     try {
-      const { text, cards = [] } = req.body;
+      const { text, userId } = req.body || {};
       if (!text || typeof text !== 'string' || text.trim().length === 0) {
         res.status(400).json({ error: "Missing or invalid 'text' parameter" });
         return;
       }
 
-      if (text.length > 500) {
-        res.status(400).json({ error: "Text exceeds maximum length of 500 characters" });
+      // 1. Quota Check & Enforcement
+      const quota = await checkAndRecordAiUsage(userId, 'text', text);
+      if (!quota.allowed) {
+        res.status(429).json({
+          success: false,
+          error: 'quota_exceeded',
+          limit: quota.limit,
+          usedCount: quota.usedCount,
+          message: quota.message || 'AI so\'rov limiti tugadi. Davom etish uchun VIP Premium obunasini faollashtiring!'
+        });
         return;
       }
 
       const cleanText = text.replace(/[\r\n\t]/g, ' ').slice(0, 500);
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      
-      const now = new Date();
-      const currentYear = now.getFullYear();
-      const currentIso = now.toISOString().slice(0, 16);
-      const currentDayName = now.toLocaleDateString('uz-UZ', { weekday: 'long' });
+      const aiResult = await executeAiWithRotation(cleanText);
 
-      let cardsContext = '';
-      if (cards && cards.length > 0) {
-        cardsContext = "Foydalanuvchining hisoblari/kartalari:\n" + cards.map((c: any) => `- ID: "${c.id}", Nomi: "${c.name}", Raqami: "${c.number}"`).join('\n') + "\nAgar matnda ushbu hisoblardan biri tilga olingan bo'lsa (masalan, humo, uzcard, yoki karta nomi), o'sha ID ni 'cardId' maydonida qaytaring. Agar naqd pul, hamyon yoki karta tilga olinmasa, 'cash' deb qaytaring yoki bush qoldiring.";
+      if (aiResult.success) {
+        res.json({
+          success: true,
+          type: aiResult.type || 'expense',
+          amount: aiResult.amount,
+          category: aiResult.category || 'Boshqa',
+          note: aiResult.note || text,
+          title: aiResult.title || aiResult.note || text,
+          debtWho: aiResult.debtWho || '',
+          providerUsed: aiResult.providerUsed
+        });
+      } else {
+        console.error('[SERVER_PARSE_EXPENSE] AI Router error:', aiResult.error);
+        res.status(502).json({ error: aiResult.error || 'AI parsing failed' });
       }
-
-      const promptText = `
-You are a financial parsing assistant for an Uzbek finance tracker.
-Parse the following user input and return a JSON object.
-
-Hozirgi vaqt (Current context):
-- Joriy yil: ${currentYear}
-- Joriy to'liq sana (ISO): ${currentIso}
-- Hafta kuni: ${currentDayName}
-
-${cardsContext}
-
-Sana aniqlash qoidalari (Date Parsing Rules):
-1. O'zbekcha oylar: yanvar=01, fevral=02, mart=03, aprel=04, may=05, iyun=06, iyul=07, avgust=08, sentabr/sentiyabr=09, oktabr/oktyabr=10, noyabr=11, dekabr=12.
-2. Agar foydalanuvchi "kecha" (yesterday) deb aytsa, bugungi kundan 1 kun oldingi sanani ("YYYY-MM-DDTHH:mm") yozing (soatni saqlagan holda).
-3. Agar foydalanuvchi "27 -iyul", "27-iyul", "27 iyul" yoki shunga o'xshash sana aytsa, aniq shu oyni raqamga o'girib, joriy yil (${currentYear}) bilan birga "YYYY-MM-DDTHH:mm" formatiga o'tkazing (masalan: "2026-07-27T12:00").
-4. Agar foydalanuvchi umuman hech qanday sana tilga olmagan bo'lsa, "date" maydoniga joriy vaqtni ("${currentIso}") yozing.
-5. "date" har doim qaytarilishi shart.
-
-JSON output must have:
-- type: 'expense' | 'income' | 'debt' | 'lending'
-- amount: string (number formatted with spaces, e.g., '5 000 000' or '45 000')
-- category: string (the category, e.g., 'Oila', 'Oziq-ovqat', 'Transport', "Do'st", 'Boshqa')
-- note: string (a short note, typically a very clean summary of the transaction without messy raw text)
-- title: string (a short clean title of the transaction, e.g., "Dadamdan o'tkazma", "Ovqat", etc.)
-- debtWho: string (the name of the person involved in a debt or lending transaction, if applicable)
-- date: string ("YYYY-MM-DDTHH:mm" format. STRICTLY resolve this using the rules above.)
-- cardId: string (optional, the matching card ID if a specific card/bank is mentioned, otherwise 'cash')
-
-Strict Rules:
-- "qarz olindi" or "qarz oldim" means borrowing money -> STRICTLY evaluate to type="income" (do NOT use debt)
-- "qarz berildi" or "qarz berdim" means lending money -> STRICTLY evaluate to type="expense" (do NOT use lending)
-- "dedomla" means father -> likely income from father, type="income", category="Oila", title="Dadamdan", debtWho="Dadam"
-- "o'tkazberdila" means transferred to me -> type="income"
-- ALWAYS map local slang like "dedomla", "akam", "o'rtog'im" correctly to debtWho if it's a debt/lending.
-- Backpack, sumka, ryukzak, clothes, shoes -> category="Kiyim"
-- Only use "Oziq-ovqat" if food, groceries, meal, cafe, or restaurant is explicitly mentioned.
-- If the item is not food or transport or clothes, use category="Boshqa".
-- Do not put raw messy text in title. Make the title very short and clean.
-
-Input text: "${cleanText}"
-`;
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3.1-flash-lite",
-        contents: promptText,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              type: { type: Type.STRING, enum: ['expense', 'income', 'debt', 'lending'] },
-              amount: { type: Type.STRING },
-              category: { type: Type.STRING },
-              note: { type: Type.STRING },
-              title: { type: Type.STRING },
-              debtWho: { type: Type.STRING },
-              date: { type: Type.STRING },
-              cardId: { type: Type.STRING },
-            },
-            required: ["type", "amount", "category", "note", "date"],
-          }
-        }
-      });
-      
-      const data = JSON.parse(response.text || '{}');
-      res.json(data);
     } catch (e: any) {
-      console.error(e);
+      console.error('Parse expense error in server:', e);
       res.status(500).json({ error: e.message });
     }
   });
+
   app.post("/api/parse-receipt", async (req, res) => {
     try {
-      const { base64Image, mimeType } = req.body;
+      const { base64Image, mimeType, userId } = req.body || {};
       if (!base64Image) {
-        return res.status(400).json({ error: "Missing image data" });
+        res.status(400).json({ error: "Missing image data" });
+        return;
       }
 
-      if (!process.env.GEMINI_API_KEY) {
-        return res.status(500).json({ error: "Gemini API key missing" });
+      // 1. Quota Check & Enforcement
+      const quota = await checkAndRecordAiUsage(userId, 'receipt', 'Receipt OCR Scan');
+      if (!quota.allowed) {
+        res.status(429).json({
+          success: false,
+          error: 'quota_exceeded',
+          limit: quota.limit,
+          usedCount: quota.usedCount,
+          message: quota.message || 'AI chek skanerlash limiti tugadi. VIP Premium obunasini faollashtiring!'
+        });
+        return;
       }
 
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      const promptText = `
-Examine this financial invoice/receipt/cheque screenshot image. Extract transaction details in JSON:
-- type: 'expense' | 'income'
-- amount: string (number formatted with spaces, e.g. '85 000')
+      const cleanBase64 = base64Image.replace(/^data:image\/\w+;base64,/, '');
+      const imageMime = mimeType || 'image/jpeg';
+      const candidateKeys = await getCandidateAiKeys();
+
+      const prompt = `Analyze this receipt image (Uzbekistan/Global receipt) and extract:
+- type: 'expense'
+- amount: total paid number in UZS currency (e.g. 50000, 120000)
 - category: string ('Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\'liq', 'Ta\'lim', 'Boshqa')
-- note: string (shop or vendor name, e.g. "Korzinka" or invoice item summary)
-- title: string (short clean title)
-- date: string ("YYYY-MM-DDTHH:mm" format if readable on receipt, else null)
-`;
+- title: store name or main item (e.g. 'Korzinka', 'Makro', 'Taksi')
+- note: summary of purchased items`;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.1-flash-lite",
-        contents: [
-          {
-            inlineData: {
-              mimeType: mimeType || "image/jpeg",
-              data: base64Image.replace(/^data:image\/\w+;base64,/, '')
+      for (const key of candidateKeys) {
+        if (key.provider !== 'google') continue;
+        try {
+          const ai = new GoogleGenAI({ apiKey: key.api_key });
+          const response = await ai.models.generateContent({
+            model: key.model || "gemini-2.5-flash",
+            contents: [
+              {
+                inlineData: {
+                  mimeType: imageMime,
+                  data: cleanBase64
+                }
+              },
+              prompt
+            ],
+            config: {
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  type: { type: Type.STRING },
+                  amount: { type: Type.NUMBER },
+                  category: { type: Type.STRING },
+                  title: { type: Type.STRING },
+                  note: { type: Type.STRING },
+                },
+                required: ["type", "amount", "category", "title"],
+              }
             }
-          },
-          promptText
-        ],
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              type: { type: Type.STRING, enum: ['expense', 'income'] },
-              amount: { type: Type.STRING },
-              category: { type: Type.STRING },
-              note: { type: Type.STRING },
-              title: { type: Type.STRING },
-              date: { type: Type.STRING },
-            },
-            required: ["type", "amount", "category", "note"],
+          });
+
+          if (response?.text) {
+            const parsed = JSON.parse(response.text);
+            if (parsed.amount) {
+              await recordKeyResult(key.id, true);
+              const fmtAmt = parsed.amount.toLocaleString('en-US').replace(/,/g, ' ');
+              res.json({
+                success: true,
+                type: parsed.type || 'expense',
+                amount: fmtAmt,
+                category: parsed.category || 'Oziq-ovqat',
+                title: parsed.title || 'Chek xarajati',
+                note: parsed.note || parsed.title || 'Chekdan olindi',
+                providerUsed: `${key.provider}:${key.model}`
+              });
+              return;
+            }
           }
+        } catch (err: any) {
+          console.warn(`[RECEIPT_SCAN] Key ${key.name} vision parse failed, rotating:`, err?.message);
+          await recordKeyResult(key.id, false, err?.message, 'temporary');
+        }
+      }
+
+      res.status(502).json({ error: 'Receipt scanning failed across available vision AI keys' });
+    } catch (e: any) {
+      console.error('Receipt parse error in server:', e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // ADMIN DASHBOARD API ENDPOINTS
+  // ─────────────────────────────────────────────────────────────
+
+  // 1. Admin AI Keys (GET Masked & POST Actions)
+  app.get("/api/admin/ai-keys", async (req, res) => {
+    try {
+      let keys: AiKeyRecord[] = [];
+      const { data: dbKeys, error } = await supabase
+        .from('ai_keys')
+        .select('*')
+        .order('priority', { ascending: true })
+        .order('created_at', { ascending: false });
+
+      if (!error && Array.isArray(dbKeys)) {
+        keys = dbKeys;
+      }
+
+      if (keys.length === 0) {
+        const envKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || "";
+        if (envKey) {
+          keys = [{
+            id: 'env_default_gemini',
+            name: 'Default Environment Gemini Key',
+            provider: 'google',
+            api_key: envKey,
+            model: 'gemini-2.5-flash',
+            priority: 1,
+            status: 'active',
+            total_requests: 0,
+            success_requests: 0,
+            failed_requests: 0,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }];
+        }
+      }
+
+      const { data: aiLogs } = await supabase.from('ai_logs').select('id, timestamp').limit(1000);
+      const now = new Date();
+      const todayStr = now.toISOString().slice(0, 10);
+      const curMonth = now.getMonth();
+      const curYear = now.getFullYear();
+
+      let requestsToday = 0;
+      let requestsMonth = 0;
+
+      (aiLogs || []).forEach((l: any) => {
+        if (l.timestamp) {
+          const d = new Date(l.timestamp);
+          if (l.timestamp.startsWith(todayStr)) requestsToday++;
+          if (d.getMonth() === curMonth && d.getFullYear() === curYear) requestsMonth++;
         }
       });
 
-      const data = JSON.parse(response.text || '{}');
-      res.json(data);
+      const safeKeys = keys.map(k => ({
+        id: k.id,
+        name: k.name || 'Unnamed Key',
+        provider: k.provider || 'google',
+        maskedKey: maskApiKey(k.api_key),
+        model: k.model || 'gemini-2.5-flash',
+        priority: k.priority || 1,
+        status: k.status || 'active',
+        totalRequests: k.total_requests || 0,
+        successRequests: k.success_requests || 0,
+        failedRequests: k.failed_requests || 0,
+        lastError: k.last_error || null,
+        lastErrorAt: k.last_error_at || null,
+        lastUsedAt: k.last_used_at || null,
+        createdAt: k.created_at || new Date().toISOString(),
+        updatedAt: k.updated_at || new Date().toISOString(),
+      }));
+
+      const metrics = {
+        totalKeys: safeKeys.length,
+        activeKeys: safeKeys.filter(k => k.status === 'active').length,
+        rateLimitedKeys: safeKeys.filter(k => k.status === 'rate_limited').length,
+        exhaustedKeys: safeKeys.filter(k => k.status === 'exhausted').length,
+        disabledKeys: safeKeys.filter(k => k.status === 'disabled').length,
+        requestsToday,
+        requestsMonth,
+        totalLogged: aiLogs?.length || 0
+      };
+
+      res.json({ success: true, keys: safeKeys, metrics });
+    } catch (err: any) {
+      console.error('[ADMIN_AI_KEYS_SERVER] GET error:', err);
+      res.status(500).json({ error: 'Failed to fetch AI keys', details: err?.message });
+    }
+  });
+
+  app.post("/api/admin/ai-keys", async (req, res) => {
+    try {
+      const { action, keyData, keyId } = req.body || {};
+      const nowIso = new Date().toISOString();
+
+      if (action === 'create') {
+        const { name, provider, apiKey, model, priority, status } = keyData || {};
+        if (!apiKey || !provider) {
+          res.status(400).json({ error: 'Missing required apiKey or provider' });
+          return;
+        }
+
+        const newId = `key_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        const record: AiKeyRecord = {
+          id: newId,
+          name: name || `${provider.toUpperCase()} Key`,
+          provider: provider || 'google',
+          api_key: apiKey.trim(),
+          model: model || (provider === 'google' ? 'gemini-2.5-flash' : 'gpt-4o-mini'),
+          priority: Number(priority) || 1,
+          status: status || 'active',
+          total_requests: 0,
+          success_requests: 0,
+          failed_requests: 0,
+          created_at: nowIso,
+          updated_at: nowIso
+        };
+
+        await supabase.from('ai_keys').insert(record);
+
+        res.json({
+          success: true,
+          message: 'AI kaliti muvaffaqiyatli saqlandi! 🔑',
+          key: {
+            ...record,
+            maskedKey: maskApiKey(record.api_key),
+            api_key: undefined
+          }
+        });
+        return;
+      }
+
+      if (action === 'update') {
+        if (!keyId) {
+          res.status(400).json({ error: 'Missing keyId' });
+          return;
+        }
+
+        const updatePayload: any = { updated_at: nowIso };
+        if (keyData.name) updatePayload.name = keyData.name;
+        if (keyData.provider) updatePayload.provider = keyData.provider;
+        if (keyData.model) updatePayload.model = keyData.model;
+        if (keyData.priority !== undefined) updatePayload.priority = Number(keyData.priority);
+        if (keyData.status) updatePayload.status = keyData.status;
+
+        if (keyData.apiKey && !keyData.apiKey.startsWith('••••')) {
+          updatePayload.api_key = keyData.apiKey.trim();
+        }
+
+        await supabase.from('ai_keys').update(updatePayload).eq('id', keyId);
+        res.json({ success: true, message: 'AI kaliti yangilandi! ✏️' });
+        return;
+      }
+
+      if (action === 'toggle') {
+        if (!keyId) {
+          res.status(400).json({ error: 'Missing keyId' });
+          return;
+        }
+
+        const { data: existing } = await supabase.from('ai_keys').select('status').eq('id', keyId).maybeSingle();
+        const nextStatus = existing?.status === 'active' ? 'disabled' : 'active';
+        await supabase.from('ai_keys').update({ status: nextStatus, updated_at: nowIso }).eq('id', keyId);
+
+        res.json({
+          success: true,
+          status: nextStatus,
+          message: `AI kaliti ${nextStatus === 'active' ? 'faollashtirildi 🟢' : 'o\'chirildi ⚪'}`
+        });
+        return;
+      }
+
+      if (action === 'delete') {
+        if (!keyId) {
+          res.status(400).json({ error: 'Missing keyId' });
+          return;
+        }
+        await supabase.from('ai_keys').delete().eq('id', keyId);
+        res.json({ success: true, message: 'AI kaliti o\'chirildi 🗑️' });
+        return;
+      }
+
+      if (action === 'test') {
+        let keyToTest: { provider: any; api_key: string; model?: string } | null = null;
+        if (keyId) {
+          const { data: found } = await supabase.from('ai_keys').select('*').eq('id', keyId).maybeSingle();
+          if (found) {
+            keyToTest = { provider: found.provider, api_key: found.api_key, model: found.model };
+          }
+        }
+
+        if (!keyToTest && keyData?.apiKey) {
+          keyToTest = { provider: keyData.provider || 'google', api_key: keyData.apiKey, model: keyData.model };
+        }
+
+        if (!keyToTest || !keyToTest.api_key) {
+          res.status(400).json({ error: 'No key provided to test' });
+          return;
+        }
+
+        const testResult = await testSpecificAiKey(keyToTest);
+        if (keyId) {
+          const newStatus = testResult.healthy ? 'active' : testResult.status.includes('Rate') ? 'rate_limited' : 'invalid';
+          await supabase.from('ai_keys').update({
+            status: newStatus,
+            last_error: testResult.error || null,
+            last_error_at: testResult.healthy ? null : nowIso,
+            updated_at: nowIso
+          }).eq('id', keyId);
+        }
+
+        res.json({
+          success: true,
+          healthy: testResult.healthy,
+          status: testResult.status,
+          latencyMs: testResult.latencyMs,
+          error: testResult.error
+        });
+        return;
+      }
+
+      res.status(400).json({ error: 'Invalid action' });
+    } catch (err: any) {
+      console.error('[ADMIN_AI_KEYS_SERVER] POST error:', err);
+      res.status(500).json({ error: 'Operation failed', details: err?.message });
+    }
+  });
+
+  // 2. Admin Users
+  app.get("/api/admin/users", async (req, res) => {
+    try {
+      const { data: suUsers, error } = await supabase
+        .from('users')
+        .select('*')
+        .order('updated_at', { ascending: false });
+
+      if (!error && Array.isArray(suUsers)) {
+        const formatted = suUsers.map(u => ({
+          id: u.id,
+          name: u.name,
+          phone: u.phone,
+          telegram: u.telegram,
+          telegramId: u.telegram_id,
+          isPremium: u.is_premium,
+          premiumExpiresAt: u.premium_expires_at,
+          aiLimit: u.ai_limit,
+          aiQueryCount: u.ai_query_count,
+          lastAiQueryAt: u.last_ai_query_at,
+          language: u.language,
+          onboarding: u.onboarding,
+          createdAt: u.created_at,
+          updatedAt: u.updated_at
+        }));
+        res.json({ success: true, users: formatted });
+        return;
+      }
+      res.json({ success: true, users: [] });
     } catch (e: any) {
-      console.error('Receipt parse error:', e);
-      res.status(500).json({ error: e.message });
+      res.status(500).json({ error: 'Failed to fetch users', details: e?.message });
+    }
+  });
+
+  app.post("/api/admin/users", async (req, res) => {
+    try {
+      const { userId, isPremium, aiLimit, premiumExpiresAt } = req.body || {};
+      if (!userId) {
+        res.status(400).json({ error: 'Missing userId' });
+        return;
+      }
+
+      const updateData: any = {
+        updated_at: new Date().toISOString()
+      };
+      if (isPremium !== undefined) updateData.is_premium = !!isPremium;
+      if (aiLimit !== undefined) updateData.ai_limit = aiLimit;
+      if (premiumExpiresAt !== undefined) updateData.premium_expires_at = premiumExpiresAt;
+
+      await supabase.from('users').update(updateData).eq('id', userId);
+      res.json({ success: true, message: 'User updated successfully' });
+    } catch (e: any) {
+      res.status(500).json({ error: 'Failed to update user', details: e?.message });
+    }
+  });
+
+  // 3. Admin AI Logs
+  app.get("/api/admin/ai-logs", async (req, res) => {
+    try {
+      const { data: suLogs } = await supabase
+        .from('ai_logs')
+        .select('*')
+        .order('timestamp', { ascending: false })
+        .limit(100);
+
+      const formatted = (suLogs || []).map((l: any) => ({
+        id: l.id,
+        userId: l.user_id,
+        queryType: l.query_type,
+        promptSummary: l.prompt_summary,
+        isPremium: l.is_premium,
+        timestamp: l.timestamp
+      }));
+      res.json({ success: true, count: formatted.length, logs: formatted });
+    } catch (e: any) {
+      res.status(500).json({ error: 'Failed to fetch AI logs', details: e?.message });
+    }
+  });
+
+  // 4. Admin Broadcast
+  app.post("/api/admin/broadcast", async (req, res) => {
+    try {
+      const { title, message, type, audience, expireHours } = req.body || {};
+      if (!title || !message) {
+        res.status(400).json({ error: 'Missing title or message' });
+        return;
+      }
+
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + (expireHours || 72) * 3600 * 1000).toISOString();
+
+      await supabase.from('app_notifications').insert({
+        title,
+        message,
+        type: type || 'info',
+        target_audience: audience || 'all',
+        is_active: true,
+        expires_at: expiresAt,
+        created_at: now.toISOString()
+      });
+
+      res.json({ success: true, message: 'Broadcast notification published successfully! 📢' });
+    } catch (e: any) {
+      res.status(500).json({ error: 'Failed to broadcast', details: e?.message });
     }
   });
 

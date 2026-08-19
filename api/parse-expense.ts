@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { GoogleGenAI, Type } from "@google/genai";
 import { checkAndRecordAiUsage } from './_aiQuotaHelper.js';
+import { executeAiWithRotation } from './_aiRouter.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -17,7 +17,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Missing text' });
     }
 
-    // 1. Quota Check & Enforcement for Free users
+    // 1. Quota Check & Enforcement for Free and VIP users
     const quota = await checkAndRecordAiUsage(userId, 'text', text);
     if (!quota.allowed) {
       return res.status(429).json({
@@ -25,86 +25,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         error: 'quota_exceeded',
         limit: quota.limit,
         usedCount: quota.usedCount,
-        message: quota.message || 'Bepul AI so\'rov limiti tugadi. Davom etish uchun VIP Premium obunasini faollashtiring!'
+        message: quota.message || 'AI so\'rov limiti tugadi. Davom etish uchun VIP Premium obunasini faollashtiring!'
       });
     }
 
-    // 2. Gemini AI Parsing Execution
-    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || "";
-    if (apiKey) {
-      const ai = new GoogleGenAI({ apiKey });
-      const prompt = `You are a financial AI assistant. Parse this transaction spoken transcript or written text in Uzbek, Russian, or English: "${text}".
-Detect:
-- type: 'expense' (spending), 'income' (salary/earnings), 'debt' (borrowed money), or 'lending' (loaned money to someone)
-- amount: total amount in numbers (e.g. "45 ming" -> 45000, "1.5 mln" -> 1500000, "100 dollar" -> 100, "ellik ming" -> 50000)
-- category: choose EXACTLY one from: ['Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\'liq', 'Ta\'lim', 'Ko\'ngil ochar', 'Boshqa', 'Maosh', 'Freelance', 'Biznes', 'Sovg\'a', 'Investitsiya', 'Do\'st', 'Bank', 'Oila', 'Hamkasb']
-- note: meaningful description of the item or expense
-- title: concise 2-3 word title
-- debtWho: person or organization name if debt/lending, otherwise empty`;
+    // 2. Central AI Router Execution with Automatic Key Rotation
+    const aiResult = await executeAiWithRotation(text);
 
-      let response;
-      try {
-        response = await ai.models.generateContent({
-          model: "gemini-2.5-flash",
-          contents: prompt,
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                type: { type: Type.STRING },
-                amount: { type: Type.NUMBER },
-                category: { type: Type.STRING },
-                note: { type: Type.STRING },
-                title: { type: Type.STRING },
-                debtWho: { type: Type.STRING },
-              },
-              required: ["type", "amount", "category", "note"],
-            }
-          }
-        });
-      } catch (err) {
-        console.warn('Gemini 2.5 flash parse failed, trying fallback:', err);
-        response = await ai.models.generateContent({
-          model: "gemini-1.5-flash",
-          contents: prompt,
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                type: { type: Type.STRING },
-                amount: { type: Type.NUMBER },
-                category: { type: Type.STRING },
-                note: { type: Type.STRING },
-                title: { type: Type.STRING },
-                debtWho: { type: Type.STRING },
-              },
-              required: ["type", "amount", "category", "note"],
-            }
-          }
-        });
-      }
-
-      if (response && response.text) {
-        const parsed = JSON.parse(response.text);
-        if (parsed.amount) {
-          const fmtAmt = parsed.amount.toLocaleString('en-US').replace(/,/g, ' ');
-          return res.status(200).json({
-            success: true,
-            type: parsed.type || 'expense',
-            amount: fmtAmt,
-            category: parsed.category || 'Boshqa',
-            note: parsed.note || text,
-            title: parsed.title || parsed.note || text,
-            debtWho: parsed.debtWho || '',
-          });
-        }
-      }
+    if (aiResult.success) {
+      return res.status(200).json({
+        success: true,
+        type: aiResult.type || 'expense',
+        amount: aiResult.amount,
+        category: aiResult.category || 'Boshqa',
+        note: aiResult.note || text,
+        title: aiResult.title || aiResult.note || text,
+        debtWho: aiResult.debtWho || '',
+        providerUsed: aiResult.providerUsed
+      });
+    } else {
+      console.error('[PARSE_EXPENSE] AI Router error:', aiResult.error);
+      return res.status(502).json({ error: aiResult.error || 'AI parsing failed' });
     }
-  } catch (e) {
+  } catch (e: any) {
     console.error('Error in /api/parse-expense:', e);
+    return res.status(500).json({ error: 'AI parsing internal error', details: e?.message });
   }
-
-  return res.status(500).json({ error: 'AI parsing failed' });
 }

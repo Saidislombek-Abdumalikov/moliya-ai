@@ -1,6 +1,8 @@
 import { supabase } from '../api/_supabaseClient';
 import { createSupabaseAuthSession } from '../api/_authHelper';
 import { parseAITransaction } from '../src/utils/aiParser';
+import { maskApiKey, setInMemoryKeys, executeAiWithRotation, AiKeyRecord } from '../api/_aiRouter';
+import { checkAndRecordAiUsage } from '../api/_aiQuotaHelper';
 
 async function runAuthAuditSuite() {
   console.log('====================================================');
@@ -337,7 +339,7 @@ async function runAuthAuditSuite() {
       platform: 'android_apk',
       model: 'Samsung Galaxy S24',
       os: 'Android 14',
-      app_version: 'v3.16.0',
+      app_version: 'v3.17.0',
       last_login: new Date().toISOString()
     };
 
@@ -352,7 +354,7 @@ async function runAuthAuditSuite() {
 
     const { data: multiDevDoc } = await supabase.from('users').select('*').eq('id', testUserId).maybeSingle();
     assert(multiDevDoc?.device_info?.platform === 'android_apk', 'Device info (platform: android_apk) persisted on login');
-    assert(multiDevDoc?.device_info?.app_version === 'v3.16.0', 'Device info app version (v3.16.0) persisted correctly');
+    assert(multiDevDoc?.device_info?.app_version === 'v3.17.0', 'Device info app version (v3.17.0) persisted correctly');
 
     // Clean up test user
     await supabase.from('users').delete().eq('telegram_id', testTgId);
@@ -404,6 +406,86 @@ async function runAuthAuditSuite() {
     ];
     assert(Array.isArray(sampleTxs) && sampleTxs.length === 2, 'Export dataset properly prepared for native & web reports');
     assert(typeof sampleTxs[0].amount === 'number' && sampleTxs[0].category === 'Oziq-ovqat', 'Export dataset structure verified');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 16: AI Secret Masking Security
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 16: AI Secret Masking Security ---');
+    const masked1 = maskApiKey('AIzaSyD987654321_ABCD');
+    assert(masked1 === '••••••••••••ABCD', 'maskApiKey properly masks full secret key to ••••••••••••ABCD');
+    assert(!masked1.includes('AIzaSy'), 'Masked output does NOT contain the secret prefix');
+
+    const maskedShort = maskApiKey('');
+    assert(maskedShort === '••••••••••••', 'Empty key masked safely without crashing');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 17: Multi-Provider AI Key Rotation & Fallback Pool
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 17: Multi-Provider AI Key Rotation & Fallback Pool ---');
+    const testKeys: AiKeyRecord[] = [
+      {
+        id: 'key_mock_failing',
+        name: 'Exhausted Key 1',
+        provider: 'google',
+        api_key: 'AIzaSy_EXHAUSTED_KEY',
+        model: 'gemini-2.5-flash',
+        priority: 1,
+        status: 'active',
+        total_requests: 0,
+        success_requests: 0,
+        failed_requests: 0
+      },
+      {
+        id: 'key_mock_backup',
+        name: 'Backup Healthy Key 2',
+        provider: 'google',
+        api_key: process.env.GEMINI_API_KEY || 'AIzaSy_VALID_KEY',
+        model: 'gemini-1.5-flash',
+        priority: 2,
+        status: 'active',
+        total_requests: 0,
+        success_requests: 0,
+        failed_requests: 0
+      }
+    ];
+
+    setInMemoryKeys(testKeys);
+    assert(testKeys.length === 2, 'Candidate AI key pool successfully registered with Priority 1 & 2');
+    assert(testKeys[0].priority < testKeys[1].priority, 'Key 1 has higher priority than Key 2');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 18: User Quota vs Provider Quota Independence
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 18: User Quota vs Provider Quota Independence ---');
+    // Create test user for quota enforcement
+    const quotaUserTg = '1122334455';
+    const quotaUserId = `moliya_user_tg_${quotaUserTg}`;
+
+    await supabase.from('users').upsert({
+      id: quotaUserId,
+      name: 'Quota Tester',
+      telegram_id: quotaUserTg,
+      is_premium: false,
+      ai_limit: 2,
+      ai_query_count: 0,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'id' });
+
+    // Request 1: Allowed
+    const q1 = await checkAndRecordAiUsage(quotaUserId, 'text', 'Tushlik 30000');
+    assert(q1.allowed === true && q1.usedCount === 1, 'First user AI request allowed (1/2 used)');
+
+    // Request 2: Allowed
+    const q2 = await checkAndRecordAiUsage(quotaUserId, 'text', 'Taksi 15000');
+    assert(q2.allowed === true && q2.usedCount === 2, 'Second user AI request allowed (2/2 used)');
+
+    // Request 3: Denied (Limit reached)
+    const q3 = await checkAndRecordAiUsage(quotaUserId, 'text', 'Kiyim 200000');
+    assert(q3.allowed === false, 'Third user AI request properly blocked (User limit 2 reached)');
+    assert(Boolean(q3.message && q3.message.includes('tugadi')), 'Error message informs user of quota exhaustion');
+
+    // Clean up test quota user
+    await supabase.from('users').delete().eq('id', quotaUserId);
 
     console.log('\n====================================================');
     console.log(`🏁 TEST SUITE COMPLETE: ${passed} PASSED, ${failed} FAILED`);

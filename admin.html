@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EpicSell / Moliya AI — Master Admin Dashboard</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+      background-color: #0F172A;
+      color: #F8FAFC;
+    }
+    .glass-card {
+      background: rgba(30, 41, 59, 0.7);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .glass-card-hover:hover {
+      background: rgba(30, 41, 59, 0.9);
+      border-color: rgba(124, 58, 237, 0.4);
+    }
+    .glow-purple {
+      box-shadow: 0 0 25px -5px rgba(124, 58, 237, 0.3);
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col md:flex-row antialiased selection:bg-purple-600 selection:text-white">
+
+  <!-- Sidebar -->
+  <aside class="w-full md:w-64 bg-slate-900 border-r border-slate-800 p-5 flex flex-col justify-between shrink-0">
+    <div>
+      <!-- Brand -->
+      <div class="flex items-center gap-3 mb-8 px-2">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-purple-600 to-indigo-500 flex items-center justify-center text-xl shadow-lg shadow-purple-500/30">
+          ⚡
+        </div>
+        <div>
+          <h1 class="font-extrabold text-lg text-white tracking-tight">EpicSell AI</h1>
+          <p class="text-xs text-purple-400 font-medium">Master Admin Suite</p>
+        </div>
+      </div>
+
+      <!-- Navigation Tabs -->
+      <nav class="space-y-1.5" id="navTabs">
+        <button onclick="switchTab('ai-keys')" id="tab-ai-keys" class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-semibold text-sm transition-all duration-150 bg-purple-600 text-white shadow-lg shadow-purple-600/20">
+          <span>🔑</span> AI Key Management
+        </button>
+        <button onclick="switchTab('ai-usage')" id="tab-ai-usage" class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-medium text-sm text-slate-400 hover:text-white hover:bg-slate-800 transition-all duration-150">
+          <span>📊</span> AI Usage & Logs
+        </button>
+        <button onclick="switchTab('users')" id="tab-users" class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-medium text-sm text-slate-400 hover:text-white hover:bg-slate-800 transition-all duration-150">
+          <span>👥</span> User Management
+        </button>
+        <button onclick="switchTab('broadcast')" id="tab-broadcast" class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-medium text-sm text-slate-400 hover:text-white hover:bg-slate-800 transition-all duration-150">
+          <span>📢</span> Broadcast & Alerts
+        </button>
+      </nav>
+    </div>
+
+    <!-- Footer Meta -->
+    <div class="pt-6 border-t border-slate-800 px-2 text-xs text-slate-500 flex items-center justify-between">
+      <span>Version v3.16.0</span>
+      <span class="flex items-center gap-1.5 text-emerald-400">
+        <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> Online
+      </span>
+    </div>
+  </aside>
+
+  <!-- Main Content Area -->
+  <main class="flex-1 p-6 md:p-8 overflow-y-auto max-w-7xl">
+
+    <!-- Top Header -->
+    <header class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+      <div>
+        <h2 id="pageTitle" class="text-2xl font-extrabold text-white tracking-tight">AI Key Management</h2>
+        <p id="pageSubtitle" class="text-sm text-slate-400 mt-1">Configure multi-provider API keys, automatic fallback priorities, and health monitoring.</p>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <button onclick="fetchAiKeys()" class="px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 transition-all flex items-center gap-2 border border-slate-700">
+          🔄 Refresh
+        </button>
+        <button onclick="openAddKeyModal()" class="px-4 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-lg shadow-purple-600/30 transition-all flex items-center gap-2">
+          ➕ Add AI Key
+        </button>
+      </div>
+    </header>
+
+    <!-- TAB 1: AI KEY MANAGEMENT -->
+    <section id="section-ai-keys" class="space-y-6">
+
+      <!-- Metrics Overview Cards -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4" id="metricsGrid">
+        <div class="glass-card rounded-2xl p-4">
+          <p class="text-xs font-medium text-slate-400">Total Configured Keys</p>
+          <p id="metricTotalKeys" class="text-2xl font-extrabold text-white mt-1">--</p>
+          <p class="text-[11px] text-purple-400 mt-1">Multi-provider pool</p>
+        </div>
+        <div class="glass-card rounded-2xl p-4">
+          <p class="text-xs font-medium text-slate-400">Healthy & Active</p>
+          <p id="metricActiveKeys" class="text-2xl font-extrabold text-emerald-400 mt-1">--</p>
+          <p class="text-[11px] text-emerald-400/80 mt-1">Ready for requests</p>
+        </div>
+        <div class="glass-card rounded-2xl p-4">
+          <p class="text-xs font-medium text-slate-400">Requests Today</p>
+          <p id="metricToday" class="text-2xl font-extrabold text-purple-400 mt-1">--</p>
+          <p class="text-[11px] text-slate-400 mt-1">Auto-rotated</p>
+        </div>
+        <div class="glass-card rounded-2xl p-4">
+          <p class="text-xs font-medium text-slate-400">Key Rotation Engine</p>
+          <p class="text-lg font-bold text-emerald-400 mt-1 flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-emerald-500"></span> Active
+          </p>
+          <p class="text-[11px] text-slate-400 mt-1">Auto fallback on 429</p>
+        </div>
+      </div>
+
+      <!-- AI Keys Table / Cards List -->
+      <div class="glass-card rounded-2xl overflow-hidden border border-slate-800">
+        <div class="p-4 bg-slate-900/60 border-b border-slate-800 flex items-center justify-between">
+          <h3 class="font-bold text-sm text-slate-200">Active Key Pool (Priority Sorted)</h3>
+          <span class="text-xs text-slate-400">High priority keys are routed first</span>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-sm text-slate-300">
+            <thead class="bg-slate-900/40 text-xs font-bold text-slate-400 uppercase tracking-wider border-b border-slate-800">
+              <tr>
+                <th class="py-3.5 px-4">Priority</th>
+                <th class="py-3.5 px-4">Key Name & Provider</th>
+                <th class="py-3.5 px-4">Masked Secret</th>
+                <th class="py-3.5 px-4">Model</th>
+                <th class="py-3.5 px-4">Health Status</th>
+                <th class="py-3.5 px-4">Requests</th>
+                <th class="py-3.5 px-4 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="keysTableBody" class="divide-y divide-slate-800">
+              <tr>
+                <td colspan="7" class="py-8 text-center text-slate-500">Loading AI keys...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- TAB 2: AI USAGE & LOGS -->
+    <section id="section-ai-usage" class="hidden space-y-6">
+      <div class="glass-card rounded-2xl p-5">
+        <h3 class="font-bold text-sm text-slate-200 mb-3">Recent AI Query Logs</h3>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-sm text-slate-300">
+            <thead class="bg-slate-900/40 text-xs font-bold text-slate-400 uppercase tracking-wider border-b border-slate-800">
+              <tr>
+                <th class="py-3 px-4">Time</th>
+                <th class="py-3 px-4">User ID</th>
+                <th class="py-3 px-4">Type</th>
+                <th class="py-3 px-4">Prompt Summary</th>
+                <th class="py-3 px-4">VIP</th>
+              </tr>
+            </thead>
+            <tbody id="logsTableBody" class="divide-y divide-slate-800">
+              <tr><td colspan="5" class="py-8 text-center text-slate-500">Loading logs...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: USER MANAGEMENT -->
+    <section id="section-users" class="hidden space-y-6">
+      <div class="glass-card rounded-2xl p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="font-bold text-sm text-slate-200">Registered Users & AI Quotas</h3>
+          <input type="text" id="userSearch" onkeyup="filterUsers()" placeholder="Search by name, phone, or Telegram..." class="bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500">
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-sm text-slate-300">
+            <thead class="bg-slate-900/40 text-xs font-bold text-slate-400 uppercase tracking-wider border-b border-slate-800">
+              <tr>
+                <th class="py-3 px-4">User</th>
+                <th class="py-3 px-4">Telegram ID</th>
+                <th class="py-3 px-4">VIP Status</th>
+                <th class="py-3 px-4">AI Usage</th>
+                <th class="py-3 px-4">VIP Expiration</th>
+                <th class="py-3 px-4 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="usersTableBody" class="divide-y divide-slate-800">
+              <tr><td colspan="6" class="py-8 text-center text-slate-500">Loading users...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 4: BROADCAST & ALERTS -->
+    <section id="section-broadcast" class="hidden space-y-6">
+      <div class="glass-card rounded-2xl p-6 max-w-xl">
+        <h3 class="font-bold text-base text-slate-100 mb-1">Create App Announcement</h3>
+        <p class="text-xs text-slate-400 mb-5">Instantly publishes a notification to all Web and Android APK users.</p>
+
+        <form id="broadcastForm" onsubmit="sendBroadcast(event)" class="space-y-4">
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 mb-1.5">Notification Title</label>
+            <input type="text" id="bcTitle" required placeholder="Masalan: Yangilanish v3.16.0 chiqdi!" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-white focus:outline-none focus:border-purple-500">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 mb-1.5">Notification Message</label>
+            <textarea id="bcMessage" required rows="3" placeholder="Xabarni kiriting..." class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-white focus:outline-none focus:border-purple-500"></textarea>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-semibold text-slate-300 mb-1.5">Type</label>
+              <select id="bcType" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-white">
+                <option value="info">ℹ️ Ma'lumot (Info)</option>
+                <option value="feature">✨ Yangi Imkoniyat</option>
+                <option value="warning">⚠️ Ogohlantirish</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-300 mb-1.5">Duration (Hours)</label>
+              <input type="number" id="bcHours" value="72" min="1" max="720" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-white">
+            </div>
+          </div>
+          <button type="submit" class="w-full py-2.5 rounded-xl font-bold text-xs bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-lg shadow-purple-600/30 hover:opacity-90 transition-all mt-2">
+            📢 Publish Announcement
+          </button>
+        </form>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ADD / EDIT KEY MODAL -->
+  <div id="keyModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="glass-card rounded-2xl p-6 w-full max-w-lg border border-slate-700 shadow-2xl">
+      <div class="flex items-center justify-between mb-4">
+        <h3 id="modalTitle" class="font-bold text-lg text-white">Add New AI Key</h3>
+        <button onclick="closeKeyModal()" class="text-slate-400 hover:text-white text-lg">✕</button>
+      </div>
+
+      <form id="keyForm" onsubmit="saveKey(event)" class="space-y-4">
+        <input type="hidden" id="formKeyId">
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-300 mb-1">Key Label / Name</label>
+          <input type="text" id="formName" required placeholder="e.g. Primary Gemini Flash" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-white focus:outline-none focus:border-purple-500">
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 mb-1">Provider</label>
+            <select id="formProvider" onchange="autoFillModel()" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-white">
+              <option value="google">Google Gemini</option>
+              <option value="openai">OpenAI</option>
+              <option value="groq">Groq</option>
+              <option value="anthropic">Anthropic</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 mb-1">Model Name</label>
+            <input type="text" id="formModel" required value="gemini-2.5-flash" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-white">
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-300 mb-1">Secret API Key</label>
+          <input type="password" id="formApiKey" placeholder="Paste full secret key (AIzaSy...)" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-white focus:outline-none focus:border-purple-500 font-mono">
+          <p class="text-[11px] text-slate-500 mt-1">Keys are stored securely on the backend and masked in all UI views.</p>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 mb-1">Priority (1 = Highest)</label>
+            <input type="number" id="formPriority" value="1" min="1" max="100" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-white">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 mb-1">Initial Status</label>
+            <select id="formStatus" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-white">
+              <option value="active">Active 🟢</option>
+              <option value="disabled">Disabled ⚪</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
+          <button type="button" onclick="closeKeyModal()" class="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white">
+            Cancel
+          </button>
+          <button type="submit" class="px-5 py-2 rounded-xl text-xs font-bold bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-600/30">
+            Save AI Key
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- JAVASCRIPT LOGIC -->
+  <script>
+    let allKeys = [];
+    let allUsers = [];
+
+    // Tab Navigation
+    function switchTab(tabId) {
+      ['ai-keys', 'ai-usage', 'users', 'broadcast'].forEach(t => {
+        const sec = document.getElementById(`section-${t}`);
+        const btn = document.getElementById(`tab-${t}`);
+        if (sec) sec.classList.toggle('hidden', t !== tabId);
+        if (btn) {
+          if (t === tabId) {
+            btn.className = 'w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-semibold text-sm transition-all duration-150 bg-purple-600 text-white shadow-lg shadow-purple-600/20';
+          } else {
+            btn.className = 'w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-medium text-sm text-slate-400 hover:text-white hover:bg-slate-800 transition-all duration-150';
+          }
+        }
+      });
+
+      if (tabId === 'ai-keys') fetchAiKeys();
+      if (tabId === 'ai-usage') fetchAiLogs();
+      if (tabId === 'users') fetchUsers();
+    }
+
+    // 1. Fetch AI Keys
+    async function fetchAiKeys() {
+      try {
+        const res = await fetch('/api/admin/ai-keys');
+        const data = await res.json();
+        if (data.success) {
+          allKeys = data.keys || [];
+          renderKeys(allKeys);
+          renderMetrics(data.metrics || {});
+        }
+      } catch (e) {
+        console.error('Fetch keys error:', e);
+      }
+    }
+
+    function renderMetrics(m) {
+      document.getElementById('metricTotalKeys').innerText = m.totalKeys || '0';
+      document.getElementById('metricActiveKeys').innerText = m.activeKeys || '0';
+      document.getElementById('metricToday').innerText = m.requestsToday || '0';
+    }
+
+    function renderKeys(keys) {
+      const tbody = document.getElementById('keysTableBody');
+      if (!keys || keys.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="py-8 text-center text-slate-500">No AI keys configured yet. Click "Add AI Key" to configure your primary key.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = keys.map((k, idx) => {
+        let statusBadge = `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">🟢 Active</span>`;
+        if (k.status === 'disabled') {
+          statusBadge = `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-700/50 text-slate-400">⚪ Disabled</span>`;
+        } else if (k.status === 'rate_limited') {
+          statusBadge = `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">🟡 Rate Limited</span>`;
+        } else if (k.status === 'exhausted' || k.status === 'invalid') {
+          statusBadge = `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20">🔴 ${k.status}</span>`;
+        }
+
+        return `
+          <tr class="hover:bg-slate-800/40 transition-colors">
+            <td class="py-3.5 px-4 font-mono font-bold text-purple-400">#${k.priority || idx + 1}</td>
+            <td class="py-3.5 px-4">
+              <div class="font-bold text-white">${k.name}</div>
+              <div class="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5">
+                <span class="uppercase font-semibold text-[10px] text-slate-400 bg-slate-800 px-1.5 py-0.5 rounded">${k.provider}</span>
+              </div>
+            </td>
+            <td class="py-3.5 px-4 font-mono text-xs text-slate-300">${k.maskedKey || '••••••••••••'}</td>
+            <td class="py-3.5 px-4 text-xs font-mono text-slate-400">${k.model}</td>
+            <td class="py-3.5 px-4">${statusBadge}</td>
+            <td class="py-3.5 px-4 text-xs">
+              <span class="text-emerald-400 font-semibold">${k.successRequests || 0}</span> / 
+              <span class="text-slate-400">${k.totalRequests || 0}</span>
+            </td>
+            <td class="py-3.5 px-4 text-right space-x-2">
+              <button onclick="testKey('${k.id}')" title="Test Key Connectivity" class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700">
+                🧪 Test
+              </button>
+              <button onclick="toggleKey('${k.id}')" title="Enable/Disable" class="px-2.5 py-1 rounded-lg text-xs font-semibold ${k.status === 'active' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'}">
+                ${k.status === 'active' ? 'Disable' : 'Enable'}
+              </button>
+              <button onclick="openEditKeyModal('${k.id}')" title="Edit" class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-purple-600/20 text-purple-300 hover:bg-purple-600/30">
+                ✏️
+              </button>
+              <button onclick="deleteKey('${k.id}')" title="Delete" class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-rose-500/20 text-rose-300 hover:bg-rose-500/30">
+                🗑️
+              </button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    // Key Modal Management
+    function openAddKeyModal() {
+      document.getElementById('modalTitle').innerText = 'Add New AI Key';
+      document.getElementById('formKeyId').value = '';
+      document.getElementById('formName').value = '';
+      document.getElementById('formProvider').value = 'google';
+      document.getElementById('formModel').value = 'gemini-2.5-flash';
+      document.getElementById('formApiKey').value = '';
+      document.getElementById('formApiKey').placeholder = 'Paste full secret API key';
+      document.getElementById('formPriority').value = (allKeys.length + 1).toString();
+      document.getElementById('formStatus').value = 'active';
+      document.getElementById('keyModal').classList.remove('hidden');
+    }
+
+    function openEditKeyModal(keyId) {
+      const key = allKeys.find(k => k.id === keyId);
+      if (!key) return;
+
+      document.getElementById('modalTitle').innerText = 'Edit AI Key';
+      document.getElementById('formKeyId').value = key.id;
+      document.getElementById('formName').value = key.name;
+      document.getElementById('formProvider').value = key.provider;
+      document.getElementById('formModel').value = key.model;
+      document.getElementById('formApiKey').value = '';
+      document.getElementById('formApiKey').placeholder = 'Leave blank to keep existing key';
+      document.getElementById('formPriority').value = key.priority;
+      document.getElementById('formStatus').value = key.status;
+      document.getElementById('keyModal').classList.remove('hidden');
+    }
+
+    function closeKeyModal() {
+      document.getElementById('keyModal').classList.add('hidden');
+    }
+
+    function autoFillModel() {
+      const provider = document.getElementById('formProvider').value;
+      const modelInput = document.getElementById('formModel');
+      if (provider === 'google') modelInput.value = 'gemini-2.5-flash';
+      if (provider === 'openai') modelInput.value = 'gpt-4o-mini';
+      if (provider === 'groq') modelInput.value = 'llama-3.3-70b-versatile';
+      if (provider === 'anthropic') modelInput.value = 'claude-3-5-sonnet-20241022';
+    }
+
+    async function saveKey(e) {
+      e.preventDefault();
+      const keyId = document.getElementById('formKeyId').value;
+      const isEdit = Boolean(keyId);
+
+      const payload = {
+        action: isEdit ? 'update' : 'create',
+        keyId: isEdit ? keyId : undefined,
+        keyData: {
+          name: document.getElementById('formName').value,
+          provider: document.getElementById('formProvider').value,
+          model: document.getElementById('formModel').value,
+          apiKey: document.getElementById('formApiKey').value,
+          priority: parseInt(document.getElementById('formPriority').value) || 1,
+          status: document.getElementById('formStatus').value,
+        }
+      };
+
+      try {
+        const res = await fetch('/api/admin/ai-keys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (data.success) {
+          closeKeyModal();
+          fetchAiKeys();
+        } else {
+          alert('Error: ' + (data.error || 'Failed to save key'));
+        }
+      } catch (err) {
+        alert('Network error: ' + err.message);
+      }
+    }
+
+    async function toggleKey(keyId) {
+      try {
+        const res = await fetch('/api/admin/ai-keys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'toggle', keyId })
+        });
+        const data = await res.json();
+        if (data.success) fetchAiKeys();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    async function testKey(keyId) {
+      const btn = event?.target;
+      if (btn) btn.innerText = 'Testing...';
+      try {
+        const res = await fetch('/api/admin/ai-keys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'test', keyId })
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert(`Test Result for Key:\n\nStatus: ${data.status}\nHealthy: ${data.healthy ? 'YES ✅' : 'NO ❌'}\nLatency: ${data.latencyMs}ms\n${data.error ? 'Error: ' + data.error : ''}`);
+          fetchAiKeys();
+        } else {
+          alert('Test failed: ' + (data.error || 'Unknown error'));
+        }
+      } catch (err) {
+        alert('Test error: ' + err.message);
+      } finally {
+        if (btn) btn.innerText = '🧪 Test';
+      }
+    }
+
+    async function deleteKey(keyId) {
+      if (!confirm('Remove this AI key?\n\nExisting users may be automatically switched to another available AI key.')) {
+        return;
+      }
+      try {
+        const res = await fetch('/api/admin/ai-keys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'delete', keyId })
+        });
+        const data = await res.json();
+        if (data.success) fetchAiKeys();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    // 2. Fetch AI Logs
+    async function fetchAiLogs() {
+      try {
+        const res = await fetch('/api/admin/ai-logs');
+        const data = await res.json();
+        if (data.success) {
+          const tbody = document.getElementById('logsTableBody');
+          tbody.innerHTML = (data.logs || []).map(l => `
+            <tr>
+              <td class="py-2.5 px-4 text-xs font-mono text-slate-400">${new Date(l.timestamp).toLocaleString()}</td>
+              <td class="py-2.5 px-4 text-xs font-mono text-purple-400">${l.userId}</td>
+              <td class="py-2.5 px-4 text-xs font-semibold uppercase text-slate-300">${l.queryType}</td>
+              <td class="py-2.5 px-4 text-xs text-slate-300">${l.promptSummary || '-'}</td>
+              <td class="py-2.5 px-4 text-xs font-bold ${l.isPremium ? 'text-amber-400' : 'text-slate-400'}">${l.isPremium ? '🌟 VIP' : 'Free'}</td>
+            </tr>
+          `).join('') || '<tr><td colspan="5" class="py-6 text-center text-slate-500">No logs found</td></tr>';
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    // 3. Fetch Users
+    async function fetchUsers() {
+      try {
+        const res = await fetch('/api/admin/users');
+        const data = await res.json();
+        if (data.success) {
+          allUsers = data.users || [];
+          renderUsers(allUsers);
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    function renderUsers(users) {
+      const tbody = document.getElementById('usersTableBody');
+      tbody.innerHTML = users.map(u => `
+        <tr class="hover:bg-slate-800/40">
+          <td class="py-3 px-4 font-semibold text-white">${u.name || 'Unnamed'}</td>
+          <td class="py-3 px-4 text-xs font-mono text-slate-400">${u.telegramId || '-'}</td>
+          <td class="py-3 px-4 text-xs font-bold ${u.isPremium ? 'text-amber-400' : 'text-slate-400'}">${u.isPremium ? '🌟 Premium' : 'Free'}</td>
+          <td class="py-3 px-4 text-xs">
+            <span class="font-bold text-purple-400">${u.aiQueryCount || 0}</span> / 
+            <span>${u.aiLimit !== null && u.aiLimit !== undefined ? u.aiLimit : (u.isPremium ? 'Cheksiz' : '5')}</span>
+          </td>
+          <td class="py-3 px-4 text-xs text-slate-400">${u.premiumExpiresAt ? new Date(u.premiumExpiresAt).toLocaleDateString() : '-'}</td>
+          <td class="py-3 px-4 text-right">
+            <button onclick="toggleUserVip('${u.id}', ${!u.isPremium})" class="px-2.5 py-1 rounded text-xs font-semibold ${u.isPremium ? 'bg-rose-500/20 text-rose-300' : 'bg-emerald-500/20 text-emerald-300'}">
+              ${u.isPremium ? 'Revoke VIP' : 'Grant VIP 🌟'}
+            </button>
+          </td>
+        </tr>
+      `).join('') || '<tr><td colspan="6" class="py-6 text-center text-slate-500">No users found</td></tr>';
+    }
+
+    function filterUsers() {
+      const q = document.getElementById('userSearch').value.toLowerCase();
+      const filtered = allUsers.filter(u => 
+        (u.name && u.name.toLowerCase().includes(q)) ||
+        (u.phone && u.phone.includes(q)) ||
+        (u.telegramId && u.telegramId.includes(q))
+      );
+      renderUsers(filtered);
+    }
+
+    async function toggleUserVip(userId, isPremium) {
+      try {
+        const res = await fetch('/api/admin/users', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId, isPremium })
+        });
+        const data = await res.json();
+        if (data.success) fetchUsers();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    // 4. Send Broadcast
+    async function sendBroadcast(e) {
+      e.preventDefault();
+      const title = document.getElementById('bcTitle').value;
+      const message = document.getElementById('bcMessage').value;
+      const type = document.getElementById('bcType').value;
+      const expireHours = parseInt(document.getElementById('bcHours').value) || 72;
+
+      try {
+        const res = await fetch('/api/admin/broadcast', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, message, type, expireHours })
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert('Broadcast announcement published! 📢');
+          document.getElementById('broadcastForm').reset();
+        } else {
+          alert('Error: ' + data.error);
+        }
+      } catch (err) {
+        alert('Network error: ' + err.message);
+      }
+    }
+
+    // Initial Load
+    fetchAiKeys();
+  </script>
+</body>
+</html>
