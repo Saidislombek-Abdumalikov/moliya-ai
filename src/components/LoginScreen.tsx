@@ -34,20 +34,7 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
     return () => clearInterval(interval)
   }, [timerSeconds])
 
-  // Global clipboard paste listener
-  useEffect(() => {
-    const handleGlobalPaste = (e: ClipboardEvent) => {
-      const pasted = e.clipboardData?.getData('text').replace(/\D/g, '').slice(0, 6)
-      if (pasted && pasted.length === 6) {
-        const newDigits = pasted.split('')
-        setOtpDigits(newDigits)
-        otpInputsRef.current[5]?.focus()
-        submitOtpCode(pasted)
-      }
-    }
-    window.addEventListener('paste', handleGlobalPaste)
-    return () => window.removeEventListener('paste', handleGlobalPaste)
-  }, [])
+  // Note: Paste handling is done per-input via onPaste={handleOtpPaste} to avoid double-submission
 
   const formatTimer = (seconds: number) => {
     const m = Math.floor(seconds / 60)

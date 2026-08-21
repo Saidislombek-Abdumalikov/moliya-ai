@@ -5,7 +5,7 @@ import path from "path";
 import { createClient } from '@supabase/supabase-js';
 import crypto from "crypto";
 import { executeAiWithRotation, getCandidateAiKeys, maskApiKey, testSpecificAiKey, recordKeyResult, AiKeyRecord } from './api/_aiRouter.js';
-import { checkAndRecordAiUsage } from './api/_aiQuotaHelper.js';
+import { checkAiQuota, recordAiUsage as recordAiUsageBackend, checkAndRecordAiUsage } from './api/_aiQuotaHelper.js';
 
 // Supabase client for local dev server (replaces Firebase)
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://qjumnjzbgjldbwwluggr.supabase.co';
@@ -418,12 +418,8 @@ async function startServer() {
         return;
       }
 
-      // 1. Quota Check & Enforcement
-      const quota = await checkAndRecordAiUsage(
-        userId,
-        imageBase64 ? 'receipt' : 'text',
-        promptText || 'Receipt Scan'
-      );
+      // 1. Quota Check ONLY (no increment yet)
+      const quota = await checkAiQuota(userId);
 
       if (!quota.allowed) {
         res.status(403).json({
@@ -447,7 +443,7 @@ async function startServer() {
         const receiptPrompt = `Analyze this receipt image (Uzbekistan/Global receipt) and extract:
 - type: 'expense'
 - amount: total paid number in UZS currency (e.g. 50000, 120000)
-- category: string ('Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\'liq', 'Ta\'lim', 'Boshqa')
+- category: string ('Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\\'liq', 'Ta\\'lim', 'Boshqa')
 - title: store name or main item (e.g. 'Korzinka', 'Makro', 'Taksi')
 - note: summary of purchased items`;
 
@@ -486,6 +482,9 @@ async function startServer() {
               const parsed = JSON.parse(response.text);
               if (parsed.amount) {
                 await recordKeyResult(key.id, true);
+                // Record usage ONLY on success
+                const usageResult = await recordAiUsageBackend(userId, 'receipt', 'Receipt scan', quota.isPremium);
+                const newUsed = usageResult.newCount || (quota.usedCount + 1);
                 const fmtAmt = parsed.amount.toLocaleString('en-US').replace(/,/g, ' ');
                 res.json({
                   success: true,
@@ -498,9 +497,9 @@ async function startServer() {
                     note: parsed.note || parsed.title || 'Chekdan olindi',
                   },
                   usage: {
-                    used: quota.usedCount,
+                    used: newUsed,
                     limit: quota.limit,
-                    remaining: quota.limit ? Math.max(0, quota.limit - quota.usedCount) : 999999,
+                    remaining: quota.limit ? Math.max(0, quota.limit - newUsed) : 999999,
                     isPremium: quota.isPremium
                   }
                 });
@@ -524,6 +523,9 @@ async function startServer() {
       const aiResult = await executeAiWithRotation(promptText);
 
       if (aiResult.success) {
+        // Record usage ONLY on success
+        const usageResult = await recordAiUsageBackend(userId, 'text', promptText, quota.isPremium);
+        const newUsed = usageResult.newCount || (quota.usedCount + 1);
         res.json({
           success: true,
           response: `Tranzaksiya aniqlandi: ${aiResult.amount} so'm (${aiResult.category})`,
@@ -536,9 +538,9 @@ async function startServer() {
             debtWho: aiResult.debtWho || '',
           },
           usage: {
-            used: quota.usedCount,
+            used: newUsed,
             limit: quota.limit,
-            remaining: quota.limit ? Math.max(0, quota.limit - quota.usedCount) : 999999,
+            remaining: quota.limit ? Math.max(0, quota.limit - newUsed) : 999999,
             isPremium: quota.isPremium
           }
         });
@@ -548,9 +550,9 @@ async function startServer() {
           message: 'AI xizmati hozirda band. Iltimos, 1 daqiqadan so\'ng qayta urinib ko\'ring.'
         });
       }
-    } catch (e: any) {
-      console.error('AI Router error in server:', e);
-      res.status(500).json({ error: 'AI Router internal error', details: e?.message });
+    } catch (err: any) {
+      console.error('[SERVER_AI_ROUTER] Error:', err);
+      res.status(500).json({ error: 'Internal server error in AI Router' });
     }
   });
 

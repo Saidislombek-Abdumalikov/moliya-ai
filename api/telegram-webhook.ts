@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI, Type } from "@google/genai";
 import crypto from "crypto";
 import { supabase } from './_supabaseClient.js';
+import { executeAiWithRotation } from './_aiRouter.js';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8955141731:AAF0axUBdGs6D1LN32tNncb2cOp47-z9oho";
 const appUrl = process.env.APP_URL || "https://moliya-ai-pi.vercel.app";
@@ -199,43 +200,49 @@ async function deleteLastBotTransaction(fromUser: any) {
 async function checkAndIncrementAiLimitAsync(fromUser: any): Promise<{ allowed: boolean; remaining: number; isPremium: boolean }> {
   try {
     const tgId = String(fromUser?.id);
-    if (!tgId) return { allowed: true, remaining: 5, isPremium: false };
+    if (!tgId) return { allowed: true, remaining: 20, isPremium: false };
     const userId = `moliya_user_tg_${tgId}`;
     const { data: user } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
 
-    if (user) {
-      if (user.is_premium) {
-        return { allowed: true, remaining: 999, isPremium: true };
-      }
-
-      const currentCount = Number(user.ai_query_count || 0);
-      const limit = 5;
-
-      if (currentCount >= limit) {
-        return { allowed: false, remaining: 0, isPremium: false };
-      }
-
-      const newCount = currentCount + 1;
-      await supabase.from('users').update({
-        ai_query_count: newCount,
-        last_ai_query_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      }).eq('id', userId);
-
-      return { allowed: true, remaining: limit - newCount, isPremium: false };
-    } else {
-      await supabase.from('users').upsert({
-        id: userId,
-        telegram_id: tgId,
-        ai_query_count: 1,
-        last_ai_query_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      }, { onConflict: 'id' });
-      return { allowed: true, remaining: 4, isPremium: false };
+    if (user?.is_blocked) {
+      return { allowed: false, remaining: 0, isPremium: Boolean(user.is_premium) };
     }
+
+    const isVipExpired = user?.premium_expires_at ? new Date(user.premium_expires_at).getTime() <= Date.now() : false;
+    const isPremium = Boolean(user?.is_premium && !isVipExpired);
+
+    let effectiveLimit: number | null = null;
+    if (user?.ai_limit === 0 || user?.ai_limit === -1) {
+      effectiveLimit = null; // Unlimited
+    } else if (user?.ai_limit !== undefined && user?.ai_limit !== null && user.ai_limit > 0) {
+      effectiveLimit = user.ai_limit;
+    } else {
+      effectiveLimit = isPremium ? null : 20;
+    }
+
+    const currentCount = Number(user?.ai_query_count || 0);
+
+    if (effectiveLimit !== null && currentCount >= effectiveLimit) {
+      return { allowed: false, remaining: 0, isPremium };
+    }
+
+    const newCount = currentCount + 1;
+    await supabase.from('users').upsert({
+      id: userId,
+      telegram_id: tgId,
+      ai_query_count: newCount,
+      last_ai_query_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'id' });
+
+    return {
+      allowed: true,
+      remaining: effectiveLimit !== null ? Math.max(0, effectiveLimit - newCount) : 999,
+      isPremium
+    };
   } catch (e) {
     console.error('Error checking AI limit in Supabase:', e);
-    return { allowed: true, remaining: 5, isPremium: false };
+    return { allowed: true, remaining: 20, isPremium: false };
   }
 }
 
@@ -842,46 +849,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ status: 'ok' });
     }
 
-    // Default: AI Expense/Income Parsing for text inputs
+    // Default: AI Expense/Income Parsing for text inputs using Parallel AI Key Pool
     if (text.length > 2) {
       const aiLimit = await checkAndIncrementAiLimitAsync(fromUser);
       if (!aiLimit.allowed) {
-        await sendTelegramMessage(chatId, "⚠️ <b>Bepul AI limitingiz tugadi!</b> Cheksiz ishlatish uchun Premium oling.", getCleanInlineKeyboard());
+        await sendTelegramMessage(chatId, "⚠️ <b>AI so'rovlar limitingiz tugadi!</b> Cheksiz ishlatish uchun VIP Premium oling.", getCleanInlineKeyboard());
         return res.status(200).json({ status: 'ok' });
       }
 
-      const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || "";
-      if (apiKey) {
-        try {
-          const ai = new GoogleGenAI({ apiKey });
-          const prompt = `Parse this financial text: "${text}". Return JSON: { type: 'expense'|'income', amount: number, category: string, note: string }`;
-          const result = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-            config: { responseMimeType: "application/json" }
-          });
+      try {
+        const parsed = await executeAiWithRotation(text);
+        if (parsed.success && parsed.amount) {
+          const rawAmount = Number(String(parsed.amount).replace(/\s/g, '')) || 0;
+          const draftTx = {
+            id: Date.now().toString() + Math.random().toString(36).substring(2, 6),
+            type: parsed.type || 'expense',
+            amount: rawAmount,
+            name: parsed.note || parsed.title || text,
+            category: parsed.category || 'Boshqa',
+            date: new Date().toISOString()
+          };
 
-          if (result && result.text) {
-            const parsed = JSON.parse(result.text);
-            if (parsed.amount) {
-              const draftTx = {
-                id: Date.now().toString() + Math.random().toString(36).substring(2, 6),
-                type: parsed.type || 'expense',
-                amount: parsed.amount,
-                name: parsed.note || text,
-                category: parsed.category || 'Boshqa',
-                date: new Date().toISOString()
-              };
-
-              await savePendingDraftTx(fromUser, draftTx);
-              const card = await renderRichTransactionCard(fromUser, draftTx, true);
-              await sendTelegramMessage(chatId, card.text, card.inlineKeyboard);
-              return res.status(200).json({ status: 'ok' });
-            }
-          }
-        } catch (aiErr) {
-          console.error('AI parse error:', aiErr);
+          await savePendingDraftTx(fromUser, draftTx);
+          const card = await renderRichTransactionCard(fromUser, draftTx, true);
+          await sendTelegramMessage(chatId, card.text, card.inlineKeyboard);
+          return res.status(200).json({ status: 'ok' });
         }
+      } catch (aiErr) {
+        console.error('AI parse error:', aiErr);
       }
     }
 

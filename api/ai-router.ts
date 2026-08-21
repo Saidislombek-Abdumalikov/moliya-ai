@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI, Type } from "@google/genai";
-import { checkAndRecordAiUsage } from './_aiQuotaHelper.js';
+import { checkAiQuota, recordAiUsage } from './_aiQuotaHelper.js';
 import { executeAiWithRotation, getCandidateAiKeys, recordKeyResult } from './_aiRouter.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -20,12 +20,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Missing prompt or imageBase64' });
     }
 
-    // 1. Quota Check & Enforcement for Free / VIP users
-    const quota = await checkAndRecordAiUsage(
-      userId,
-      imageBase64 ? 'receipt' : 'text',
-      promptText || 'Receipt Scan'
-    );
+    // 1. Quota Check ONLY (no increment yet)
+    const quota = await checkAiQuota(userId);
 
     if (!quota.allowed) {
       return res.status(403).json({
@@ -48,63 +44,82 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const receiptPrompt = `Analyze this receipt image (Uzbekistan/Global receipt) and extract:
 - type: 'expense'
 - amount: total paid number in UZS currency (e.g. 50000, 120000)
-- category: string ('Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\'liq', 'Ta\'lim', 'Boshqa')
+- category: string ('Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\\'liq', 'Ta\\'lim', 'Boshqa')
 - title: store name or main item (e.g. 'Korzinka', 'Makro', 'Taksi')
 - note: summary of purchased items`;
 
       for (const key of candidateKeys) {
         if (key.provider !== 'google') continue;
         try {
-          const ai = new GoogleGenAI({ apiKey: key.api_key });
-          const response = await ai.models.generateContent({
-            model: key.model || "gemini-2.5-flash",
-            contents: [
-              {
-                inlineData: {
-                  mimeType: 'image/jpeg',
-                  data: cleanBase64
-                }
-              },
-              receiptPrompt
-            ],
-            config: {
-              responseMimeType: "application/json",
-              responseSchema: {
-                type: Type.OBJECT,
-                properties: {
-                  type: { type: Type.STRING },
-                  amount: { type: Type.NUMBER },
-                  category: { type: Type.STRING },
-                  title: { type: Type.STRING },
-                  note: { type: Type.STRING },
-                },
-                required: ["type", "amount", "category", "title"],
-              }
-            }
-          });
+          const cleanKey = (key.api_key || '').trim();
+          const candidateModels = [
+            (key.model || 'gemini-3.7-flash').trim(),
+            'gemini-3.7-flash',
+            'gemini-flash-latest',
+            'gemini-2.0-flash',
+            'gemini-1.5-flash'
+          ];
+          const uniqueModels = [...new Set(candidateModels)];
 
-          if (response?.text) {
-            const parsed = JSON.parse(response.text);
-            if (parsed.amount) {
-              await recordKeyResult(key.id, true);
-              const fmtAmt = parsed.amount.toLocaleString('en-US').replace(/,/g, ' ');
-              return res.status(200).json({
-                success: true,
-                response: `Chek muvaffaqiyatli tahlil qilindi: ${fmtAmt} so'm (${parsed.category || 'Oziq-ovqat'})`,
-                parsed: {
-                  type: parsed.type || 'expense',
-                  amount: fmtAmt,
-                  category: parsed.category || 'Oziq-ovqat',
-                  title: parsed.title || 'Chek xarajati',
-                  note: parsed.note || parsed.title || 'Chekdan olindi',
-                },
-                usage: {
-                  used: quota.usedCount,
-                  limit: quota.limit,
-                  remaining: quota.limit ? Math.max(0, quota.limit - quota.usedCount) : 999999,
-                  isPremium: quota.isPremium
+          for (const modelName of uniqueModels) {
+            try {
+              const ai = new GoogleGenAI({ apiKey: cleanKey });
+              const response = await ai.models.generateContent({
+                model: modelName,
+                contents: [
+                  {
+                    inlineData: {
+                      mimeType: 'image/jpeg',
+                      data: cleanBase64
+                    }
+                  },
+                  receiptPrompt
+                ],
+                config: {
+                  responseMimeType: "application/json",
+                  responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                      type: { type: Type.STRING },
+                      amount: { type: Type.NUMBER },
+                      category: { type: Type.STRING },
+                      title: { type: Type.STRING },
+                      note: { type: Type.STRING },
+                    },
+                    required: ["type", "amount", "category", "title"],
+                  }
                 }
               });
+
+              if (response?.text) {
+                const parsed = JSON.parse(response.text);
+                if (parsed.amount) {
+                  await recordKeyResult(key.id, true);
+                  // Record usage ONLY on success
+                  const usageResult = await recordAiUsage(userId, 'receipt', 'Receipt scan', quota.isPremium);
+                  const newUsed = usageResult.newCount || (quota.usedCount + 1);
+                  const fmtAmt = parsed.amount.toLocaleString('en-US').replace(/,/g, ' ');
+                  return res.status(200).json({
+                    success: true,
+                    response: `Chek muvaffaqiyatli tahlil qilindi: ${fmtAmt} so'm (${parsed.category || 'Oziq-ovqat'})`,
+                    parsed: {
+                      type: parsed.type || 'expense',
+                      amount: fmtAmt,
+                      category: parsed.category || 'Oziq-ovqat',
+                      title: parsed.title || 'Chek xarajati',
+                      note: parsed.note || parsed.title || 'Chekdan olindi',
+                    },
+                    usage: {
+                      used: newUsed,
+                      limit: quota.limit,
+                      remaining: quota.limit ? Math.max(0, quota.limit - newUsed) : 999999,
+                      isPremium: quota.isPremium
+                    }
+                  });
+                }
+              }
+            } catch (innerErr: any) {
+              if (innerErr?.message?.includes('429') || innerErr?.message?.includes('API_KEY_INVALID')) break;
             }
           }
         } catch (err: any) {
@@ -113,6 +128,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
       }
 
+      // All keys failed — DO NOT charge the user
       return res.status(503).json({
         error: 'AI_PROVIDERS_UNAVAILABLE',
         message: 'AI xizmati hozirda band. Iltimos, 1 daqiqadan so\'ng qayta urinib ko\'ring.'
@@ -123,6 +139,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const aiResult = await executeAiWithRotation(promptText);
 
     if (aiResult.success) {
+      // Record usage ONLY on success
+      const usageResult = await recordAiUsage(userId, 'text', promptText, quota.isPremium);
+      const newUsed = usageResult.newCount || (quota.usedCount + 1);
+
       return res.status(200).json({
         success: true,
         response: `Tranzaksiya aniqlandi: ${aiResult.amount} so'm (${aiResult.category})`,
@@ -135,13 +155,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           debtWho: aiResult.debtWho || '',
         },
         usage: {
-          used: quota.usedCount,
+          used: newUsed,
           limit: quota.limit,
-          remaining: quota.limit ? Math.max(0, quota.limit - quota.usedCount) : 999999,
+          remaining: quota.limit ? Math.max(0, quota.limit - newUsed) : 999999,
           isPremium: quota.isPremium
         }
       });
     } else {
+      // All keys failed — DO NOT charge the user
       console.warn('[AI_ROUTER] All keys failed:', aiResult.error);
       return res.status(503).json({
         error: 'AI_PROVIDERS_UNAVAILABLE',

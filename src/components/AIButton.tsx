@@ -129,7 +129,7 @@ async function parseAIText(text: string, cardsList: any[] = [], userId?: string)
 }
 
 export default function AIButton({ visible = true, language = 'uz' }: { visible?: boolean; language?: 'uz' | 'uz_cyrl' | 'ru' | 'en' }) {
-  const { addTransaction, hasSampleData, setHasSampleData, cards, userId, userSubscription, recordAiUsage } = useFinance()
+  const { addTransaction, hasSampleData, setHasSampleData, cards, userId, userSubscription } = useFinance()
   const [open, setOpen] = useState(false)
   const [step, setStep] = useState<'type' | 'form' | 'voice' | 'done' | 'removeSamples'>('type')
   const [selectedType, setSelectedType] = useState<EntryType>('expense')
@@ -147,10 +147,16 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
     const file = e.target.files?.[0]
     if (!file) return
 
+    if (isProcessing) return // Guard against double-submit
+
     setIsProcessing(true)
     setAiError('')
     try {
       const reader = new FileReader()
+      reader.onerror = () => {
+        setAiError(language === 'uz' ? "Faylni o'qishda xatolik" : language === 'uz_cyrl' ? "Файлни ўқишда хатолик" : language === 'ru' ? 'Ошибка чтения файла' : 'File reading error')
+        setIsProcessing(false)
+      }
       reader.onload = async () => {
         const base64Data = reader.result as string
         try {
@@ -158,16 +164,11 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
           let parsed = aiData?.parsed
 
           if (!parsed || !parsed.amount) {
-            parsed = {
-              type: 'expense',
-              amount: '50 000',
-              category: 'Oziq-ovqat',
-              title: 'Chek xarajati',
-              note: 'Rasm orqali kiritildi',
-            }
+            setAiError(language === 'uz' ? "Chekdan ma'lumot topilmadi, iltimos qaytadan urinib ko'ring" : language === 'uz_cyrl' ? "Чекдан маълумот топилмади" : language === 'ru' ? 'Данные не найдены на чеке' : 'No data found on receipt')
+            setIsProcessing(false)
+            return
           }
 
-          recordAiUsage()
           setSelectedType(parsed.type || 'expense')
           const localISOTime = (new Date(Date.now() - new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 16)
           setEntry(prev => ({
@@ -203,12 +204,17 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
     setAiText('')
     setAiError('')
     setSaved(false)
+    setIsProcessing(false)
     setOpen(true)
   }
 
   const closeModal = () => {
     setOpen(false)
     setRecording(false)
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop() } catch (_) {}
+      recognitionRef.current = null
+    }
     if (timerRef.current) clearTimeout(timerRef.current)
   }
 
@@ -218,33 +224,15 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
     setStep('form')
   }
 
-  
-  const checkAndDeductAIQuery = (): boolean => {
-    if (userSubscription.hasAiQuota) return true
-    const limit = userSubscription.aiLimit || 5
-    const isVip = userSubscription.isVip
-    setAiError(
-      (language === 'uz' || language === 'uz_cyrl')
-        ? (language === 'uz_cyrl'
-            ? `${isVip ? 'VIP' : 'Free'} тарифда ойлик ${limit} та AI савол лимити тугади. Чексиз AI учун Premium га ўтинг!`
-            : `${isVip ? 'VIP' : 'Free'} tarifda oylik ${limit} ta AI savol limiti tugadi. Cheksiz AI uchun Premium ga o'ting!`)
-        : language === 'ru'
-        ? `Лимит ${limit} ИИ-запросов исчерпан. Перейдите на Премиум!`
-        : `Monthly limit of ${limit} AI queries reached. Upgrade to Premium!`
-    )
-    return false
-  }
 
   const handleAiTextSubmit = async () => {
     if (!aiText.trim()) return
-
-    if (!checkAndDeductAIQuery()) return
+    if (isProcessing) return // Guard against double-submit
 
     setIsProcessing(true)
     setAiError('')
     try {
       const parsed = await parseAIText(aiText, cards, userId || undefined)
-      recordAiUsage()
       setSelectedType(parsed.type)
       const localISOTime = (new Date(Date.now() - new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 16)
       setEntry(prev => ({
@@ -259,9 +247,15 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
         cardId: parsed.cardId || prev.cardId || 'cash',
       }))
       setStep('form')
-    } catch (e) {
+    } catch (e: any) {
       console.error(e)
-      setAiError(language === 'uz' ? "Tushunmadim, qayta urinib ko'ring" : language === 'uz_cyrl' ? "Тушунмадим, қайта уриниб кўринг" : language === 'ru' ? 'Не удалось распознать, попробуйте снова' : "Couldn't parse that, try again")
+      // Display backend quota/provider error messages directly instead of generic error
+      const msg = e?.message || ''
+      if (msg.includes('tugadi') || msg.includes('Premium') || msg.includes('band') || msg.includes('limit') || msg.includes('Limit')) {
+        setAiError(msg)
+      } else {
+        setAiError(language === 'uz' ? "Tushunmadim, qayta urinib ko'ring" : language === 'uz_cyrl' ? "Тушунмадим, қайта уриниб кўринг" : language === 'ru' ? 'Не удалось распознать, попробуйте снова' : "Couldn't parse that, try again")
+      }
     } finally {
       setIsProcessing(false)
     }
@@ -275,10 +269,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
   }
 
   const startVoice = async () => {
-    if (!checkAndDeductAIQuery()) {
-      setStep('type')
-      return
-    }
+    if (isProcessing || recording) return // Guard against double-submit
 
     setStep('voice')
     setRecording(true)
@@ -306,10 +297,10 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
       rec.onresult = async (event: any) => {
         const resultText = event.results[0][0].transcript
         setRecording(false)
+        setIsProcessing(true)
 
         try {
           const parsed = await parseAIText(resultText, cards, userId || undefined)
-          recordAiUsage()
           setSelectedType(parsed.type)
           const localISOTime = (new Date(Date.now() - new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 16)
           setEntry(prev => ({
@@ -324,17 +315,26 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
             cardId: parsed.cardId || prev.cardId || 'cash',
           }))
           setStep('form')
-        } catch (e) {
+        } catch (e: any) {
           console.error(e)
           setAiText(resultText)
-          setAiError(language === 'uz' ? "Tushunmadim, qayta urinib ko'ring" : language === 'uz_cyrl' ? "Тушунмадим, қайта уриниб кўринг" : language === 'ru' ? 'Не удалось распознать, попробуйте снова' : "Couldn't parse that, try again")
+          // Display backend quota/provider error messages directly
+          const msg = e?.message || ''
+          if (msg.includes('tugadi') || msg.includes('Premium') || msg.includes('band') || msg.includes('limit') || msg.includes('Limit')) {
+            setAiError(msg)
+          } else {
+            setAiError(language === 'uz' ? "Tushunmadim, qayta urinib ko'ring" : language === 'uz_cyrl' ? "Тушунмадим, қайта уриниб кўринг" : language === 'ru' ? 'Не удалось распознать, попробуйте снова' : "Couldn't parse that, try again")
+          }
           setStep('type')
+        } finally {
+          setIsProcessing(false)
         }
       }
 
       rec.onerror = (e: any) => {
         console.error("Speech recognition error:", e)
         stopVoice()
+        setIsProcessing(false)
         setStep('type')
         setAiError(
           (language === 'uz' || language === 'uz_cyrl')
@@ -356,6 +356,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
     } catch (e) {
       console.error(e)
       setRecording(false)
+      setIsProcessing(false)
       setStep('type')
       setAiError(
         (language === 'uz' || language === 'uz_cyrl')
@@ -371,6 +372,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
 
 
   const handleSave = () => {
+    if (saved) return // Guard against double-tap creating duplicate transactions
     // Save transaction to context and Firestore
     let finalDate = new Date().toISOString()
     if (entry.date) {

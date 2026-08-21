@@ -10,6 +10,7 @@ export interface AiKeyRecord {
   priority: number;
   status: 'active' | 'disabled' | 'rate_limited' | 'exhausted' | 'invalid';
   total_requests: number;
+  today_requests?: number;
   success_requests: number;
   failed_requests: number;
   last_error?: string | null;
@@ -30,6 +31,7 @@ export interface AiParseResult {
   items?: Array<{ name: string; amount: number }>;
   providerUsed?: string;
   keyIdUsed?: string;
+  keyNameUsed?: string;
   error?: string;
 }
 
@@ -45,20 +47,35 @@ export function maskApiKey(key: string): string {
 }
 
 /**
- * Retrieves ordered list of active/candidate AI keys
+ * Retrieves ordered list of active candidate AI keys from Supabase
  */
 export async function getCandidateAiKeys(): Promise<AiKeyRecord[]> {
   try {
     const { data: dbKeys, error } = await supabase
       .from('ai_keys')
       .select('*')
-      .neq('status', 'disabled')
-      .neq('status', 'invalid')
+      .eq('is_active', true)
+      .neq('health_status', 'invalid')
       .order('priority', { ascending: true })
-      .order('updated_at', { ascending: false });
+      .order('last_used_at', { ascending: true, nullsFirst: true });
 
     if (!error && Array.isArray(dbKeys) && dbKeys.length > 0) {
-      return dbKeys;
+      return dbKeys.map((k: any) => ({
+        id: k.id,
+        name: k.name || 'AI Key',
+        provider: (k.provider === 'gemini' ? 'google' : (k.provider || 'google')) as any,
+        api_key: k.api_key,
+        model: k.model || 'gemini-3.7-flash',
+        priority: k.priority || 1,
+        status: (k.is_active ? (k.health_status === 'healthy' ? 'active' : k.health_status || 'active') : 'disabled') as any,
+        total_requests: k.total_requests || 0,
+        today_requests: k.today_requests || 0,
+        success_requests: k.total_requests || 0,
+        failed_requests: 0,
+        last_used_at: k.last_used_at,
+        created_at: k.created_at,
+        updated_at: k.updated_at
+      }));
     }
   } catch (err) {
     console.warn('[AI_ROUTER] Supabase ai_keys query notice:', err);
@@ -70,7 +87,7 @@ export async function getCandidateAiKeys(): Promise<AiKeyRecord[]> {
     return validMemoryKeys.sort((a, b) => a.priority - b.priority);
   }
 
-  // Ultimate fallback to environment variables
+  // Fallback to environment variables if database is empty
   const envKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || "";
   if (envKey) {
     return [
@@ -79,10 +96,11 @@ export async function getCandidateAiKeys(): Promise<AiKeyRecord[]> {
         name: 'Default Environment Key',
         provider: 'google',
         api_key: envKey,
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3.7-flash',
         priority: 1,
         status: 'active',
         total_requests: 0,
+        today_requests: 0,
         success_requests: 0,
         failed_requests: 0
       }
@@ -107,6 +125,7 @@ export async function recordKeyResult(
   const memKey = inMemoryKeys.find(k => k.id === keyId);
   if (memKey) {
     memKey.total_requests = (memKey.total_requests || 0) + 1;
+    memKey.today_requests = (memKey.today_requests || 0) + 1;
     if (isSuccess) {
       memKey.success_requests = (memKey.success_requests || 0) + 1;
       memKey.last_used_at = nowIso;
@@ -127,21 +146,20 @@ export async function recordKeyResult(
     if (current) {
       const updatePayload: any = {
         total_requests: (current.total_requests || 0) + 1,
+        today_requests: (current.today_requests || 0) + 1,
+        last_used_at: nowIso,
         updated_at: nowIso
       };
 
       if (isSuccess) {
-        updatePayload.success_requests = (current.success_requests || 0) + 1;
-        updatePayload.last_used_at = nowIso;
-        if (current.status === 'rate_limited') {
-          updatePayload.status = 'active'; // Recovered
-        }
+        updatePayload.health_status = 'healthy';
+        updatePayload.last_error = null;
       } else {
-        updatePayload.failed_requests = (current.failed_requests || 0) + 1;
         updatePayload.last_error = errorMessage || 'Request failed';
-        updatePayload.last_error_at = nowIso;
-        if (errorType && errorType !== 'temporary') {
-          updatePayload.status = errorType;
+        if (errorType === 'rate_limited') {
+          updatePayload.health_status = 'rate_limited';
+        } else if (errorType === 'invalid') {
+          updatePayload.health_status = 'invalid';
         }
       }
 
@@ -153,34 +171,57 @@ export async function recordKeyResult(
 }
 
 /**
- * Execute AI single prompt with Google GenAI SDK
+ * Execute AI prompt with Google GenAI / REST API with model fallback
  */
 async function callGoogleGenAi(key: AiKeyRecord, prompt: string): Promise<any> {
-  const ai = new GoogleGenAI({ apiKey: key.api_key });
-  const modelName = key.model || 'gemini-2.5-flash';
+  const cleanKey = (key.api_key || '').trim();
+  const candidateModels = [
+    (key.model || 'gemini-3.7-flash').trim(),
+    'gemini-3.7-flash',
+    'gemini-flash-latest',
+    'gemini-2.0-flash',
+    'gemini-1.5-flash',
+    'gemini-1.5-pro'
+  ];
+  const uniqueModels = [...new Set(candidateModels)];
 
-  const response = await ai.models.generateContent({
-    model: modelName,
-    contents: prompt,
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          type: { type: Type.STRING },
-          amount: { type: Type.NUMBER },
-          category: { type: Type.STRING },
-          note: { type: Type.STRING },
-          title: { type: Type.STRING },
-          debtWho: { type: Type.STRING },
-        },
-        required: ["type", "amount", "category", "note"],
+  let lastError = null;
+
+  for (const modelName of uniqueModels) {
+    try {
+      const genUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${cleanKey}`;
+      const res = await fetch(genUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseMimeType: "application/json"
+          }
+        })
+      });
+
+      if (res.status === 200) {
+        const data = await res.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) return JSON.parse(text);
+      }
+
+      const errJson = await res.json().catch(() => ({}));
+      lastError = errJson.error?.message || `HTTP ${res.status}`;
+
+      if (res.status === 429 || res.status === 400 || res.status === 401 || res.status === 403) {
+        throw new Error(lastError);
+      }
+    } catch (e: any) {
+      lastError = e.message;
+      if (e.message?.includes('429') || e.message?.includes('API_KEY_INVALID') || e.message?.includes('401') || e.message?.includes('403')) {
+        throw e;
       }
     }
-  });
+  }
 
-  if (!response?.text) throw new Error("Empty response from Google GenAI");
-  return JSON.parse(response.text);
+  throw new Error(lastError || "Google AI call failed across model versions");
 }
 
 /**
@@ -234,7 +275,7 @@ export async function executeAiWithRotation(promptText: string): Promise<AiParse
   }
 
   const prompt = `You are a financial AI assistant for Moliya AI. Parse this transaction spoken transcript or written text in Uzbek, Russian, or English: "${promptText}".
-Detect:
+Detect and return JSON:
 - type: 'expense' (spending), 'income' (salary/earnings), 'debt' (borrowed money), or 'lending' (loaned money to someone)
 - amount: total amount in numbers (e.g. "45 ming" -> 45000, "1.5 mln" -> 1500000, "100 dollar" -> 100, "ellik ming" -> 50000)
 - category: choose EXACTLY one from: ['Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\\'liq', 'Ta\\'lim', 'Ko\\'ngil ochar', 'Boshqa', 'Maosh', 'Freelance', 'Biznes', 'Sovg\\'a', 'Investitsiya', 'Do\\'st', 'Bank', 'Oila', 'Hamkasb']
@@ -271,7 +312,8 @@ Detect:
           title: parsedJson.title || parsedJson.note || promptText,
           debtWho: parsedJson.debtWho || '',
           providerUsed: `${key.provider}:${key.model}`,
-          keyIdUsed: key.id
+          keyIdUsed: key.id,
+          keyNameUsed: key.name
         };
       }
     } catch (err: any) {
@@ -302,7 +344,7 @@ Detect:
 }
 
 /**
- * Test a specific AI Key safely (Admin Dashboard Action)
+ * Test a specific AI Key safely
  */
 export async function testSpecificAiKey(keyData: {
   provider: 'google' | 'openai' | 'groq' | 'anthropic';
@@ -310,46 +352,42 @@ export async function testSpecificAiKey(keyData: {
   model?: string;
 }): Promise<{ healthy: boolean; status: string; latencyMs: number; error?: string }> {
   const start = Date.now();
-  const testPrompt = 'Say "healthy" in JSON: {"status":"healthy"}';
+  const cleanKey = (keyData.api_key || '').trim();
 
   try {
-    const dummyKey: AiKeyRecord = {
-      id: 'test_key',
-      name: 'Test Probe',
-      provider: keyData.provider,
-      api_key: keyData.api_key,
-      model: keyData.model || (keyData.provider === 'google' ? 'gemini-1.5-flash' : 'gpt-4o-mini'),
-      priority: 99,
-      status: 'active',
-      total_requests: 0,
-      success_requests: 0,
-      failed_requests: 0
-    };
-
-    if (dummyKey.provider === 'google') {
-      const ai = new GoogleGenAI({ apiKey: dummyKey.api_key });
-      const resp = await ai.models.generateContent({
-        model: dummyKey.model,
-        contents: "Respond with the word: OK",
+    if (keyData.provider === 'google') {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${keyData.model || 'gemini-3.7-flash'}:generateContent?key=${cleanKey}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: 'Ping' }] }] })
       });
-      if (resp?.text) {
-        return { healthy: true, status: 'Healthy 🟢', latencyMs: Date.now() - start };
+      const latency = Date.now() - start;
+      if (res.status === 200) {
+        return { healthy: true, status: 'Healthy 🟢', latencyMs: latency };
       }
+      return { healthy: false, status: `HTTP ${res.status} 🔴`, latencyMs: latency, error: `HTTP ${res.status}` };
     } else {
-      await callOpenAiCompatible(dummyKey, testPrompt);
-      return { healthy: true, status: 'Healthy 🟢', latencyMs: Date.now() - start };
+      const endpoint = keyData.provider === 'groq' 
+        ? 'https://api.groq.com/openai/v1/chat/completions' 
+        : 'https://api.openai.com/v1/chat/completions';
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cleanKey}` },
+        body: JSON.stringify({
+          model: keyData.model || 'gpt-4o-mini',
+          messages: [{ role: 'user', content: 'Ping' }],
+          max_tokens: 5
+        })
+      });
+      const latency = Date.now() - start;
+      if (res.status === 200) {
+        return { healthy: true, status: 'Healthy 🟢', latencyMs: latency };
+      }
+      return { healthy: false, status: `HTTP ${res.status} 🔴`, latencyMs: latency, error: `HTTP ${res.status}` };
     }
-
-    return { healthy: false, status: 'Invalid Response 🔴', latencyMs: Date.now() - start, error: 'Empty output' };
   } catch (err: any) {
-    const msg = err?.message || String(err);
-    const latency = Date.now() - start;
-    if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota')) {
-      return { healthy: false, status: 'Quota Exhausted / Rate Limited 🟡', latencyMs: latency, error: msg };
-    } else if (msg.includes('401') || msg.includes('403') || msg.includes('API_KEY_INVALID')) {
-      return { healthy: false, status: 'Invalid Key 🔴', latencyMs: latency, error: msg };
-    }
-    return { healthy: false, status: 'Provider Error 🔴', latencyMs: latency, error: msg };
+    return { healthy: false, status: 'Connection Error 🔴', latencyMs: Date.now() - start, error: err?.message };
   }
 }
 
