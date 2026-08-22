@@ -6,6 +6,10 @@ import { createClient } from '@supabase/supabase-js';
 import crypto from "crypto";
 import { executeAiWithRotation, getCandidateAiKeys, maskApiKey, testSpecificAiKey, recordKeyResult, AiKeyRecord } from './api/_aiRouter.js';
 import { checkAiQuota, recordAiUsage as recordAiUsageBackend, checkAndRecordAiUsage } from './api/_aiQuotaHelper.js';
+import { requireAdminAuth } from './api/_adminAuthHelper.js';
+import adminAuthHandler from './api/admin/auth.js';
+import { getUserCardsRelational, getUserTransactionsRelational } from './api/_relationalReader.js';
+
 
 // Supabase client for local dev server (replaces Firebase)
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://qjumnjzbgjldbwwluggr.supabase.co';
@@ -120,6 +124,10 @@ async function startServer() {
         if (status === 'VERIFIED' && tgId && sessionToken) {
           const userId = `moliya_user_tg_${tgId}`;
           const { data: userDoc } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
+          const [userCards, userTransactions] = await Promise.all([
+            getUserCardsRelational(userId),
+            getUserTransactionsRelational(userId)
+          ]);
 
           res.json({
             status: "VERIFIED",
@@ -127,8 +135,8 @@ async function startServer() {
             sessionToken,
             onboarding: userDoc?.onboarding || null,
             phone: userDoc?.phone || "",
-            cards: userDoc?.cards || [],
-            transactions: userDoc?.transactions || []
+            cards: userCards,
+            transactions: userTransactions
           });
           return;
         }
@@ -162,12 +170,17 @@ async function startServer() {
           res.json({ valid: false, reason: "Session expired" });
           return;
         }
+        const [userCards, userTransactions] = await Promise.all([
+          getUserCardsRelational(userDoc.id),
+          getUserTransactionsRelational(userDoc.id)
+        ]);
+
         res.json({
           valid: true,
           userId: userDoc.id,
           onboarding: userDoc.onboarding || null,
-          cards: userDoc.cards || [],
-          transactions: userDoc.transactions || [],
+          cards: userCards,
+          transactions: userTransactions,
           isPremium: userDoc.is_premium || false
         });
         return;
@@ -244,12 +257,17 @@ async function startServer() {
         updated_at: now.toISOString()
       }, { onConflict: 'id' });
 
+      const [userCards, userTransactions] = await Promise.all([
+        getUserCardsRelational(userId),
+        getUserTransactionsRelational(userId)
+      ]);
+
       res.json({
         userId,
         sessionToken,
         onboarding: updatedOnboarding,
-        cards: existingUser?.cards || [],
-        transactions: existingUser?.transactions || [],
+        cards: userCards,
+        transactions: userTransactions,
         isPremium: existingUser?.is_premium || false
       });
     } catch (e: any) {
@@ -386,6 +404,11 @@ async function startServer() {
 
       const authSession = await createSupabaseAuthSession(tgId, { name: tgName, telegram: tgUsername });
 
+      const [relCards, relTransactions] = await Promise.all([
+        getUserCardsRelational(userId),
+        getUserTransactionsRelational(userId)
+      ]);
+
       res.status(200).json({
         success: true,
         userId,
@@ -395,8 +418,8 @@ async function startServer() {
         isNewUser,
         onboardingCompleted,
         onboarding: updatedOnboarding,
-        cards: userCards,
-        transactions: userTransactions,
+        cards: relCards,
+        transactions: relTransactions,
         isPremium,
       });
     } catch (e: any) {
@@ -695,11 +718,24 @@ async function startServer() {
   });
 
   // ─────────────────────────────────────────────────────────────
-  // ADMIN DASHBOARD API ENDPOINTS
+  // ADMIN DASHBOARD API ENDPOINTS (Protected with Admin Security Gateway)
   // ─────────────────────────────────────────────────────────────
+
+  // Admin Authentication Login Endpoint
+  app.post("/api/admin/auth", async (req: any, res: any) => {
+    return adminAuthHandler(req, res);
+  });
+
+  // Admin Security Middleware for all subsequent /api/admin routes
+  app.use("/api/admin", (req: any, res: any, next: any) => {
+    if (req.path === '/auth') return next();
+    if (!requireAdminAuth(req, res)) return;
+    next();
+  });
 
   // 1. Admin AI Keys (GET Masked & POST Actions)
   app.get("/api/admin/ai-keys", async (req, res) => {
+
     try {
       let keys: AiKeyRecord[] = [];
       const { data: dbKeys, error } = await supabase

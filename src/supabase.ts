@@ -1,6 +1,11 @@
 import { createClient } from '@supabase/supabase-js';
 
-export const SUPABASE_URL = 'https://qjumnjzbgjldbwwluggr.supabase.co';
-export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFqdW1uanpiZ2psZGJ3d2x1Z2dyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY5Nzc0ODIsImV4cCI6MjEwMjU1MzQ4Mn0.zHMIbL50xmrlhtpkpGdewvcWvsBJUAHyo5lS1hdU910';
+export const SUPABASE_URL = (import.meta as any).env?.VITE_SUPABASE_URL || 'https://qjumnjzbgjldbwwluggr.supabase.co';
+export const SUPABASE_ANON_KEY = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || '';
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+if (!SUPABASE_ANON_KEY && typeof window !== 'undefined') {
+  console.warn('[SUPABASE_CLIENT] Warning: VITE_SUPABASE_ANON_KEY environment variable is not defined.');
+}
+
+export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY || 'MISSING_ANON_KEY');
+

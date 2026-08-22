@@ -1,8 +1,11 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabase } from '../_supabaseClient.js';
+import { requireAdminAuth } from '../_adminAuthHelper.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (!requireAdminAuth(req, res)) return;
   try {
+
     if (req.method === 'GET') {
       const { data, error } = await supabase
         .from('app_notifications')

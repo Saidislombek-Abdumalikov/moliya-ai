@@ -1,16 +1,18 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabase } from '../_supabaseClient.js';
+import { requireAdminAuth } from '../_adminAuthHelper.js';
 
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8955141731:AAF0axUBdGs6D1LN32tNncb2cOp47-z9oho";
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
+
+if (!BOT_TOKEN && process.env.NODE_ENV === 'production') {
+  console.error('[ADMIN_BROADCAST] CRITICAL: TELEGRAM_BOT_TOKEN environment variable is missing.');
+}
+
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
-  res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
-
-  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (!requireAdminAuth(req, res)) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
 
   try {
     const {

@@ -2,8 +2,13 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import crypto from 'crypto';
 import { supabase } from '../_supabaseClient.js';
 import { createSupabaseAuthSession } from '../_authHelper.js';
+import { getUserCardsRelational, getUserTransactionsRelational } from '../_relationalReader.js';
 
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8955141731:AAF0axUBdGs6D1LN32tNncb2cOp47-z9oho";
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
+
+if (!BOT_TOKEN && process.env.NODE_ENV === 'production') {
+  console.error('[AUTH_TELEGRAM] CRITICAL: TELEGRAM_BOT_TOKEN environment variable is missing.');
+}
 
 function verifyTelegramInitData(initData: string, botToken: string): { isValid: boolean; user?: any } {
   if (!botToken || !initData) {
@@ -130,6 +135,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // 3. Create real Supabase Auth session
     const authSession = await createSupabaseAuthSession(tgId, { name: tgName, telegram: tgUsername });
 
+    // 4. Fetch relational cards and transactions
+    const [userCards, userTransactions] = await Promise.all([
+      getUserCardsRelational(userId),
+      getUserTransactionsRelational(userId)
+    ]);
+
     return res.status(200).json({
       userId,
       sessionToken,
@@ -137,8 +148,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       access_token: authSession?.access_token || null,
       refresh_token: authSession?.refresh_token || null,
       onboarding: updatedOnboarding,
-      cards: existingUser?.cards || [],
-      transactions: existingUser?.transactions || [],
+      cards: userCards,
+      transactions: userTransactions,
       isPremium: existingUser?.is_premium || false
     });
   } catch (error: any) {

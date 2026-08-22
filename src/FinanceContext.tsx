@@ -122,7 +122,7 @@ function getDeviceInfo() {
     platform: isApk ? 'android_apk' : 'web_app',
     model: ua.includes('Android') ? 'Android Phone' : platform,
     os: ua.includes('Android') ? 'Android' : platform,
-    app_version: 'v3.20.0',
+    app_version: 'v3.21.0',
     push_token: null,
     last_login: new Date().toISOString()
   }
@@ -722,13 +722,69 @@ const fetchWithTimeout = (url: string, options: RequestInit = {}, timeoutMs = 25
             setOnboarding(data.onboarding);
             localStorage.setItem('user_onboarding_v1', JSON.stringify(data.onboarding));
           }
-          if (Array.isArray(data.cards)) {
-            setCards(data.cards);
-            localStorage.setItem('user_cards_v1', JSON.stringify(data.cards));
+
+          // 1. Fetch Relational Cards with legacy fallback
+          try {
+            const { data: relCards, error: cErr } = await supabase
+              .from('cards')
+              .select('*')
+              .eq('user_id', userId)
+              .order('created_at', { ascending: true });
+
+            if (!cErr && Array.isArray(relCards) && relCards.length > 0) {
+              const mappedCards: Card[] = relCards.map(c => ({
+                id: c.id,
+                name: c.name,
+                bank: c.bank,
+                number: c.number_masked,
+                balance: String(c.initial_balance || 0),
+                brand: (c.brand || 'uzcard') as any
+              }));
+              setCards(mappedCards);
+              localStorage.setItem('user_cards_v1', JSON.stringify(mappedCards));
+            } else if (Array.isArray(data.cards)) {
+              setCards(data.cards);
+              localStorage.setItem('user_cards_v1', JSON.stringify(data.cards));
+            }
+          } catch {
+            if (Array.isArray(data.cards)) {
+              setCards(data.cards);
+              localStorage.setItem('user_cards_v1', JSON.stringify(data.cards));
+            }
           }
-          if (Array.isArray(data.transactions)) {
-            setCustomTransactions(data.transactions);
-            localStorage.setItem('user_transactions_v1', JSON.stringify(data.transactions));
+
+          // 2. Fetch Relational Transactions with legacy fallback
+          try {
+            const { data: relTxs, error: tErr } = await supabase
+              .from('transactions')
+              .select('*')
+              .eq('user_id', userId)
+              .is('deleted_at', null)
+              .order('date', { ascending: false });
+
+            if (!tErr && Array.isArray(relTxs) && relTxs.length > 0) {
+              const mappedTxs: Transaction[] = relTxs.map(t => ({
+                id: t.id,
+                type: t.type,
+                amount: Number(t.amount),
+                category: t.category,
+                note: t.note || '',
+                title: t.title || undefined,
+                debtWho: t.debt_who || undefined,
+                date: t.date,
+                cardId: t.card_id || 'cash'
+              }));
+              setCustomTransactions(mappedTxs);
+              localStorage.setItem('user_transactions_v1', JSON.stringify(mappedTxs));
+            } else if (Array.isArray(data.transactions)) {
+              setCustomTransactions(data.transactions);
+              localStorage.setItem('user_transactions_v1', JSON.stringify(data.transactions));
+            }
+          } catch {
+            if (Array.isArray(data.transactions)) {
+              setCustomTransactions(data.transactions);
+              localStorage.setItem('user_transactions_v1', JSON.stringify(data.transactions));
+            }
           }
         }
       } catch (err) {
@@ -753,23 +809,23 @@ const fetchWithTimeout = (url: string, options: RequestInit = {}, timeoutMs = 25
       .channel(`user-sync-${userId}`)
       .on(
         'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'users', filter: `id=eq.${userId}` },
-        (payload: any) => {
-          const newData = payload.new;
-          if (newData) {
-            if (newData.onboarding) {
-              setOnboarding(newData.onboarding);
-              localStorage.setItem('user_onboarding_v1', JSON.stringify(newData.onboarding));
-            }
-            if (Array.isArray(newData.cards)) {
-              setCards(newData.cards);
-              localStorage.setItem('user_cards_v1', JSON.stringify(newData.cards));
-            }
-            if (Array.isArray(newData.transactions)) {
-              setCustomTransactions(newData.transactions);
-              localStorage.setItem('user_transactions_v1', JSON.stringify(newData.transactions));
-            }
-          }
+        { event: '*', schema: 'public', table: 'users', filter: `id=eq.${userId}` },
+        () => {
+          fetchLatestData();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'cards', filter: `user_id=eq.${userId}` },
+        () => {
+          fetchLatestData();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'transactions', filter: `user_id=eq.${userId}` },
+        () => {
+          fetchLatestData();
         }
       )
       .subscribe();

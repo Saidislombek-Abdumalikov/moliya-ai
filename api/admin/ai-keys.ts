@@ -1,14 +1,11 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabase } from '../_supabaseClient.js';
 import { maskApiKey, testSpecificAiKey, executeAiWithRotation, AiKeyRecord } from '../_aiRouter.js';
+import { requireAdminAuth } from '../_adminAuthHelper.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
-  res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
+  if (!requireAdminAuth(req, res)) return;
 
-  if (req.method === 'OPTIONS') return res.status(200).end();
 
   // 1. GET: Fetch all configured AI Keys (Masked) & Aggregate Metrics
   if (req.method === 'GET') {

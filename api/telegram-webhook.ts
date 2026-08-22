@@ -3,9 +3,15 @@ import { GoogleGenAI, Type } from "@google/genai";
 import crypto from "crypto";
 import { supabase } from './_supabaseClient.js';
 import { executeAiWithRotation } from './_aiRouter.js';
+import { getUserTransactionsRelational } from './_relationalReader.js';
 
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8955141731:AAF0axUBdGs6D1LN32tNncb2cOp47-z9oho";
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const appUrl = process.env.APP_URL || "https://moliya-ai-pi.vercel.app";
+
+if (!BOT_TOKEN && process.env.NODE_ENV === 'production') {
+  console.error('[TELEGRAM_WEBHOOK] CRITICAL: TELEGRAM_BOT_TOKEN environment variable is missing.');
+}
+
 
 // Helper: Create 60-day Session Token & Mark Login Request VERIFIED in Supabase
 async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone?: string) {
@@ -170,8 +176,7 @@ async function getBotTransactions(fromUser: any) {
   try {
     const tgId = String(fromUser.id);
     const userId = `moliya_user_tg_${tgId}`;
-    const { data: user } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
-    return Array.isArray(user?.transactions) ? user.transactions : [];
+    return await getUserTransactionsRelational(userId);
   } catch (err) {
     console.error('[BOT] Error fetching transactions from Supabase:', err);
     return [];
@@ -474,7 +479,7 @@ async function renderUserReportSummary(fromUser: any) {
   const tgId = String(fromUser?.id);
   const userId = `moliya_user_tg_${tgId}`;
   const { data: user } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
-  const txs: any[] = Array.isArray(user?.transactions) ? user.transactions : [];
+  const txs: any[] = await getUserTransactionsRelational(userId);
 
   const now = new Date();
   const currentMonthTxs = txs.filter(t => {

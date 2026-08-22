@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabase } from '../_supabaseClient.js';
 import { createSupabaseAuthSession } from '../_authHelper.js';
+import { getUserCardsRelational, getUserTransactionsRelational } from '../_relationalReader.js';
 
 /**
  * POST /api/auth/exchange-code
@@ -84,15 +85,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(500).json({ error: 'Failed to create auth session' });
     }
 
-    // 7. Return tokens + user data
+    // 7. Fetch relational cards and transactions
+    const [userCards, userTransactions] = await Promise.all([
+      getUserCardsRelational(userId),
+      getUserTransactionsRelational(userId)
+    ]);
+
+    // 8. Return tokens + user data
     return res.status(200).json({
       access_token: authSession.access_token,
       refresh_token: authSession.refresh_token,
       userId,
       sessionToken: userDoc?.onboarding?.session_token || codeDoc.onboarding?.session_token || null,
       onboarding: userDoc?.onboarding || null,
-      cards: userDoc?.cards || [],
-      transactions: userDoc?.transactions || [],
+      cards: userCards,
+      transactions: userTransactions,
       isPremium: userDoc?.is_premium || false
     });
   } catch (error: any) {

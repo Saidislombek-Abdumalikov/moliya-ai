@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabase } from '../_supabaseClient.js';
 import { createSupabaseAuthSession } from '../_authHelper.js';
+import { getUserCardsRelational, getUserTransactionsRelational } from '../_relationalReader.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -45,6 +46,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         );
       }
 
+      // Fetch relational cards and transactions
+      const [userCards, userTransactions] = await Promise.all([
+        getUserCardsRelational(userDoc.id),
+        getUserTransactionsRelational(userDoc.id)
+      ]);
+
       return res.status(200).json({
         valid: true,
         userId: userDoc.id,
@@ -52,8 +59,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         access_token: authSession?.access_token || null,
         refresh_token: authSession?.refresh_token || null,
         onboarding: userDoc.onboarding || null,
-        cards: userDoc.cards || [],
-        transactions: userDoc.transactions || [],
+        cards: userCards,
+        transactions: userTransactions,
         isPremium: userDoc.is_premium || false
       });
     }

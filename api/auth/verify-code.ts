@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabase } from '../_supabaseClient.js';
 import { createSupabaseAuthSession } from '../_authHelper.js';
+import { getUserCardsRelational, getUserTransactionsRelational } from '../_relationalReader.js';
 
 // In-memory rate limiting: max 5 failed attempts per 5 minutes per IP
 interface RateLimitEntry {
@@ -140,8 +141,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const userPhone = otpDoc.phone || existingUser?.phone || existingUser?.onboarding?.phone || '';
 
     let updatedOnboarding: any;
-    let userCards: any[] = [];
-    let userTransactions: any[] = [];
     let isPremium = false;
     let isNewUser = false;
     let onboardingCompleted = false;
@@ -159,8 +158,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         session_token: sessionToken,
         session_expires_at: expiresAt,
       };
-      userCards = Array.isArray(existingUser.cards) ? existingUser.cards : [];
-      userTransactions = Array.isArray(existingUser.transactions) ? existingUser.transactions : [];
       isPremium = Boolean(existingUser.is_premium);
       isNewUser = false;
 
@@ -211,6 +208,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       tgId,
       { name: tgName, telegram: tgUsername }
     );
+
+    // 6. Fetch relational cards and transactions
+    const [userCards, userTransactions] = await Promise.all([
+      getUserCardsRelational(userId),
+      getUserTransactionsRelational(userId)
+    ]);
 
     return res.status(200).json({
       success: true,
