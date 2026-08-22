@@ -940,9 +940,12 @@ async function startServer() {
           telegramId: u.telegram_id,
           isPremium: u.is_premium,
           premiumExpiresAt: u.premium_expires_at,
+          isBlocked: u.is_blocked || false,
           aiLimit: u.ai_limit,
-          aiQueryCount: u.ai_query_count,
+          aiQueryCount: u.ai_query_count || 0,
           lastAiQueryAt: u.last_ai_query_at,
+          deviceInfo: u.device_info || null,
+          platform: u.platform || null,
           language: u.language,
           onboarding: u.onboarding,
           createdAt: u.created_at,
@@ -959,21 +962,63 @@ async function startServer() {
 
   app.post("/api/admin/users", async (req, res) => {
     try {
-      const { userId, isPremium, aiLimit, premiumExpiresAt } = req.body || {};
+      const { userId, action, isPremium, aiLimit } = req.body || {};
       if (!userId) {
         res.status(400).json({ error: 'Missing userId' });
         return;
       }
 
-      const updateData: any = {
-        updated_at: new Date().toISOString()
-      };
-      if (isPremium !== undefined) updateData.is_premium = !!isPremium;
-      if (aiLimit !== undefined) updateData.ai_limit = aiLimit;
-      if (premiumExpiresAt !== undefined) updateData.premium_expires_at = premiumExpiresAt;
+      const nowIso = new Date().toISOString();
+      const effectiveAction = action || (isPremium !== undefined ? (isPremium ? 'grant_vip' : 'revoke_vip') : null);
 
-      await supabase.from('users').update(updateData).eq('id', userId);
-      res.json({ success: true, message: 'User updated successfully' });
+      switch (effectiveAction) {
+        case 'grant_vip': {
+          const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+          await supabase.from('users').update({
+            is_premium: true, premium_expires_at: expiresAt, ai_query_count: 0, updated_at: nowIso
+          }).eq('id', userId);
+          res.json({ success: true, userId, action: 'grant_vip', isPremium: true });
+          return;
+        }
+        case 'revoke_vip': {
+          await supabase.from('users').update({
+            is_premium: false, premium_expires_at: null, updated_at: nowIso
+          }).eq('id', userId);
+          res.json({ success: true, userId, action: 'revoke_vip', isPremium: false });
+          return;
+        }
+        case 'block': {
+          await supabase.from('users').update({ is_blocked: true, updated_at: nowIso }).eq('id', userId);
+          res.json({ success: true, userId, action: 'block', isBlocked: true });
+          return;
+        }
+        case 'unblock': {
+          await supabase.from('users').update({ is_blocked: false, updated_at: nowIso }).eq('id', userId);
+          res.json({ success: true, userId, action: 'unblock', isBlocked: false });
+          return;
+        }
+        case 'set_ai_limit': {
+          const limitValue = (aiLimit === null || aiLimit === undefined || aiLimit === -1 || aiLimit === 0) ? null : Number(aiLimit);
+          await supabase.from('users').update({
+            ai_limit: limitValue, ai_query_count: 0, updated_at: nowIso
+          }).eq('id', userId);
+          res.json({ success: true, userId, action: 'set_ai_limit', aiLimit: limitValue, aiQueryCount: 0 });
+          return;
+        }
+        case 'reset_ai_count': {
+          await supabase.from('users').update({ ai_query_count: 0, updated_at: nowIso }).eq('id', userId);
+          res.json({ success: true, userId, action: 'reset_ai_count', aiQueryCount: 0 });
+          return;
+        }
+        default: {
+          if (isPremium !== undefined) {
+            await supabase.from('users').update({ is_premium: !!isPremium, updated_at: nowIso }).eq('id', userId);
+            res.json({ success: true, userId, isPremium: !!isPremium });
+            return;
+          }
+          res.status(400).json({ error: 'Missing action or isPremium field' });
+        }
+      }
     } catch (e: any) {
       res.status(500).json({ error: 'Failed to update user', details: e?.message });
     }
@@ -1002,31 +1047,180 @@ async function startServer() {
     }
   });
 
-  // 4. Admin Broadcast
+  // 4. Admin Broadcast (Enhanced with audience targeting & notification types)
   app.post("/api/admin/broadcast", async (req, res) => {
     try {
-      const { title, message, type, audience, expireHours } = req.body || {};
-      if (!title || !message) {
-        res.status(400).json({ error: 'Missing title or message' });
+      const { title, message, emoji, type, target_audience, audience, image_url, action_url, expire_hours, expireHours } = req.body || {};
+      if (!message) {
+        res.status(400).json({ error: 'Missing message' });
         return;
       }
 
-      const now = new Date();
-      const expiresAt = new Date(now.getTime() + (expireHours || 72) * 3600 * 1000).toISOString();
+      const effectiveAudience = target_audience || audience || 'all';
+      const effectiveType = type || 'info';
+      const effectiveExpire = expire_hours || expireHours || 72;
+      const expiresAt = new Date(Date.now() + Number(effectiveExpire) * 3600 * 1000).toISOString();
+
+      const typeEmojis: Record<string, string> = { info: 'ℹ️', feature: '✨', maintenance: '🔧', promo: '🎁' };
+      const effectiveEmoji = emoji || typeEmojis[effectiveType] || '📢';
 
       await supabase.from('app_notifications').insert({
-        title,
+        title: title || 'Yangilanish',
         message,
-        type: type || 'info',
-        target_audience: audience || 'all',
+        emoji: effectiveEmoji,
+        type: effectiveType,
+        target: effectiveAudience,
+        target_audience: effectiveAudience,
+        image_url: image_url || null,
+        action_url: action_url || null,
         is_active: true,
         expires_at: expiresAt,
-        created_at: now.toISOString()
+        created_at: new Date().toISOString()
       });
 
-      res.json({ success: true, message: 'Broadcast notification published successfully! 📢' });
+      res.json({ success: true, message: 'Broadcast notification published! 📢', audience: effectiveAudience, type: effectiveType });
     } catch (e: any) {
       res.status(500).json({ error: 'Failed to broadcast', details: e?.message });
+    }
+  });
+
+  // 5. Admin Notifications (list, update, delete)
+  app.get("/api/admin/notifications", async (req, res) => {
+    try {
+      const { data, error } = await supabase
+        .from('app_notifications')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (error) {
+        res.status(500).json({ error: error.message });
+        return;
+      }
+      res.json(data || []);
+    } catch (e: any) {
+      res.status(500).json({ error: 'Failed to fetch notifications', details: e?.message });
+    }
+  });
+
+  app.post("/api/admin/notifications", async (req, res) => {
+    try {
+      const { action, id, title, message, emoji, type, target_audience, image_url, action_url, is_active } = req.body || {};
+
+      if (action === 'update') {
+        if (!id) { res.status(400).json({ error: 'Missing notification ID' }); return; }
+        const updates: any = {};
+        if (title !== undefined) updates.title = title;
+        if (message !== undefined) updates.message = message;
+        if (emoji !== undefined) updates.emoji = emoji;
+        if (type !== undefined) updates.type = type;
+        if (target_audience !== undefined) updates.target_audience = target_audience;
+        if (image_url !== undefined) updates.image_url = image_url;
+        if (action_url !== undefined) updates.action_url = action_url;
+        if (is_active !== undefined) updates.is_active = is_active;
+
+        const { error } = await supabase.from('app_notifications').update(updates).eq('id', id);
+        if (error) { res.status(500).json({ error: error.message }); return; }
+        res.json({ success: true, message: 'Notification updated' });
+      } else if (action === 'delete') {
+        if (!id) { res.status(400).json({ error: 'Missing notification ID' }); return; }
+        const { error } = await supabase.from('app_notifications').delete().eq('id', id);
+        if (error) { res.status(500).json({ error: error.message }); return; }
+        res.json({ success: true, message: 'Notification deleted' });
+      } else {
+        res.status(400).json({ error: 'Invalid action. Use update or delete.' });
+      }
+    } catch (e: any) {
+      res.status(500).json({ error: 'Failed', details: e?.message });
+    }
+  });
+
+  // 6. Admin Analytics (from ai_logs)
+  app.get("/api/admin/analytics", async (req, res) => {
+    try {
+      const now = new Date();
+      const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+      const [
+        { count: totalQueries },
+        { count: todayQueries },
+        { count: weekQueries },
+        { data: logs }
+      ] = await Promise.all([
+        supabase.from('ai_logs').select('id', { count: 'exact', head: true }),
+        supabase.from('ai_logs').select('id', { count: 'exact', head: true }).gte('timestamp', dayAgo.toISOString()),
+        supabase.from('ai_logs').select('id', { count: 'exact', head: true }).gte('timestamp', weekAgo.toISOString()),
+        supabase.from('ai_logs').select('timestamp, query_type, user_id, is_premium')
+      ]);
+
+      const allLogs = logs || [];
+
+      // Category breakdown
+      const categoryBreakdown: Record<string, number> = {};
+      allLogs.forEach((l: any) => { const t = l.query_type || 'text'; categoryBreakdown[t] = (categoryBreakdown[t] || 0) + 1; });
+
+      // Hourly heatmap (last 7 days)
+      const hourlyHeatmap = Array.from({ length: 24 }, (_, i) => ({ hour: i, count: 0 }));
+      allLogs.forEach((l: any) => {
+        if (l.timestamp) {
+          const h = new Date(l.timestamp).getHours();
+          hourlyHeatmap[h].count++;
+        }
+      });
+
+      // Daily trend (last 7 days)
+      const dailyMap: Record<string, number> = {};
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+        dailyMap[d.toISOString().slice(0, 10)] = 0;
+      }
+      allLogs.forEach((l: any) => {
+        if (l.timestamp) {
+          const dateKey = new Date(l.timestamp).toISOString().slice(0, 10);
+          if (dailyMap[dateKey] !== undefined) dailyMap[dateKey]++;
+        }
+      });
+      const dailyTrend = Object.entries(dailyMap).map(([date, count]) => ({ date, count }));
+
+      // Top users
+      const userCounts: Record<string, number> = {};
+      allLogs.forEach((l: any) => { if (l.user_id) userCounts[l.user_id] = (userCounts[l.user_id] || 0) + 1; });
+      const topUsers = Object.entries(userCounts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10)
+        .map(([user_id, count]) => ({ user_id, count }));
+
+      // Premium vs Free
+      let premiumCount = 0, freeCount = 0;
+      allLogs.forEach((l: any) => { l.is_premium ? premiumCount++ : freeCount++; });
+
+      res.json({
+        totalQueries: totalQueries || 0,
+        todayQueries: todayQueries || 0,
+        weekQueries: weekQueries || 0,
+        categoryBreakdown,
+        hourlyHeatmap,
+        dailyTrend,
+        topUsers,
+        premiumVsFree: { premium: premiumCount, free: freeCount }
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: 'Failed to fetch analytics', details: e?.message });
+    }
+  });
+
+  app.post("/api/admin/analytics", async (req, res) => {
+    try {
+      const { action } = req.body || {};
+      if (action === 'reset') {
+        await supabase.from('ai_logs').delete().neq('id', '');
+        res.json({ success: true, message: 'All analytics data cleared' });
+      } else {
+        res.status(400).json({ error: 'Invalid action' });
+      }
+    } catch (e: any) {
+      res.status(500).json({ error: 'Failed to reset analytics', details: e?.message });
     }
   });
 

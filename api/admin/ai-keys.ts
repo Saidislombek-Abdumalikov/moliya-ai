@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabase } from '../_supabaseClient.js';
-import { maskApiKey, testSpecificAiKey, AiKeyRecord } from '../_aiRouter.js';
+import { maskApiKey, testSpecificAiKey, executeAiWithRotation, AiKeyRecord } from '../_aiRouter.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -247,6 +247,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           status: testResult.status,
           latencyMs: testResult.latencyMs,
           error: testResult.error
+        });
+      }
+
+      // ACTION: LIVE TEST — Admin AI Testing (no quota charge)
+      if (action === 'live_test') {
+        const { prompt } = req.body || {};
+        if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+          return res.status(400).json({ error: 'Missing prompt for live test' });
+        }
+
+        const startTime = Date.now();
+        const aiResult = await executeAiWithRotation(prompt.trim());
+        const latencyMs = Date.now() - startTime;
+
+        return res.status(200).json({
+          success: aiResult.success,
+          parsed: aiResult.success ? {
+            type: aiResult.type || 'expense',
+            amount: aiResult.amount,
+            category: aiResult.category || 'Boshqa',
+            note: aiResult.note || prompt,
+            title: aiResult.title || aiResult.note || prompt,
+            debtWho: aiResult.debtWho || ''
+          } : null,
+          latencyMs,
+          providerUsed: aiResult.providerUsed || 'unknown',
+          keyIdUsed: aiResult.keyIdUsed || 'unknown',
+          error: aiResult.error || null
         });
       }
 

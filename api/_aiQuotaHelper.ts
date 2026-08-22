@@ -24,7 +24,7 @@ export async function checkAiQuota(
     // 1. Fetch user subscription & quota status from Supabase users table
     const { data: suUser, error: fetchError } = await supabase
       .from('users')
-      .select('id, is_premium, premium_expires_at, ai_limit, ai_query_count')
+      .select('*')
       .eq('id', userId)
       .maybeSingle();
 
@@ -36,6 +36,17 @@ export async function checkAiQuota(
         limit: 20,
         usedCount: 0,
         message: "Ma'lumotlar bazasiga ulanishda xatolik. Iltimos, qayta urinib ko'ring."
+      };
+    }
+
+    // Check if user is blocked by admin
+    if (suUser?.is_blocked) {
+      return {
+        allowed: false,
+        isPremium: Boolean(suUser.is_premium),
+        limit: 0,
+        usedCount: Number(suUser.ai_query_count || 0),
+        message: "Hisobingiz ma'muriyat tomonidan bloklangan. Yordam uchun @moliya_admin ga murojaat qiling."
       };
     }
 

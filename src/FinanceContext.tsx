@@ -122,7 +122,7 @@ function getDeviceInfo() {
     platform: isApk ? 'android_apk' : 'web_app',
     model: ua.includes('Android') ? 'Android Phone' : platform,
     os: ua.includes('Android') ? 'Android' : platform,
-    app_version: 'v3.19.0',
+    app_version: 'v3.20.0',
     push_token: null,
     last_login: new Date().toISOString()
   }
