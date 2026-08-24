@@ -7,8 +7,13 @@ import crypto from "crypto";
 import { executeAiWithRotation, getCandidateAiKeys, maskApiKey, testSpecificAiKey, recordKeyResult, AiKeyRecord } from './api/_aiRouter.js';
 import { checkAiQuota, recordAiUsage as recordAiUsageBackend, checkAndRecordAiUsage } from './api/_aiQuotaHelper.js';
 import { requireAdminAuth } from './api/_adminAuthHelper.js';
-import adminAuthHandler from './api/admin/auth.js';
 import { getUserCardsRelational, getUserTransactionsRelational } from './api/_relationalReader.js';
+import {
+  writeTransactionRelational,
+  deleteTransactionRelational,
+  writeCardRelational,
+  deleteCardRelational
+} from './api/_relationalWriter.js';
 
 
 // Supabase client for local dev server (replaces Firebase)
@@ -355,10 +360,11 @@ async function startServer() {
           session_token: sessionToken,
           session_expires_at: expiresAt,
         };
-        userCards = Array.isArray(existingUser.cards) ? existingUser.cards : [];
-        userTransactions = Array.isArray(existingUser.transactions) ? existingUser.transactions : [];
+        userCards = await getUserCardsRelational(userId);
+        userTransactions = await getUserTransactionsRelational(userId);
         isPremium = Boolean(existingUser.is_premium);
         isNewUser = false;
+
 
         await supabase.from('users').update({
           name: tgName,
@@ -1264,10 +1270,8 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-  // In-memory Telegram user transaction store for instant response & syncing
-  const tgUserTransactions = new Map<number, { id: string; type: string; name: string; category: string; amount: number; date: string }[]>();
-  
   // Track active chat IDs for 3-hour automated expense reminders
+
   const activeTelegramChats = new Set<number>();
 
   // Shared AI Usage tracker per user: 1-day free trial, then max 5 AI requests / month
@@ -1275,18 +1279,6 @@ async function startServer() {
 
   const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 
-  async function syncUserTxToFirestore(chatId: number, txs: any[]) {
-    try {
-      const tgId = String(chatId);
-      const userId = `moliya_user_tg_${tgId}`;
-      await supabase.from('users').update({
-        transactions: txs,
-        updated_at: new Date().toISOString()
-      }).eq('id', userId);
-    } catch (e) {
-      console.error("Supabase sync error:", e);
-    }
-  }
 
   async function generateAndStoreOtpCode(fromUser: any): Promise<string> {
     const tgId = String(fromUser.id);
@@ -1406,10 +1398,10 @@ async function startServer() {
 
       if (chatId && data && data.startsWith('del_')) {
         const txId = data.replace('del_', '');
-        const txs = tgUserTransactions.get(chatId) || [];
-        const newTxs = txs.filter(t => t.id !== txId);
-        tgUserTransactions.set(chatId, newTxs);
-        await syncUserTxToFirestore(chatId, newTxs);
+        const tgId = String(chatId);
+        const userId = `moliya_user_tg_${tgId}`;
+
+        await deleteTransactionRelational(txId, userId);
 
         await answerCallbackQuery(cb.id, "🗑 Operatsiya o'chirildi!");
         await sendTelegramMessage(chatId, "🗑 <b>Operatsiya muvaffaqiyatli o'chirildi!</b> ✅", getMainMenuKeyboard());
@@ -1486,24 +1478,25 @@ async function startServer() {
               const parsed = JSON.parse(response.text || '{}');
               if (parsed && parsed.amount && parsed.amount > 0) {
                 const txId = 'tx_' + Date.now();
+                const tgId = String(chatId);
+                const userId = `moliya_user_tg_${tgId}`;
                 const txItem = {
                   id: txId,
                   type: parsed.type || 'expense',
                   name: parsed.note || "Ovozli yozuv",
+                  note: parsed.note || "Ovozli yozuv",
                   category: parsed.category || 'Boshqa',
                   amount: parsed.amount,
                   date: new Date().toISOString()
                 };
 
-                const userList = tgUserTransactions.get(chatId) || [];
-                userList.push(txItem);
-                tgUserTransactions.set(chatId, userList);
-                await syncUserTxToFirestore(chatId, userList);
+                await writeTransactionRelational(txItem, userId, 'telegram_bot_voice');
 
                 const typeEmoji = parsed.type === 'income' ? '🟢 Daromad' : '🛒 Xarajat';
                 const formattedAmt = parsed.amount.toLocaleString('en-US').replace(/,/g, ' ');
 
                 const replyCard = `🎙 <b>Ovozli operatsiya saqlandi!</b> 🌟\n\n📌 <b>Turi:</b> ${typeEmoji}\n💵 <b>Summa:</b> ${formattedAmt} so'm\n📂 <b>Kategoriya:</b> ${parsed.category}\n📝 <b>Izoh:</b> ${parsed.note || "Ovozli xabar"}`;
+
 
                 const inlineKeyboard = {
                   inline_keyboard: [
@@ -1628,8 +1621,11 @@ async function startServer() {
       }
 
       // 3. Balance & Statistics command or button
+      // 3. Balance & Statistics command or button
       if (text.includes("Balans") || text.includes("balans") || text.startsWith("/balance") || text.includes("Statistika")) {
-        const txs = tgUserTransactions.get(chatId) || [];
+        const tgId = String(chatId);
+        const userId = `moliya_user_tg_${tgId}`;
+        const txs = await getUserTransactionsRelational(userId);
         const totalIncome = txs.filter(t => t.type === 'income').reduce((acc, t) => acc + t.amount, 0);
         const totalExpense = txs.filter(t => t.type === 'expense').reduce((acc, t) => acc + Math.abs(t.amount), 0);
         const netBalance = totalIncome - totalExpense;
@@ -1638,9 +1634,9 @@ async function startServer() {
 
         let lastTxsText = "<i>Hozircha tranzaksiyalar yo'q.</i>";
         if (txs.length > 0) {
-          lastTxsText = txs.slice(-3).reverse().map((t, idx) => {
+          lastTxsText = txs.slice(0, 3).map((t, idx) => {
             const icon = t.type === 'income' ? '🟢' : '🔻';
-            return `${idx + 1}. ${icon} <b>${t.category}</b> — ${fmt(t.amount)} so'm <i>(${t.name})</i>`;
+            return `${idx + 1}. ${icon} <b>${t.category}</b> — ${fmt(t.amount)} so'm <i>(${t.note || ''})</i>`;
           }).join('\n');
         }
 
@@ -1651,15 +1647,25 @@ async function startServer() {
 
       // 4. Delete last transaction button or command
       if (text.includes("o'chirish") || text.includes("очириш") || text.startsWith("/delete")) {
-        const txs = tgUserTransactions.get(chatId) || [];
-        if (txs.length === 0) {
+        const tgId = String(chatId);
+        const userId = `moliya_user_tg_${tgId}`;
+        const { data: latestTxs } = await supabase
+          .from('transactions')
+          .select('*')
+          .eq('user_id', userId)
+          .is('deleted_at', null)
+          .order('date', { ascending: false })
+          .limit(1);
+
+        if (!latestTxs || latestTxs.length === 0) {
           await sendTelegramMessage(chatId, "ℹ️ <i>O'chirish uchun tranzaksiyalar mavjud emas.</i>", getMainMenuKeyboard());
           return;
         }
-        const lastTx = txs.pop();
-        tgUserTransactions.set(chatId, txs);
+
+        const lastTx = latestTxs[0];
+        await deleteTransactionRelational(lastTx.id, userId);
         const fmt = (n: number) => n.toLocaleString('en-US').replace(/,/g, ' ');
-        await sendTelegramMessage(chatId, `🗑 <b>Oxirgi operatsiya o'chirildi!</b> ✅\n\n❌ <b>O'chirildi:</b> ${fmt(lastTx?.amount || 0)} so'm (${lastTx?.category} - ${lastTx?.name})`, getMainMenuKeyboard());
+        await sendTelegramMessage(chatId, `🗑 <b>Oxirgi operatsiya o'chirildi!</b> ✅\n\n❌ <b>O'chirildi:</b> ${fmt(lastTx?.amount || 0)} so'm (${lastTx?.category} - ${lastTx?.note || ''})`, getMainMenuKeyboard());
         return;
       }
 
@@ -1744,18 +1750,19 @@ Return JSON object:
 
       if (parsed && parsed.amount && parsed.amount > 0) {
         const txId = 'tx_' + Date.now();
+        const tgId = String(chatId);
+        const userId = `moliya_user_tg_${tgId}`;
         const txItem = {
           id: txId,
           type: parsed.type,
           name: parsed.note || text,
+          note: parsed.note || text,
           category: parsed.category || 'Boshqa',
           amount: parsed.amount,
           date: new Date().toISOString()
         };
 
-        const userList = tgUserTransactions.get(chatId) || [];
-        userList.push(txItem);
-        tgUserTransactions.set(chatId, userList);
+        await writeTransactionRelational(txItem, userId, 'telegram_bot_dev');
 
         const typeEmoji = parsed.type === 'income' ? '🟢 Daromad' : '🛒 Xarajat';
         const formattedAmt = parsed.amount.toLocaleString('en-US').replace(/,/g, ' ');
@@ -1774,6 +1781,7 @@ Return JSON object:
         await sendTelegramMessage(chatId, replyCard, inlineKeyboard);
         return;
       }
+
 
       await sendTelegramMessage(chatId, `👍 Xabaringiz qabul qilindi.`, getMainMenuKeyboard());
     }

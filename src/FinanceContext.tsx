@@ -3,6 +3,14 @@ import { supabase } from './supabase'
 import type { OnboardingResult } from './components/Onboarding'
 import { getApiUrl } from './utils/apiUrl'
 import { isNativePlatform } from './utils/nativeBridge'
+import {
+  writeTransactionRelationalClient,
+  deleteTransactionRelationalClient,
+  writeCardRelationalClient,
+  deleteCardRelationalClient,
+  syncOfflineDataRelationalClient,
+  clearUserFinancialDataRelationalClient
+} from './utils/relationalWriter'
 
 export interface Card {
   id: string
@@ -210,30 +218,60 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const currentUserId = userId || localStorage.getItem('user_id_v1')
     if (!currentUserId) return
     try {
-      console.log('[SYNC] Device online, syncing offline data to Supabase...')
+      console.log('[SYNC] Device online, syncing offline data to Supabase relational tables...')
       const localOnboarding = localStorage.getItem('user_onboarding_v1')
-      const localCards = localStorage.getItem('user_cards_v1')
-      const localTxs = localStorage.getItem('user_transactions_v1')
+      const localCardsStr = localStorage.getItem('user_cards_v1')
+      const localTxsStr = localStorage.getItem('user_transactions_v1')
+      const deletedTxIdsStr = localStorage.getItem('user_deleted_tx_ids_v1')
 
-      const updatePayload: any = {
-        updated_at: new Date().toISOString()
-      }
       if (localOnboarding) {
-        try { updatePayload.onboarding = JSON.parse(localOnboarding) } catch {}
-      }
-      if (localCards) {
-        try { updatePayload.cards = JSON.parse(localCards) } catch {}
-      }
-      if (localTxs) {
-        try { updatePayload.transactions = JSON.parse(localTxs) } catch {}
+        try {
+          const parsedOnboarding = JSON.parse(localOnboarding);
+          await supabase.from('users').upsert({
+            id: currentUserId,
+            name: parsedOnboarding.name || '—',
+            phone: parsedOnboarding.phone || null,
+            telegram: parsedOnboarding.telegram || '—',
+            telegram_id: parsedOnboarding.telegramId || null,
+            language: parsedOnboarding.language || 'uz',
+            onboarding: parsedOnboarding,
+            updated_at: new Date().toISOString()
+          }, { onConflict: 'id' });
+        } catch {}
       }
 
-      await supabase.from('users').update(updatePayload).eq('id', currentUserId)
-      console.log('[SYNC] ✅ Offline data synchronized successfully')
+      let parsedCards: any[] = []
+      let parsedTxs: any[] = []
+      let parsedDeletedIds: string[] = []
+
+      if (localCardsStr) {
+        try { parsedCards = JSON.parse(localCardsStr) } catch {}
+      }
+      if (localTxsStr) {
+        try { parsedTxs = JSON.parse(localTxsStr) } catch {}
+      }
+      if (deletedTxIdsStr) {
+        try { parsedDeletedIds = JSON.parse(deletedTxIdsStr) } catch {}
+      }
+
+      const syncResult = await syncOfflineDataRelationalClient(
+        currentUserId,
+        parsedTxs,
+        parsedCards,
+        parsedDeletedIds,
+        isNativePlatform() ? 'android_apk' : 'web'
+      );
+
+      if (syncResult.success) {
+        console.log(`[SYNC] ✅ Relational sync complete: ${syncResult.syncedTxs} txs, ${syncResult.syncedCards} cards, ${syncResult.deletedTxs} deleted`);
+        setDeletedTxIds([]);
+        localStorage.removeItem('user_deleted_tx_ids_v1');
+      }
     } catch (err) {
-      console.error('[SYNC] Failed to sync offline data:', err)
+      console.error('[SYNC] Failed to sync offline relational data:', err);
     }
   }
+
 
   useEffect(() => {
     const handleOnline = () => {
@@ -742,6 +780,14 @@ const fetchWithTimeout = (url: string, options: RequestInit = {}, timeoutMs = 25
               }));
               setCards(mappedCards);
               localStorage.setItem('user_cards_v1', JSON.stringify(mappedCards));
+            } else if (!cErr && Array.isArray(relCards) && relCards.length === 0) {
+              if (Array.isArray(data.cards) && data.cards.length > 0) {
+                setCards(data.cards);
+                localStorage.setItem('user_cards_v1', JSON.stringify(data.cards));
+              } else {
+                setCards([]);
+                localStorage.setItem('user_cards_v1', JSON.stringify([]));
+              }
             } else if (Array.isArray(data.cards)) {
               setCards(data.cards);
               localStorage.setItem('user_cards_v1', JSON.stringify(data.cards));
@@ -776,6 +822,14 @@ const fetchWithTimeout = (url: string, options: RequestInit = {}, timeoutMs = 25
               }));
               setCustomTransactions(mappedTxs);
               localStorage.setItem('user_transactions_v1', JSON.stringify(mappedTxs));
+            } else if (!tErr && Array.isArray(relTxs) && relTxs.length === 0) {
+              if (Array.isArray(data.transactions) && data.transactions.length > 0) {
+                setCustomTransactions(data.transactions);
+                localStorage.setItem('user_transactions_v1', JSON.stringify(data.transactions));
+              } else {
+                setCustomTransactions([]);
+                localStorage.setItem('user_transactions_v1', JSON.stringify([]));
+              }
             } else if (Array.isArray(data.transactions)) {
               setCustomTransactions(data.transactions);
               localStorage.setItem('user_transactions_v1', JSON.stringify(data.transactions));
@@ -786,6 +840,7 @@ const fetchWithTimeout = (url: string, options: RequestInit = {}, timeoutMs = 25
               localStorage.setItem('user_transactions_v1', JSON.stringify(data.transactions));
             }
           }
+
         }
       } catch (err) {
         console.warn('[SYNC] Refresh error:', err);
@@ -999,15 +1054,24 @@ const fetchWithTimeout = (url: string, options: RequestInit = {}, timeoutMs = 25
   };
 
   const saveCards = async (updatedCards: Card[]) => {
+    const prevCards = cards;
     setCards(updatedCards);
     localStorage.setItem('user_cards_v1', JSON.stringify(updatedCards));
 
     if (userId) {
       try {
-        await supabase.from('users').update({
-          cards: updatedCards,
-          updated_at: new Date().toISOString()
-        }).eq('id', userId);
+        // Detect and delete removed cards
+        const updatedCardIds = new Set(updatedCards.map(c => c.id));
+        const deletedCards = prevCards.filter(c => !updatedCardIds.has(c.id));
+
+        for (const dCard of deletedCards) {
+          await deleteCardRelationalClient(dCard.id, userId);
+        }
+
+        // Upsert updated/new cards
+        for (const card of updatedCards) {
+          await writeCardRelationalClient(card, userId);
+        }
       } catch (err) {
         console.warn('[OFFLINE] saveCards saved locally:', err);
       }
@@ -1020,8 +1084,9 @@ const fetchWithTimeout = (url: string, options: RequestInit = {}, timeoutMs = 25
 
   const addTransaction = async (tx: Omit<Transaction, 'id' | 'date'> & { id?: string | number; date?: string; messageId?: string | number }) => {
     const localISOTime = (new Date(Date.now() - new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 16);
+    const txId = tx.id ? String(tx.id) : (Date.now().toString() + Math.random().toString(36).substring(2, 6));
     const newTx: Transaction = {
-      id: tx.id ? String(tx.id) : (Date.now().toString() + Math.random().toString(36).substring(2, 6)),
+      id: txId,
       type: tx.type,
       amount: tx.amount,
       note: tx.note,
@@ -1033,17 +1098,28 @@ const fetchWithTimeout = (url: string, options: RequestInit = {}, timeoutMs = 25
       date: tx.date || localISOTime
     };
 
-    const updated = [newTx, ...customTransactions];
+    // Update optimistic state: edit in-place if exists, otherwise prepend
+    const existingIdx = customTransactions.findIndex(t => String(t.id) === txId);
+    let updated: Transaction[];
+    if (existingIdx >= 0) {
+      updated = customTransactions.map(t => String(t.id) === txId ? newTx : t);
+    } else {
+      updated = [newTx, ...customTransactions];
+    }
     setCustomTransactions(updated);
     localStorage.setItem('user_transactions_v1', JSON.stringify(updated));
     window.dispatchEvent(new Event('user_transactions_updated'));
 
     if (userId) {
       try {
-        await supabase.from('users').update({
-          transactions: updated,
-          updated_at: new Date().toISOString()
-        }).eq('id', userId);
+        const res = await writeTransactionRelationalClient(
+          newTx,
+          userId,
+          isNativePlatform() ? 'android_apk' : 'web'
+        );
+        if (!res.success) {
+          console.error('[RELATIONAL_WRITE] addTransaction error:', res.error);
+        }
       } catch (err) {
         console.warn('[OFFLINE] addTransaction saved locally:', err);
       }
@@ -1063,10 +1139,10 @@ const fetchWithTimeout = (url: string, options: RequestInit = {}, timeoutMs = 25
 
     if (userId) {
       try {
-        await supabase.from('users').update({
-          transactions: updatedTxs,
-          updated_at: new Date().toISOString()
-        }).eq('id', userId);
+        const res = await deleteTransactionRelationalClient(idStr, userId);
+        if (!res.success) {
+          console.error('[RELATIONAL_WRITE] deleteTransaction error:', res.error);
+        }
       } catch (err) {
         console.warn('[OFFLINE] deleteTransaction saved locally:', err);
       }
@@ -1076,6 +1152,7 @@ const fetchWithTimeout = (url: string, options: RequestInit = {}, timeoutMs = 25
   const clearAllData = async () => {
     if (userId) {
       try {
+        await clearUserFinancialDataRelationalClient(userId);
         await supabase.from('users').delete().eq('id', userId);
       } catch (err) {
         console.warn('[OFFLINE] clearAllData local clear:', err);
@@ -1092,20 +1169,19 @@ const fetchWithTimeout = (url: string, options: RequestInit = {}, timeoutMs = 25
   const clearOnlyFinancialData = async () => {
     if (userId) {
       try {
-        await supabase.from('users').update({
-          transactions: [],
-          cards: [],
-          updated_at: new Date().toISOString()
-        }).eq('id', userId);
+        await clearUserFinancialDataRelationalClient(userId);
       } catch (err) {
         console.warn('[OFFLINE] clearOnlyFinancialData local clear:', err);
       }
     }
     localStorage.removeItem('user_transactions_v1');
     localStorage.removeItem('user_cards_v1');
+    localStorage.removeItem('user_deleted_tx_ids_v1');
     setCustomTransactions([]);
     setCards([]);
+    setDeletedTxIds([]);
   };
+
 
   const logout = () => {
     // Sign out from real Supabase Auth

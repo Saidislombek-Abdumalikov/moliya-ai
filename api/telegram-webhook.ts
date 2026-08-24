@@ -4,6 +4,7 @@ import crypto from "crypto";
 import { supabase } from './_supabaseClient.js';
 import { executeAiWithRotation } from './_aiRouter.js';
 import { getUserTransactionsRelational } from './_relationalReader.js';
+import { writeTransactionRelational, deleteTransactionRelational } from './_relationalWriter.js';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const appUrl = process.env.APP_URL || "https://moliya-ai-pi.vercel.app";
@@ -157,24 +158,41 @@ async function generateAndStoreOtpCode(fromUser: any): Promise<string> {
   return otpCode;
 }
 
-// Transaction Helpers via Supabase users.transactions JSON Array
-async function saveBotTransaction(fromUser: any, txItem: { id: string; type: string; name: string; category: string; amount: number; date: string }) {
+// Transaction Helpers via Relational public.transactions
+export async function saveBotTransaction(fromUser: any, txItem: any): Promise<boolean> {
   try {
-    const tgId = String(fromUser.id);
+    const tgId = String(fromUser?.id);
+    if (!tgId) return false;
     const userId = `moliya_user_tg_${tgId}`;
-    const { data: user } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
-    const currentTxs = Array.isArray(user?.transactions) ? user.transactions : [];
-    const updated = [txItem, ...currentTxs.filter((t: any) => t.id !== txItem.id)];
-    await supabase.from('users').update({ transactions: updated, updated_at: new Date().toISOString() }).eq('id', userId);
-    console.log(`[BOT] Saved transaction ${txItem.id} to Supabase for user ${userId}`);
+    const writePayload = {
+      id: txItem.id,
+      type: txItem.type,
+      amount: txItem.amount,
+      category: txItem.category,
+      note: txItem.note || txItem.name || '',
+      title: txItem.title || txItem.name || undefined,
+      debtWho: txItem.debtWho || txItem.debt_who || undefined,
+      date: txItem.date || new Date().toISOString(),
+      cardId: txItem.cardId || txItem.card_id || 'cash',
+      source: 'telegram_bot'
+    };
+    const result = await writeTransactionRelational(writePayload, userId, 'telegram_bot');
+    if (!result.success) {
+      console.error(`[BOT] Failed to write relational transaction for user ${userId}:`, result.error);
+      return false;
+    }
+    console.log(`[BOT] Saved relational transaction ${result.data?.id} to public.transactions for user ${userId}`);
+    return true;
   } catch (err) {
-    console.error('[BOT] Error saving transaction to Supabase:', err);
+    console.error('[BOT] Error saving relational transaction to Supabase:', err);
+    return false;
   }
 }
 
-async function getBotTransactions(fromUser: any) {
+export async function getBotTransactions(fromUser: any) {
   try {
-    const tgId = String(fromUser.id);
+    const tgId = String(fromUser?.id);
+    if (!tgId) return [];
     const userId = `moliya_user_tg_${tgId}`;
     return await getUserTransactionsRelational(userId);
   } catch (err) {
@@ -183,21 +201,35 @@ async function getBotTransactions(fromUser: any) {
   }
 }
 
-async function deleteLastBotTransaction(fromUser: any) {
+export async function deleteLastBotTransaction(fromUser: any) {
   try {
-    const tgId = String(fromUser.id);
+    const tgId = String(fromUser?.id);
+    if (!tgId) return null;
     const userId = `moliya_user_tg_${tgId}`;
-    const { data: user } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
-    const currentTxs = Array.isArray(user?.transactions) ? user.transactions : [];
-    if (currentTxs.length > 0) {
-      const deleted = currentTxs[0];
-      const updated = currentTxs.slice(1);
-      await supabase.from('users').update({ transactions: updated, updated_at: new Date().toISOString() }).eq('id', userId);
-      return deleted;
+    const { data: latestTxs, error } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('user_id', userId)
+      .is('deleted_at', null)
+      .order('date', { ascending: false })
+      .limit(1);
+
+    if (error) {
+      console.error('[BOT] Error querying latest transaction for deletion:', error.message);
+      return null;
+    }
+
+    if (Array.isArray(latestTxs) && latestTxs.length > 0) {
+      const txToDelete = latestTxs[0];
+      const delResult = await deleteTransactionRelational(txToDelete.id, userId);
+      if (delResult.success) {
+        console.log(`[BOT] Deleted latest relational transaction ${txToDelete.id} for user ${userId}`);
+        return txToDelete;
+      }
     }
     return null;
   } catch (err) {
-    console.error('[BOT] Error deleting transaction from Supabase:', err);
+    console.error('[BOT] Error deleting latest transaction from Supabase:', err);
     return null;
   }
 }
@@ -648,14 +680,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const txId = data.replace('del_', '');
         const tgId = String(cb.from?.id || chatId);
         const userId = `moliya_user_tg_${tgId}`;
-        const { data: user } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
-        const txs = Array.isArray(user?.transactions) ? user.transactions : [];
-        const updated = txs.filter((t: any) => String(t.id) !== String(txId));
-        await supabase.from('users').update({ transactions: updated, updated_at: new Date().toISOString() }).eq('id', userId);
 
-        await answerCallbackQuery(cb.id, "🗑 Operatsiya o'chirildi!");
-        await sendTelegramMessage(chatId, "🗑 <b>Operatsiya muvaffaqiyatli o'chirildi!</b> ✅", getMainMenuKeyboard());
+        const delResult = await deleteTransactionRelational(txId, userId);
+        if (delResult.success) {
+          await answerCallbackQuery(cb.id, "🗑 Operatsiya o'chirildi!");
+          await sendTelegramMessage(chatId, "🗑 <b>Operatsiya muvaffaqiyatli o'chirildi!</b> ✅", getMainMenuKeyboard());
+        } else {
+          await answerCallbackQuery(cb.id, "⚠️ Operatsiyani o'chirib bo'lmadi");
+        }
       }
+
       return res.status(200).json({ status: 'ok' });
     }
 

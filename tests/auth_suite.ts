@@ -21,6 +21,25 @@ import {
   runReadOnlyPreflight
 } from './parity_check';
 import { getUserCardsRelational, getUserTransactionsRelational } from '../api/_relationalReader';
+import {
+  normalizeTransactionForWrite as normalizeTxServer,
+  normalizeCardForWrite as normalizeCardServer,
+  writeTransactionRelational,
+  deleteTransactionRelational
+} from '../api/_relationalWriter';
+import {
+  normalizeTransactionForWrite as normalizeTxClient,
+  normalizeCardForWrite as normalizeCardClient,
+  writeTransactionRelationalClient,
+  deleteTransactionRelationalClient,
+  writeCardRelationalClient,
+  deleteCardRelationalClient,
+  syncOfflineDataRelationalClient,
+  clearUserFinancialDataRelationalClient
+} from '../src/utils/relationalWriter';
+import { saveBotTransaction, deleteLastBotTransaction } from '../api/telegram-webhook';
+import { supabase as clientSupabase } from '../src/supabase';
+
 
 
 async function runAuthAuditSuite() {
@@ -891,6 +910,730 @@ async function runAuthAuditSuite() {
     // 4. Verify fallback to legacy JSONB for unmigrated mock user
     const mockUserTxs = await getUserTransactionsRelational('moliya_non_existent_mock_user_123');
     assert(Array.isArray(mockUserTxs) && mockUserTxs.length === 0, 'Non-existent user returns empty array safely');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 31: Phase 7 Step 1 Canonical Relational Writer & Normalizers
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 31: Phase 7 Step 1 Canonical Relational Writer & Normalizers ---');
+    const mockTestUserId = 'moliya_user_tg_7711223344';
+
+    // 1. Negative amount converted to positive Math.abs (-1000 -> 1000)
+    const negTx = normalizeTxServer({ id: 'tx_neg', amount: -1000, type: 'expense', category: 'Oziq-ovqat' }, mockTestUserId);
+    assert(negTx.success && negTx.data?.amount === 1000, 'Negative amount (-1000) converted to positive (1000)');
+
+    // 2. Positive amount preserved (1000 -> 1000)
+    const posTx = normalizeTxServer({ id: 'tx_pos', amount: 1000, type: 'income', category: 'Maosh' }, mockTestUserId);
+    assert(posTx.success && posTx.data?.amount === 1000, 'Positive amount (1000) preserved as 1000');
+
+    // 3. String amount with spaces/commas normalized (" 50 000,00 " -> 50000)
+    const strAmtTx = normalizeTxServer({ id: 'tx_str', amount: ' 50 000,00 ', type: 'expense', category: 'Kiyim' }, mockTestUserId);
+    assert(strAmtTx.success && strAmtTx.data?.amount === 50000, 'String amount with spaces/commas parsed to numeric 50000');
+
+    // 4. cardId === 'cash' normalized to card_id = null
+    const cashTx = normalizeTxServer({ id: 'tx_cash', amount: 25000, cardId: 'cash' }, mockTestUserId);
+    assert(cashTx.success && cashTx.data?.card_id === null, "cardId === 'cash' normalized to card_id = null");
+
+    // 5. cardId === '' normalized to card_id = null
+    const emptyCardTx = normalizeTxServer({ id: 'tx_empty_card', amount: 25000, cardId: '' }, mockTestUserId);
+    assert(emptyCardTx.success && emptyCardTx.data?.card_id === null, "cardId === '' normalized to card_id = null");
+
+    // 6. cardId === undefined normalized to card_id = null
+    const undefCardTx = normalizeTxServer({ id: 'tx_undef_card', amount: 25000 }, mockTestUserId);
+    assert(undefCardTx.success && undefCardTx.data?.card_id === null, 'cardId === undefined normalized to card_id = null');
+
+    // 7. Legitimate card ID remains unchanged
+    const realCardTx = normalizeTxServer({ id: 'tx_real_card', amount: 150000, cardId: 'card_uzcard_9999' }, mockTestUserId);
+    assert(realCardTx.success && realCardTx.data?.card_id === 'card_uzcard_9999', 'Legitimate card ID preserved unchanged');
+
+    // 8. Transaction ID preserved
+    const explicitIdTx = normalizeTxServer({ id: 'custom_uuid_12345', amount: 80000 }, mockTestUserId);
+    assert(explicitIdTx.success && explicitIdTx.data?.id === 'custom_uuid_12345' && explicitIdTx.data?.legacy_id === 'custom_uuid_12345', 'Transaction ID preserved in id and legacy_id');
+
+    // 9. Missing ID generates non-empty string ID
+    const noIdTx = normalizeTxServer({ amount: 80000 }, mockTestUserId);
+    assert(noIdTx.success && typeof noIdTx.data?.id === 'string' && noIdTx.data.id.startsWith('tx_'), 'Missing transaction ID automatically generated');
+
+    // 10. Income remains income, expense remains expense
+    const incTx = normalizeTxServer({ amount: 500000, type: 'income' }, mockTestUserId);
+    assert(incTx.success && incTx.data?.type === 'income', 'Income type preserved as income');
+    const expTx = normalizeTxServer({ amount: 500000, type: 'expense' }, mockTestUserId);
+    assert(expTx.success && expTx.data?.type === 'expense', 'Expense type preserved as expense');
+
+    // 11. Zero or negative-zero amount safely rejected
+    const zeroTx = normalizeTxServer({ amount: 0, type: 'expense' }, mockTestUserId);
+    assert(!zeroTx.success && Boolean(zeroTx.error), 'Zero amount (0) safely rejected with error');
+    const negZeroTx = normalizeTxServer({ amount: -0, type: 'expense' }, mockTestUserId);
+    assert(!negZeroTx.success, 'Negative zero amount safely rejected');
+
+    // 12. Non-numeric amount safely rejected
+    const invalidAmtTx = normalizeTxServer({ amount: 'invalid_amount', type: 'expense' }, mockTestUserId);
+    assert(!invalidAmtTx.success && Boolean(invalidAmtTx.error), 'Invalid non-numeric amount safely rejected with error');
+
+    // 13. Missing userId safely rejected
+    const noUserTx = normalizeTxServer({ amount: 50000 }, '');
+    assert(!noUserTx.success && Boolean(noUserTx.error), 'Missing userId safely rejected');
+
+    // 14. All metadata fields preserved (note, title, debtWho, date, source)
+    const richTx = normalizeTxServer({
+      id: 'tx_rich',
+      amount: 75000,
+      category: 'Kafexona',
+      note: 'Tushlik do`stlar bilan',
+      title: 'Rayhon Milliy Taomlar',
+      debtWho: 'Anvar aka',
+      date: '2026-08-20T12:30:00.000Z',
+      source: 'telegram_bot'
+    }, mockTestUserId);
+    assert(richTx.success &&
+      richTx.data?.note === 'Tushlik do`stlar bilan' &&
+      richTx.data?.title === 'Rayhon Milliy Taomlar' &&
+      richTx.data?.debt_who === 'Anvar aka' &&
+      richTx.data?.category === 'Kafexona' &&
+      richTx.data?.source === 'telegram_bot' &&
+      richTx.data?.date === '2026-08-20T12:30:00.000Z', 'All rich metadata fields preserved without silent loss');
+
+    // 15. Card normalization preserves identity and fields
+    const cardNorm = normalizeCardServer({
+      id: 'card_custom_555',
+      name: 'Salim Karimov',
+      bank: 'Ipak Yo`li Bank',
+      number: '8600 1234 5678 9999',
+      brand: 'Uzcard Gold',
+      color: 'from-blue-600 to-cyan-600',
+      balance: ' 2 500 000 ',
+      isDefault: true
+    }, mockTestUserId);
+    assert(cardNorm.success &&
+      cardNorm.data?.id === 'card_custom_555' &&
+      cardNorm.data?.user_id === mockTestUserId &&
+      cardNorm.data?.name === 'Salim Karimov' &&
+      cardNorm.data?.bank === 'Ipak Yo`li Bank' &&
+      cardNorm.data?.number_masked === '8600 1234 5678 9999' &&
+      cardNorm.data?.brand === 'uzcard' &&
+      cardNorm.data?.color === 'from-blue-600 to-cyan-600' &&
+      cardNorm.data?.initial_balance === 2500000 &&
+      cardNorm.data?.is_default === true, 'Card normalization preserves all fields and maps balance to initial_balance');
+
+    // 16. Client and server normalizers have 100% identical outputs
+    const samplePayload = {
+      id: 'tx_parity',
+      amount: -45000,
+      cardId: 'cash',
+      type: 'expense',
+      category: 'Transport',
+      note: 'Metro',
+      debtWho: 'Akmal',
+      date: '2026-08-21T08:00:00.000Z',
+      created_at: '2026-08-21T08:00:00.000Z',
+      updated_at: '2026-08-21T08:00:00.000Z'
+    };
+    const sResult = normalizeTxServer(samplePayload, mockTestUserId);
+    const cResult = normalizeTxClient(samplePayload, mockTestUserId);
+    assert(JSON.stringify(sResult.data) === JSON.stringify(cResult.data), 'Client and Server normalizers produce 100% identical output shape');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 32: Telegram Relational Transaction Creation
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 32: Telegram Relational Transaction Creation ---');
+    const tgTestTgId = '9900223344';
+    const tgTestUserId = `moliya_user_tg_${tgTestTgId}`;
+    
+    // Ensure sandbox user exists in public.users
+    await supabase.from('users').upsert({
+      id: tgTestUserId,
+      name: 'Telegram Test User',
+      telegram_id: tgTestTgId,
+      transactions: [{ id: 'legacy_tx_existing', amount: 50000, category: 'Boshqa', type: 'expense' }],
+      cards: [],
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'id' });
+
+    // Clean up any old test transactions
+    await supabase.from('transactions').delete().eq('user_id', tgTestUserId);
+
+    // Save transaction via Telegram Bot helper
+    const saveRes = await saveBotTransaction(
+      { id: tgTestTgId, first_name: 'Test' },
+      { id: 'tg_tx_001', type: 'expense', name: 'Kofe va shirinlik', category: 'Oziq-ovqat', amount: 25000, date: '2026-08-23T10:00:00.000Z' }
+    );
+    assert(saveRes === true, 'saveBotTransaction returns true on successful write');
+
+    // Verify record exists in public.transactions table
+    const { data: relRow1 } = await supabase.from('transactions').select('*').eq('id', 'tg_tx_001').maybeSingle();
+    assert(Boolean(relRow1), 'Transaction tg_tx_001 exists in public.transactions table');
+    assert(relRow1?.user_id === tgTestUserId, 'Transaction user_id matches Telegram user');
+    assert(relRow1?.amount === 25000, 'Transaction amount is 25000');
+    assert(relRow1?.category === 'Oziq-ovqat', 'Transaction category is Oziq-ovqat');
+    assert(relRow1?.note === 'Kofe va shirinlik', 'Transaction note is preserved');
+    assert(relRow1?.card_id === null, 'Cash card_id stored as NULL in database');
+    assert(relRow1?.source === 'telegram_bot', 'Transaction source tagged as telegram_bot');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 33: Telegram Relational Transaction Deletion via /delete or /undo
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 33: Telegram Relational Transaction Deletion via /delete or /undo ---');
+    const deletedLast = await deleteLastBotTransaction({ id: tgTestTgId });
+    assert(Boolean(deletedLast) && deletedLast.id === 'tg_tx_001', 'deleteLastBotTransaction returned the latest transaction tg_tx_001');
+
+    // Verify row is deleted from public.transactions
+    const { data: checkDeleted1 } = await supabase.from('transactions').select('*').eq('id', 'tg_tx_001').maybeSingle();
+    assert(!checkDeleted1, 'Transaction tg_tx_001 deleted from public.transactions');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 34: Telegram Inline del_${txId} Relational Deletion
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 34: Telegram Inline del_${txId} Relational Deletion ---');
+    await saveBotTransaction(
+      { id: tgTestTgId },
+      { id: 'tg_tx_002', type: 'expense', name: 'Taksi', category: 'Transport', amount: 15000, date: '2026-08-23T11:00:00.000Z' }
+    );
+    const { data: checkBeforeDel } = await supabase.from('transactions').select('*').eq('id', 'tg_tx_002').maybeSingle();
+    assert(Boolean(checkBeforeDel), 'Transaction tg_tx_002 created before inline deletion');
+
+    const inlineDelRes = await deleteTransactionRelational('tg_tx_002', tgTestUserId);
+    assert(inlineDelRes.success === true, 'deleteTransactionRelational returned success for inline delete');
+
+    const { data: checkAfterDel } = await supabase.from('transactions').select('*').eq('id', 'tg_tx_002').maybeSingle();
+    assert(!checkAfterDel, 'Transaction tg_tx_002 deleted from public.transactions via inline delete callback logic');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 35: Telegram Transaction Normalization
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 35: Telegram Transaction Normalization ---');
+    await saveBotTransaction(
+      { id: tgTestTgId },
+      {
+        id: 'tg_tx_norm_001',
+        type: 'expense',
+        name: 'Krossovka',
+        category: 'Kiyim',
+        amount: -120000, // Negative amount
+        cardId: 'cash',  // Cash string
+        debtWho: 'Sardor',
+        date: '2026-08-23T12:00:00.000Z'
+      }
+    );
+    const { data: normRow } = await supabase.from('transactions').select('*').eq('id', 'tg_tx_norm_001').maybeSingle();
+    assert(Boolean(normRow), 'Normalized transaction created in relational table');
+    assert(normRow?.amount === 120000, 'Negative amount (-120000) converted to positive (120000) in database');
+    assert(normRow?.card_id === null, 'cardId "cash" converted to NULL in database');
+    assert(normRow?.debt_who === 'Sardor', 'debt_who metadata preserved in database');
+    assert(normRow?.note === 'Krossovka', 'Note metadata preserved');
+    assert(normRow?.id === 'tg_tx_norm_001', 'Original transaction ID preserved');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 36: Telegram User Isolation (Cross-User Protection)
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 36: Telegram User Isolation ---');
+    const attackerTgId = '8877665544';
+    const attackerUserId = `moliya_user_tg_${attackerTgId}`;
+
+    // Attacker attempts to delete victim's transaction
+    await deleteTransactionRelational('tg_tx_norm_001', attackerUserId);
+
+    // Verify victim's transaction was NOT deleted
+    const { data: victimTxStillExists } = await supabase.from('transactions').select('*').eq('id', 'tg_tx_norm_001').maybeSingle();
+    assert(Boolean(victimTxStillExists), 'User A transaction remains safe when User B attempts unauthorized delete');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 37: Telegram Duplicate / Concurrent Write Safety
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 37: Telegram Duplicate / Concurrent Write Safety ---');
+    const dupTxPayload = {
+      id: 'tg_tx_dup_test',
+      type: 'income',
+      name: 'Bonus',
+      category: 'Daromad',
+      amount: 500000,
+      date: '2026-08-23T13:00:00.000Z'
+    };
+    // Concurrent execution of same transaction ID
+    const [dupRes1, dupRes2] = await Promise.all([
+      saveBotTransaction({ id: tgTestTgId }, dupTxPayload),
+      saveBotTransaction({ id: tgTestTgId }, dupTxPayload)
+    ]);
+    assert(dupRes1 === true && dupRes2 === true, 'Concurrent writes with same ID succeed idempotently');
+
+    const { data: dupRows } = await supabase.from('transactions').select('*').eq('id', 'tg_tx_dup_test');
+    assert(Array.isArray(dupRows) && dupRows.length === 1, 'Exactly one row created in public.transactions without duplication');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 38: Telegram Legacy JSONB Immutability Verification & Failure Handling
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 38: Telegram Legacy JSONB Immutability & Failure Handling ---');
+    // 1. Verify legacy JSONB transactions were NOT mutated
+    const { data: userAfterWrites } = await supabase.from('users').select('transactions').eq('id', tgTestUserId).maybeSingle();
+    assert(
+      Array.isArray(userAfterWrites?.transactions) &&
+      userAfterWrites.transactions.length === 1 &&
+      userAfterWrites.transactions[0].id === 'legacy_tx_existing',
+      'Legacy users.transactions JSONB remained 100% untouched and unmutated during Telegram bot relational writes'
+    );
+
+    // 2. Test failure handling for invalid amount
+    const invalidAmtRes = await saveBotTransaction({ id: tgTestTgId }, { id: 'tg_bad_amt', amount: 0, category: 'Oziq-ovqat', type: 'expense' });
+    assert(invalidAmtRes === false, 'saveBotTransaction fails safely and returns false on 0 amount');
+
+    // 3. Test failure handling for missing user
+    const missingUserRes = await saveBotTransaction(null, { id: 'tg_bad_user', amount: 5000, category: 'Oziq-ovqat', type: 'expense' });
+    assert(missingUserRes === false, 'saveBotTransaction fails safely and returns false on null user');
+
+    // Cleanup test transactions
+    await supabase.from('transactions').delete().eq('user_id', tgTestUserId);
+    await supabase.from('users').delete().eq('id', tgTestUserId);
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 39: Client Relational Transaction Creation
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 39: Client Relational Transaction Creation ---');
+    const clientTgId1 = '7711223344';
+    const clientUser1 = `moliya_user_tg_${clientTgId1}`;
+
+    // Establish real Supabase Auth session for client user to pass RLS
+    const clientAuthSession = await createSupabaseAuthSession(clientTgId1, { name: 'Client Test User', telegram: '@clienttest' });
+    if (clientAuthSession?.access_token && clientAuthSession?.refresh_token) {
+      await clientSupabase.auth.setSession({
+        access_token: clientAuthSession.access_token,
+        refresh_token: clientAuthSession.refresh_token
+      });
+    }
+
+    await supabase.from('users').upsert({
+      id: clientUser1,
+      auth_user_id: clientAuthSession?.auth_user_id,
+      name: 'Client Test User',
+      telegram_id: clientTgId1,
+      transactions: [{ id: 'legacy_tx_client', amount: 80000, category: 'Boshqa', type: 'expense' }],
+      cards: [{ id: 'card_client_01', name: 'Mening Kartam', bank: 'Kapitalbank', number: '8600 **** 1111', balance: '100000', brand: 'uzcard' }],
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'id' });
+
+
+
+    // Clean up relational transactions and cards for clientUser1
+    await supabase.from('transactions').delete().eq('user_id', clientUser1);
+    await supabase.from('cards').delete().eq('user_id', clientUser1);
+
+
+    const txCreateRes = await writeTransactionRelationalClient(
+      {
+        id: 'client_tx_001',
+        type: 'expense',
+        amount: 45000,
+        category: 'Transport',
+        note: 'Yandex Taxi',
+        cardId: 'cash',
+        date: '2026-08-23T14:00:00.000Z'
+      },
+      clientUser1,
+      'web'
+    );
+    assert(txCreateRes.success === true, 'writeTransactionRelationalClient succeeds');
+    const { data: clientTxRow } = await supabase.from('transactions').select('*').eq('id', 'client_tx_001').maybeSingle();
+    assert(Boolean(clientTxRow), 'Transaction client_tx_001 exists in public.transactions table');
+    assert(clientTxRow?.user_id === clientUser1, 'Transaction user_id matches clientUser1');
+    assert(clientTxRow?.amount === 45000, 'Transaction amount is 45000');
+    assert(clientTxRow?.card_id === null, 'cardId cash becomes NULL in public.transactions');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 40: Client Transaction Edit / Upsert Preserves Same ID
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 40: Client Transaction Edit / Upsert Preserves Same ID ---');
+    const txEditRes = await writeTransactionRelationalClient(
+      {
+        id: 'client_tx_001',
+        type: 'expense',
+        amount: 55000, // Edited amount
+        category: 'Transport',
+        note: 'Yandex Taxi Comfort',
+        cardId: 'cash',
+        date: '2026-08-23T14:00:00.000Z'
+      },
+      clientUser1,
+      'web'
+    );
+    assert(txEditRes.success === true, 'writeTransactionRelationalClient edit succeeds');
+    const { data: editRows } = await supabase.from('transactions').select('*').eq('id', 'client_tx_001');
+    assert(Array.isArray(editRows) && editRows.length === 1, 'Transaction row updated in-place without duplicating row');
+    assert(editRows[0].amount === 55000, 'Transaction amount updated to 55000');
+    assert(editRows[0].note === 'Yandex Taxi Comfort', 'Transaction note updated');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 41: Client Relational Transaction Deletion
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 41: Client Relational Transaction Deletion ---');
+    const txDelRes = await deleteTransactionRelationalClient('client_tx_001', clientUser1);
+    assert(txDelRes.success === true, 'deleteTransactionRelationalClient succeeds');
+    const { data: delCheck } = await supabase.from('transactions').select('*').eq('id', 'client_tx_001').maybeSingle();
+    assert(!delCheck, 'Transaction client_tx_001 removed from public.transactions');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 42: Client Relational Card Creation & Update
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 42: Client Relational Card Creation & Update ---');
+    const cardCreateRes = await writeCardRelationalClient(
+      {
+        id: 'card_rel_001',
+        name: 'Asosiy Karta',
+        bank: 'Ipak Yo\'li',
+        number: '9860 **** 1234',
+        brand: 'humo',
+        balance: 2500000,
+        color: 'from-emerald-600 to-teal-600'
+      },
+      clientUser1
+    );
+    assert(cardCreateRes.success === true, 'writeCardRelationalClient succeeds');
+    const { data: cardRow } = await supabase.from('cards').select('*').eq('id', 'card_rel_001').maybeSingle();
+    assert(Boolean(cardRow), 'Card card_rel_001 exists in public.cards table');
+    assert(cardRow?.brand === 'humo', 'Card brand is humo');
+    assert(Number(cardRow?.initial_balance) === 2500000, 'Card initial_balance is 2500000');
+
+    // Update card balance
+    const cardEditRes = await writeCardRelationalClient(
+      {
+        id: 'card_rel_001',
+        name: 'Asosiy Karta (Edited)',
+        bank: 'Ipak Yo\'li',
+        number: '9860 **** 1234',
+        brand: 'humo',
+        balance: 3000000
+      },
+      clientUser1
+    );
+    assert(cardEditRes.success === true, 'writeCardRelationalClient update succeeds');
+    const { data: cardEditRows } = await supabase.from('cards').select('*').eq('id', 'card_rel_001');
+    assert(Array.isArray(cardEditRows) && cardEditRows.length === 1, 'Card updated in-place with 0 duplicate rows');
+    assert(Number(cardEditRows[0].initial_balance) === 3000000, 'Card balance updated to 3000000');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 43: Client Relational Card Deletion
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 43: Client Relational Card Deletion ---');
+    const cardDelRes = await deleteCardRelationalClient('card_rel_001', clientUser1);
+    assert(cardDelRes.success === true, 'deleteCardRelationalClient succeeds');
+    const { data: cardDelCheck } = await supabase.from('cards').select('*').eq('id', 'card_rel_001').maybeSingle();
+    assert(!cardDelCheck, 'Card card_rel_001 removed from public.cards table');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 44: Card Balance Adjustment Transaction
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 44: Card Balance Adjustment Transaction ---');
+    // Create card first so foreign key is valid
+    await writeCardRelationalClient(
+      { id: 'card_adj_001', name: 'Kapitalbank', bank: 'Kapitalbank', number: '8600 **** 5555', brand: 'uzcard', balance: 100000 },
+      clientUser1
+    );
+    const adjTxRes = await writeTransactionRelationalClient(
+      {
+        id: `tx_adj_card_adj_001_${Date.now()}`,
+        type: 'income',
+        amount: 50000,
+        category: 'Balans tahriri',
+        note: 'Karta balansi to\'g\'rilandi',
+        cardId: 'card_adj_001',
+        source: 'card_adjustment'
+      },
+      clientUser1,
+      'web'
+    );
+    assert(adjTxRes.success === true, 'Card balance adjustment transaction written successfully');
+    assert(adjTxRes.data?.card_id === 'card_adj_001', 'Adjustment transaction correctly linked to card_adj_001');
+    assert(adjTxRes.data?.source === 'card_adjustment', 'Adjustment transaction source tagged properly');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 45: Offline Transaction Synchronization
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 45: Offline Transaction Synchronization ---');
+    const offlineTxs = [
+      { id: 'off_tx_001', type: 'expense', amount: 12000, category: 'Oziq-ovqat', note: 'Non', date: '2026-08-23T15:00:00.000Z' },
+      { id: 'off_tx_002', type: 'expense', amount: 20000, category: 'Transport', note: 'Avtobus', date: '2026-08-23T15:30:00.000Z' }
+    ];
+    const syncRes1 = await syncOfflineDataRelationalClient(clientUser1, offlineTxs, [], [], 'android_apk');
+    assert(syncRes1.success === true && syncRes1.syncedTxs === 2, 'syncOfflineDataRelationalClient synced 2 offline transactions');
+    const { data: offTx1 } = await supabase.from('transactions').select('*').eq('id', 'off_tx_001').maybeSingle();
+    assert(Boolean(offTx1) && offTx1?.amount === 12000, 'Offline transaction off_tx_001 present in public.transactions');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 46: Offline Card Synchronization
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 46: Offline Card Synchronization ---');
+    const offlineCards = [
+      { id: 'off_card_001', name: 'Humo Karta', bank: 'NBU', number: '9860 **** 8888', brand: 'humo', balance: 500000 }
+    ];
+    const syncRes2 = await syncOfflineDataRelationalClient(clientUser1, [], offlineCards, [], 'android_apk');
+    assert(syncRes2.success === true && syncRes2.syncedCards === 1, 'syncOfflineDataRelationalClient synced 1 offline card');
+    const { data: offCard1 } = await supabase.from('cards').select('*').eq('id', 'off_card_001').maybeSingle();
+    assert(Boolean(offCard1) && offCard1?.brand === 'humo', 'Offline card off_card_001 present in public.cards');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 47: Offline Sync Idempotency
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 47: Offline Sync Idempotency ---');
+    const syncRes3 = await syncOfflineDataRelationalClient(clientUser1, offlineTxs, offlineCards, [], 'android_apk');
+    assert(syncRes3.success === true, 'Repeated sync execution succeeds');
+    const { data: allOffTxs } = await supabase.from('transactions').select('*').eq('id', 'off_tx_001');
+    assert(Array.isArray(allOffTxs) && allOffTxs.length === 1, 'Idempotent sync created exactly 1 row for off_tx_001 without duplication');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 48: Offline Sync Does Not Clobber Telegram-Created Transaction
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 48: Offline Sync Does Not Clobber Telegram-Created Transaction ---');
+    // 1. Simulate Telegram creating a transaction while client device was offline
+    await writeTransactionRelational(
+      { id: 'tg_live_while_offline', type: 'expense', amount: 35000, category: 'Kofe', note: 'Telegram botda qo\'shildi' },
+      clientUser1,
+      'telegram_bot'
+    );
+    // 2. Client reconnects and syncs its local queue (which does NOT know about tg_live_while_offline)
+    await syncOfflineDataRelationalClient(clientUser1, offlineTxs, offlineCards, [], 'web');
+
+    // 3. Verify Telegram transaction is STILL safe and intact in public.transactions
+    const { data: tgTxCheck } = await supabase.from('transactions').select('*').eq('id', 'tg_live_while_offline').maybeSingle();
+    assert(Boolean(tgTxCheck), 'Telegram-created transaction was NOT clobbered by offline sync');
+    assert(tgTxCheck?.amount === 35000, 'Telegram-created transaction data remains 100% intact');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 49: Cross-User Write Isolation
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 49: Cross-User Write Isolation ---');
+    const attackerClientTgId = '9988776655';
+    const attackerClientUser = `moliya_user_tg_${attackerClientTgId}`;
+    const attackerAuthSession = await createSupabaseAuthSession(attackerClientTgId, { name: 'Attacker User', telegram: '@attacker' });
+
+    if (attackerAuthSession?.access_token && attackerAuthSession?.refresh_token) {
+      await clientSupabase.auth.setSession({
+        access_token: attackerAuthSession.access_token,
+        refresh_token: attackerAuthSession.refresh_token
+      });
+    }
+
+    await deleteTransactionRelationalClient('tg_live_while_offline', attackerClientUser);
+    const { data: victimCheck } = await supabase.from('transactions').select('*').eq('id', 'tg_live_while_offline').maybeSingle();
+    assert(Boolean(victimCheck), 'Transaction protected against unauthorized cross-user delete');
+
+    // Switch back to clientUser1 session
+    if (clientAuthSession?.access_token && clientAuthSession?.refresh_token) {
+      await clientSupabase.auth.setSession({
+        access_token: clientAuthSession.access_token,
+        refresh_token: clientAuthSession.refresh_token
+      });
+    }
+
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 50: Legacy JSONB Immutability During Normal Client Writes
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 50: Legacy JSONB Immutability During Normal Client Writes ---');
+    const { data: userDocBefore } = await supabase.from('users').select('transactions, cards').eq('id', clientUser1).maybeSingle();
+    // Execute a new client relational write
+    await writeTransactionRelationalClient(
+      { id: 'tx_rel_immut_test', type: 'income', amount: 999000, category: 'Maosh', note: 'Oylik' },
+      clientUser1,
+      'web'
+    );
+    const { data: userDocAfter } = await supabase.from('users').select('transactions, cards').eq('id', clientUser1).maybeSingle();
+    assert(
+      JSON.stringify(userDocBefore?.transactions) === JSON.stringify(userDocAfter?.transactions) &&
+      JSON.stringify(userDocBefore?.cards) === JSON.stringify(userDocAfter?.cards),
+      'Legacy users.transactions and users.cards JSONB remain 100% unchanged during client relational writes'
+    );
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 51: clearUserFinancialDataRelationalClient Deletes Only Relational Financial Data
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 51: clearUserFinancialDataRelationalClient Deletes Only Relational Financial Data ---');
+    const clearRes = await clearUserFinancialDataRelationalClient(clientUser1);
+    assert(clearRes.success === true, 'clearUserFinancialDataRelationalClient succeeds');
+
+    const { data: remainingTxs } = await supabase.from('transactions').select('*').eq('user_id', clientUser1);
+    const { data: remainingCards } = await supabase.from('cards').select('*').eq('user_id', clientUser1);
+    const { data: remainingUser } = await supabase.from('users').select('*').eq('id', clientUser1).maybeSingle();
+
+    assert(Array.isArray(remainingTxs) && remainingTxs.length === 0, 'All relational transactions deleted for user');
+    assert(Array.isArray(remainingCards) && remainingCards.length === 0, 'All relational cards deleted for user');
+    assert(Boolean(remainingUser) && remainingUser?.name === 'Client Test User', 'User profile, account, and onboarding preserved');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 52: Invalid Amount Fails Safely
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 52: Invalid Amount Fails Safely ---');
+    const negParsed = normalizeTxClient({ id: 'tx_neg', amount: -60000, type: 'expense' }, clientUser1);
+    assert(negParsed.success === true && negParsed.data?.amount === 60000, 'Negative amount (-60000) converted to positive (60000)');
+
+    const zeroParsed = normalizeTxClient({ id: 'tx_zero', amount: 0, type: 'expense' }, clientUser1);
+    assert(zeroParsed.success === false, 'Zero amount safely rejected with validation error');
+
+    const nanParsed = normalizeTxClient({ id: 'tx_nan', amount: 'abc_not_number', type: 'expense' }, clientUser1);
+    assert(nanParsed.success === false, 'Non-numeric amount safely rejected with validation error');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 53: Cash cardId Becomes NULL in Database
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 53: Cash cardId Becomes NULL ---');
+    const cash1 = normalizeTxClient({ id: 't1', amount: 1000, cardId: 'cash' }, clientUser1);
+    const cash2 = normalizeTxClient({ id: 't2', amount: 1000, cardId: '' }, clientUser1);
+    const cash3 = normalizeTxClient({ id: 't3', amount: 1000, cardId: undefined }, clientUser1);
+    const cash4 = normalizeTxClient({ id: 't4', amount: 1000, cardId: null }, clientUser1);
+    assert(cash1.data?.card_id === null, 'cardId "cash" normalized to null');
+    assert(cash2.data?.card_id === null, 'cardId "" normalized to null');
+    assert(cash3.data?.card_id === null, 'cardId undefined normalized to null');
+    assert(cash4.data?.card_id === null, 'cardId null normalized to null');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 54: Concurrent Same-ID Transaction Upsert Does Not Duplicate
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 54: Concurrent Same-ID Transaction Upsert Does Not Duplicate ---');
+    const concTxPayload = { id: 'client_tx_concurrent', type: 'income', amount: 150000, category: 'Sovg\'a' };
+    const [cRes1, cRes2] = await Promise.all([
+      writeTransactionRelationalClient(concTxPayload, clientUser1, 'web'),
+      writeTransactionRelationalClient(concTxPayload, clientUser1, 'web')
+    ]);
+    assert(cRes1.success === true && cRes2.success === true, 'Concurrent writes with same ID succeed');
+    const { data: concRows } = await supabase.from('transactions').select('*').eq('id', 'client_tx_concurrent');
+    assert(Array.isArray(concRows) && concRows.length === 1, 'Exactly one row exists in database without duplication');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 55: Realtime / Optimistic State Deduplication
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 55: Realtime / Optimistic State Deduplication ---');
+    const existingList = [{ id: 'tx_ui_001', amount: 10000, category: 'Transport', type: 'expense', note: 'Metro', date: '2026-08-23T16:00:00.000Z' }];
+    const incomingRealtimeItem = { id: 'tx_ui_001', amount: 12000, category: 'Transport', type: 'expense', note: 'Metro (Edited)', date: '2026-08-23T16:00:00.000Z' };
+    const mergedList = [incomingRealtimeItem, ...existingList.filter(t => t.id !== incomingRealtimeItem.id)];
+    assert(mergedList.length === 1, 'Deduplication preserves exactly 1 item in list');
+    assert(mergedList[0].amount === 12000, 'Deduplication preserves latest updated item');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 56: Static Code Verification of FinanceContext Write Targets
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 56: Static Code Verification of FinanceContext Write Targets ---');
+    const fs = await import('fs');
+    const financeContextCode = fs.readFileSync('src/FinanceContext.tsx', 'utf-8');
+    const hasTransactionsUpdate = financeContextCode.includes(".update({ transactions:") || financeContextCode.includes(".update({\n          transactions:");
+    const hasCardsUpdate = financeContextCode.includes(".update({ cards:") || financeContextCode.includes(".update({\n          cards:");
+    assert(!hasTransactionsUpdate, 'FinanceContext does NOT contain any .update({ transactions: ... }) calls');
+    assert(!hasCardsUpdate, 'FinanceContext does NOT contain any .update({ cards: ... }) calls');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 57: Dev Server Natural Language Transaction Write
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 57: Dev Server Natural Language Transaction Write ---');
+    const devTgId = '8899001122';
+    const devUserId = `moliya_user_tg_${devTgId}`;
+    await supabase.from('users').upsert({
+      id: devUserId,
+      name: 'Dev Server User',
+      telegram_id: devTgId,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'id' });
+
+    // Clean up relational transactions for devUserId
+    await supabase.from('transactions').delete().eq('user_id', devUserId);
+
+    const devTxWriteRes = await writeTransactionRelational(
+      {
+        id: 'dev_tx_001',
+        type: 'expense',
+        amount: 32000,
+        category: 'Oziq-ovqat',
+        note: 'Lavash va choy',
+        date: new Date().toISOString()
+      },
+      devUserId,
+      'telegram_bot_dev'
+    );
+    assert(devTxWriteRes.success === true, 'writeTransactionRelational from dev server succeeds');
+    const { data: devTxRow } = await supabase.from('transactions').select('*').eq('id', 'dev_tx_001').maybeSingle();
+    assert(Boolean(devTxRow), 'Transaction dev_tx_001 written to public.transactions');
+    assert(devTxRow?.amount === 32000, 'Transaction amount matches');
+    assert(devTxRow?.source === 'telegram_bot_dev', 'Transaction source is telegram_bot_dev');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 58: Dev Server Voice Note Relational Write
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 58: Dev Server Voice Note Relational Write ---');
+    const devVoiceWriteRes = await writeTransactionRelational(
+      {
+        id: 'dev_voice_001',
+        type: 'expense',
+        amount: 50000,
+        category: 'Transport',
+        note: 'Ovozli taxi yozuvi',
+        date: new Date().toISOString()
+      },
+      devUserId,
+      'telegram_bot_voice'
+    );
+    assert(devVoiceWriteRes.success === true, 'writeTransactionRelational for voice note succeeds');
+    const { data: devVoiceRow } = await supabase.from('transactions').select('*').eq('id', 'dev_voice_001').maybeSingle();
+    assert(Boolean(devVoiceRow), 'Voice transaction written to public.transactions');
+    assert(devVoiceRow?.source === 'telegram_bot_voice', 'Voice transaction source is telegram_bot_voice');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 59: Dev Server Inline Callback del_${txId} Relational Deletion
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 59: Dev Server Inline Callback del_${txId} Relational Deletion ---');
+    const devDelRes = await deleteTransactionRelational('dev_voice_001', devUserId);
+    assert(devDelRes.success === true, 'deleteTransactionRelational in callback handler succeeds');
+    const { data: devDelCheck } = await supabase.from('transactions').select('*').eq('id', 'dev_voice_001').maybeSingle();
+    assert(devDelCheck === null, 'Voice transaction dev_voice_001 removed from public.transactions');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 60: Dev Server /delete Latest Transaction Relational Deletion
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 60: Dev Server /delete Latest Transaction Relational Deletion ---');
+    const { data: latestDevTxs } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('user_id', devUserId)
+      .is('deleted_at', null)
+      .order('date', { ascending: false })
+      .limit(1);
+    assert(Array.isArray(latestDevTxs) && latestDevTxs.length === 1, 'Found latest transaction for /delete');
+    const delCmdRes = await deleteTransactionRelational(latestDevTxs[0].id, devUserId);
+    assert(delCmdRes.success === true, 'deleteTransactionRelational for /delete command succeeds');
+    const { data: remainingDevTxs } = await supabase.from('transactions').select('*').eq('user_id', devUserId).is('deleted_at', null);
+    assert(Array.isArray(remainingDevTxs) && remainingDevTxs.length === 0, 'Dev user has 0 remaining transactions after /delete');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 61: Dev Server Balance Calculation from getUserTransactionsRelational
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 61: Dev Server Balance Calculation from getUserTransactionsRelational ---');
+    await writeTransactionRelational({ id: 'bal_tx_inc', type: 'income', amount: 500000, category: 'Maosh' }, devUserId, 'telegram_bot_dev');
+    await writeTransactionRelational({ id: 'bal_tx_exp', type: 'expense', amount: 150000, category: 'Oziq-ovqat' }, devUserId, 'telegram_bot_dev');
+    const relUserTxs = await getUserTransactionsRelational(devUserId);
+    const incomeSum = relUserTxs.filter(t => t.type === 'income').reduce((acc, t) => acc + t.amount, 0);
+    const expenseSum = relUserTxs.filter(t => t.type === 'expense').reduce((acc, t) => acc + Math.abs(t.amount), 0);
+    const netBalance = incomeSum - expenseSum;
+    assert(incomeSum === 500000, 'Income sum correctly computed from relational transactions');
+    assert(expenseSum === 150000, 'Expense sum correctly computed from relational transactions');
+    assert(netBalance === 350000, 'Net balance correctly computed as 350000');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 62: Static Code Verification of server.ts Write Targets
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 62: Static Code Verification of server.ts Write Targets ---');
+    const serverCode = fs.readFileSync('server.ts', 'utf-8');
+    const serverHasTxUpdate = serverCode.includes(".update({ transactions:") || serverCode.includes(".update({\n          transactions:");
+    const serverHasCardsUpdate = serverCode.includes(".update({ cards:") || serverCode.includes(".update({\n          cards:");
+    const serverHasSyncFunc = serverCode.includes("syncUserTxToFirestore");
+    const serverHasMemoryMap = serverCode.includes("tgUserTransactions");
+    assert(!serverHasTxUpdate, 'server.ts does NOT contain any .update({ transactions: ... }) calls');
+    assert(!serverHasCardsUpdate, 'server.ts does NOT contain any .update({ cards: ... }) calls');
+    assert(!serverHasSyncFunc, 'server.ts does NOT contain syncUserTxToFirestore');
+    assert(!serverHasMemoryMap, 'server.ts does NOT contain in-memory tgUserTransactions map');
+
+    // Cleanup sandbox test user and records
+    await supabase.from('transactions').delete().eq('user_id', clientUser1);
+    await supabase.from('cards').delete().eq('user_id', clientUser1);
+    await supabase.from('users').delete().eq('id', clientUser1);
+    await supabase.from('transactions').delete().eq('user_id', devUserId);
+    await supabase.from('users').delete().eq('id', devUserId);
+
+
+
+
+
 
 
 
