@@ -11,8 +11,6 @@ import BottomNav from './components/BottomNav'
 import AIButton from './components/AIButton'
 import AppTour from './components/AppTour'
 import { useFinance } from './FinanceContext'
-import { App as CapacitorApp } from '@capacitor/app'
-import { initNativeFeatures, isNativePlatform } from './utils/nativeBridge'
 
 import InstallPromptModal from './components/InstallPromptModal'
 import OfflineStatusBanner from './components/OfflineStatusBanner'
@@ -53,17 +51,6 @@ export default function App() {
     }
   })
 
-  // ═══════════════════════════════════════════════════════════
-  // ALL HOOKS MUST BE BEFORE ANY CONDITIONAL RETURNS
-  // React requires hooks to be called in the same order every render.
-  // Placing useEffect after if/return causes "Rendered more hooks" crash.
-  // ═══════════════════════════════════════════════════════════
-
-  // Initialize native Android features (Status bar color, Splash screen auto-hide)
-  useEffect(() => {
-    initNativeFeatures()
-  }, [])
-
   // Failsafe timeout for loading stage: never stay stuck loading > 2.5s
   useEffect(() => {
     if (stage !== 'loading') return
@@ -73,41 +60,6 @@ export default function App() {
     return () => clearTimeout(timer)
   }, [stage])
 
-  // Android hardware back button navigation handling
-  useEffect(() => {
-    if (!isNativePlatform()) return
-
-    let lastBackPress = 0
-
-    const backHandlerPromise = CapacitorApp.addListener('backButton', ({ canGoBack }) => {
-      // 1. If tour is open, close it first
-      if (showTour) {
-        setShowTour(false)
-        return
-      }
-
-      // 2. If inside app and on a sub-screen, return to home
-      if (stage === 'app' && activeScreen !== 'home') {
-        setActiveScreen('home')
-        return
-      }
-
-      // 3. Double tap back button within 2 seconds to exit app
-      const now = Date.now()
-      if (now - lastBackPress < 2000) {
-        CapacitorApp.exitApp()
-      } else {
-        lastBackPress = now
-        if (canGoBack) {
-          window.history.back()
-        }
-      }
-    })
-
-    return () => {
-      backHandlerPromise.then((handler) => handler.remove())
-    }
-  }, [showTour, stage, activeScreen])
 
   // Determine stage ONLY after auth check completes
   useEffect(() => {

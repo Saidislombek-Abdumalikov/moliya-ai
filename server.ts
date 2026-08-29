@@ -1802,10 +1802,13 @@ Return JSON object:
     let lastUpdateId = 0;
     async function startTelegramLongPolling() {
       try {
-        console.log(`🤖 Telegram Bot Polling started...`);
+        console.log(`🤖 Telegram Bot Polling started for token ${BOT_TOKEN.slice(0, 10)}...`);
+        // Remove existing webhook so getUpdates polling does not 409 conflict
+        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/deleteWebhook?drop_pending_updates=false`);
       } catch (e) {
         console.error("Telegram init polling error:", e);
       }
+
 
       while (true) {
         try {

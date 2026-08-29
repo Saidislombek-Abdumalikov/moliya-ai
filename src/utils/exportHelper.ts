@@ -1,8 +1,6 @@
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import { Filesystem, Directory } from '@capacitor/filesystem'
-import { Share } from '@capacitor/share'
-import { isNativePlatform } from './nativeBridge'
+
 
 export interface ExportTransaction {
   id: string | number
@@ -144,36 +142,8 @@ export async function exportFinancialReport(opts: ExportOptions): Promise<{ succ
     })
 
     const fileName = `Moliya_Hisobot_${period}_${dateStr}.pdf`
-
-    // If running on Native Android APK -> Save to device & Open Share sheet
-    if (isNativePlatform()) {
-      try {
-        const base64Pdf = doc.output('datauristring').split(',')[1]
-        const writeResult = await Filesystem.writeFile({
-          path: fileName,
-          data: base64Pdf,
-          directory: Directory.Cache,
-        })
-
-        await Share.share({
-          title: 'Moliya AI Hisobot (PDF)',
-          text: `Moliya AI moliyaviy hisobot: ${periodLabel}`,
-          url: writeResult.uri,
-          dialogTitle: 'PDF hisobotni ochish yoki saqlash',
-        })
-
-        return { success: true, message: 'PDF qurilmangizga muvaffaqiyatli yuklandi! 📄' }
-      } catch (err: any) {
-        console.error('[EXPORT] Native PDF download error:', err)
-        // Fallback to doc.save
-        doc.save(fileName)
-        return { success: true }
-      }
-    } else {
-      // Standard Web Browser download
-      doc.save(fileName)
-      return { success: true }
-    }
+    doc.save(fileName)
+    return { success: true, message: 'PDF hisoboti yuklab olindi! 📄' }
   } else {
     // CSV / Excel format
     const BOM = '\uFEFF'
@@ -189,48 +159,15 @@ export async function exportFinancialReport(opts: ExportOptions): Promise<{ succ
     const content = BOM + headers + rows
     const fileName = `Moliya_Hisobot_${period}_${dateStr}.csv`
 
-    if (isNativePlatform()) {
-      try {
-        // Convert to base64
-        const base64Data = btoa(unescape(encodeURIComponent(content)))
-        const writeResult = await Filesystem.writeFile({
-          path: fileName,
-          data: base64Data,
-          directory: Directory.Cache,
-        })
-
-        await Share.share({
-          title: 'Moliya AI Hisobot (Excel/CSV)',
-          text: `Moliya AI hisobot: ${periodLabel}`,
-          url: writeResult.uri,
-          dialogTitle: 'Excel hisobotni ochish yoki saqlash',
-        })
-
-        return { success: true, message: 'Excel hisoboti qurilmangizga yuklandi! 📊' }
-      } catch (err: any) {
-        console.error('[EXPORT] Native Excel download error:', err)
-        const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' })
-        const url = URL.createObjectURL(blob)
-        const link = document.createElement('a')
-        link.href = url
-        link.download = fileName
-        document.body.appendChild(link)
-        link.click()
-        document.body.removeChild(link)
-        URL.revokeObjectURL(url)
-        return { success: true }
-      }
-    } else {
-      const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' })
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = fileName
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      URL.revokeObjectURL(url)
-      return { success: true }
-    }
+    const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = fileName
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+    return { success: true, message: 'Excel hisoboti yuklab olindi! 📊' }
   }
 }

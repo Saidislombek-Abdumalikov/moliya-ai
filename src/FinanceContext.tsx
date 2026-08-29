@@ -123,14 +123,13 @@ async function setSupabaseSession(accessToken: string, refreshToken: string): Pr
 
 
 function getDeviceInfo() {
-  const isApk = isNativePlatform()
   const ua = typeof navigator !== 'undefined' ? navigator.userAgent : ''
   const platform = typeof navigator !== 'undefined' ? navigator.platform : 'Unknown'
   return {
-    platform: isApk ? 'android_apk' : 'web_app',
-    model: ua.includes('Android') ? 'Android Phone' : platform,
-    os: ua.includes('Android') ? 'Android' : platform,
-    app_version: 'v3.21.0',
+    platform: 'web_app',
+    model: ua.includes('Mobile') ? 'Mobile Browser' : platform,
+    os: ua.includes('Android') ? 'Android Browser' : ua.includes('iPhone') ? 'iOS Browser' : platform,
+    app_version: 'v3.22.0',
     push_token: null,
     last_login: new Date().toISOString()
   }
@@ -259,7 +258,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         parsedTxs,
         parsedCards,
         parsedDeletedIds,
-        isNativePlatform() ? 'android_apk' : 'web'
+        'web'
       );
 
       if (syncResult.success) {
@@ -925,11 +924,9 @@ const fetchWithTimeout = (url: string, options: RequestInit = {}, timeoutMs = 25
           const notice = payload.new as AppAnnouncement
           if (!notice) return
 
-          const isApk = isNativePlatform()
           const isForMe = 
             notice.target === 'all' || 
-            (isApk && notice.target === 'android') || 
-            (!isApk && notice.target === 'web') ||
+            notice.target === 'web' ||
             notice.target === userId
 
           if (isForMe) {
@@ -1042,7 +1039,7 @@ const fetchWithTimeout = (url: string, options: RequestInit = {}, timeoutMs = 25
           telegram_id: updated.telegramId || null,
           language: updated.language || 'uz',
           is_premium: !!updated.isPremium,
-          platform: isNativePlatform() ? 'android_apk' : 'web_app',
+          platform: 'web_app',
           device_info: getDeviceInfo(),
           onboarding: updated,
           updated_at: nowIso
@@ -1115,7 +1112,7 @@ const fetchWithTimeout = (url: string, options: RequestInit = {}, timeoutMs = 25
         const res = await writeTransactionRelationalClient(
           newTx,
           userId,
-          isNativePlatform() ? 'android_apk' : 'web'
+          'web'
         );
         if (!res.success) {
           console.error('[RELATIONAL_WRITE] addTransaction error:', res.error);

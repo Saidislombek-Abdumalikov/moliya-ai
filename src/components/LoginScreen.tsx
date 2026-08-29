@@ -138,7 +138,7 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
     setOtpDigits(['', '', '', '', '', ''])
     // Start 10-minute real expiration timer
     setTimerSeconds(600)
-    openTelegramBot('apk')
+    openTelegramBot('app')
     setTimeout(() => {
       otpInputsRef.current[0]?.focus()
     }, 500)
