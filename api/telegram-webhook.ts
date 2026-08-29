@@ -301,53 +301,6 @@ const renderProgressBar = (ratio: number, length: number = 8) => {
   return '█'.repeat(filled) + '░'.repeat(empty);
 };
 
-async function getUserBudgets(fromUser: any) {
-  try {
-    const tgId = String(fromUser?.id);
-    if (!tgId) return {};
-    const userId = `moliya_user_tg_${tgId}`;
-    const { data: user } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
-    return user?.onboarding?.budgets || {};
-  } catch (e) {
-    console.error('Error fetching user budgets:', e);
-  }
-  return {};
-}
-
-async function setUserBudget(fromUser: any, category: string, limitAmt: number) {
-  try {
-    const tgId = String(fromUser?.id);
-    if (!tgId) return null;
-    const userId = `moliya_user_tg_${tgId}`;
-    const existing = await getUserBudgets(fromUser);
-    const updated = { ...existing, [category]: limitAmt };
-    const { data: user } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
-    const newOnboarding = { ...(user?.onboarding || {}), budgets: updated };
-    await supabase.from('users').update({ onboarding: newOnboarding, updated_at: new Date().toISOString() }).eq('id', userId);
-    return updated;
-  } catch (e) {
-    console.error('Error setting user budget:', e);
-    return null;
-  }
-}
-
-async function sendTelegramDocument(chatId: number | string, fileBuffer: Buffer, fileName: string, caption?: string) {
-  try {
-    const formData = new FormData();
-    formData.append('chat_id', String(chatId));
-    formData.append('document', new Blob([fileBuffer], { type: 'text/csv' }), fileName);
-    if (caption) formData.append('caption', caption);
-    formData.append('parse_mode', 'HTML');
-
-    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendDocument`, {
-      method: 'POST',
-      body: formData
-    });
-  } catch (err) {
-    console.error('Failed to send Telegram document:', err);
-  }
-}
-
 // In-memory pending draft cache for fast Telegram callbacks
 const pendingDraftsCache = new Map<string, any>();
 
@@ -361,17 +314,6 @@ async function savePendingDraftTx(fromUser: any, draftTx: any) {
     console.error('Error saving pending draft tx:', e);
     return null;
   }
-}
-
-async function getPendingDraftTx(fromUser: any, txId: string) {
-  try {
-    const tgId = String(fromUser?.id);
-    if (!tgId) return null;
-    return pendingDraftsCache.get(`${tgId}_${txId}`) || null;
-  } catch (e) {
-    console.error('Error fetching pending draft tx:', e);
-  }
-  return null;
 }
 
 async function confirmPendingDraftTx(fromUser: any, txId: string) {
@@ -407,29 +349,6 @@ async function cancelPendingDraftTx(fromUser: any, txId: string) {
     console.error('Error cancelling pending draft tx:', e);
   }
   return false;
-}
-
-function renderConfirmationCard(draftTx: any) {
-  const typeEmoji = draftTx.type === 'income' ? '🟢 Daromad' : '🛒 Xarajat';
-  const fmtAmt = Math.abs(draftTx.amount || 0).toLocaleString('en-US').replace(/,/g, ' ');
-
-  const text = `❓ <b>Ushbu operatsiyani saqlaymizmi?</b> 🤔\n\n` +
-    `📌 <b>Turi:</b> ${typeEmoji}\n` +
-    `💵 <b>Summa:</b> ${fmtAmt} so'm\n` +
-    `📂 <b>Kategoriya:</b> ${draftTx.category || 'Boshqa'}\n` +
-    `📝 <b>Izoh:</b> ${draftTx.name || draftTx.note || 'Operatsiya'}`;
-
-  const inlineKeyboard = {
-    inline_keyboard: [
-      [
-        { text: "✅ Saqlash", callback_data: `tx_confirm_${draftTx.id}` },
-        { text: "✏️ Tahrirlash", callback_data: `tx_edit_${draftTx.id}` },
-        { text: "❌ Bekor qilish", callback_data: `tx_cancel_${draftTx.id}` }
-      ]
-    ]
-  };
-
-  return { text, inlineKeyboard };
 }
 
 async function renderRichTransactionCard(fromUser: any, tx: any, isPending: boolean = false) {
@@ -885,6 +804,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           [{ text: "📱 Telegram Mini App", web_app: { url: appUrl } }]
         ]
       });
+      return res.status(200).json({ status: 'ok' });
+    }
+
+    // Bekor qilish / O'chirish (/undo, /delete)
+    if (text.startsWith("/undo") || text.startsWith("/delete") || text.includes("Oxirgi xarajatni o'chirish")) {
+      const deletedTx = await deleteLastBotTransaction(fromUser);
+      if (deletedTx) {
+        const fmtAmt = Math.abs(deletedTx.amount || 0).toLocaleString('en-US').replace(/,/g, ' ');
+        const undoMsg = `🗑️ <b>Oxirgi operatsiya o'chirildi:</b>\n\n` +
+          `💰 <b>Summa:</b> ${fmtAmt} so'm\n` +
+          `📝 <b>Izoh:</b> ${deletedTx.title || deletedTx.note || deletedTx.name || 'Operatsiya'}\n\n` +
+          `<i>Hisob balansingiz yangilandi.</i> ✨`;
+        await sendTelegramMessage(chatId, undoMsg);
+      } else {
+        await sendTelegramMessage(chatId, "ℹ️ O'chirish uchun oxirgi operatsiya topilmadi.");
+      }
       return res.status(200).json({ status: 'ok' });
     }
 

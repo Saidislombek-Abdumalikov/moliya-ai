@@ -2,7 +2,6 @@ import React, { createContext, useContext, useState, useEffect } from 'react'
 import { supabase } from './supabase'
 import type { OnboardingResult } from './components/Onboarding'
 import { getApiUrl } from './utils/apiUrl'
-import { isNativePlatform } from './utils/nativeBridge'
 import {
   writeTransactionRelationalClient,
   deleteTransactionRelationalClient,

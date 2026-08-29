@@ -129,7 +129,7 @@ async function parseAIText(text: string, cardsList: any[] = [], userId?: string)
 }
 
 export default function AIButton({ visible = true, language = 'uz' }: { visible?: boolean; language?: 'uz' | 'uz_cyrl' | 'ru' | 'en' }) {
-  const { addTransaction, hasSampleData, setHasSampleData, cards, userId, userSubscription } = useFinance()
+  const { addTransaction, hasSampleData, setHasSampleData, cards, userId } = useFinance()
   const [open, setOpen] = useState(false)
   const [step, setStep] = useState<'type' | 'form' | 'voice' | 'done' | 'removeSamples'>('type')
   const [selectedType, setSelectedType] = useState<EntryType>('expense')
