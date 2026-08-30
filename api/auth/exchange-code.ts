@@ -75,20 +75,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .eq('id', userId)
       .maybeSingle();
 
-    // 6. Create real Supabase Auth session
-    const authSession = await createSupabaseAuthSession(
-      String(tgId),
-      { name: userDoc?.name || '', telegram: userDoc?.telegram || '' }
-    );
-
-    if (!authSession) {
-      return res.status(500).json({ error: 'Failed to create auth session' });
+    // 6. Create real Supabase Auth session (failsafe: optional)
+    let authSession: any = null;
+    try {
+      authSession = await createSupabaseAuthSession(
+        String(tgId),
+        { name: userDoc?.name || '', telegram: userDoc?.telegram || '' }
+      );
+    } catch (authErr) {
+      console.warn('[EXCHANGE-CODE] Warning creating Supabase auth session:', authErr);
     }
 
     // 7. Return tokens + user data
     return res.status(200).json({
-      access_token: authSession.access_token,
-      refresh_token: authSession.refresh_token,
+      access_token: authSession?.access_token || null,
+      refresh_token: authSession?.refresh_token || null,
       userId,
       sessionToken: userDoc?.session_token || codeDoc.session_token || null,
       onboarding: userDoc?.onboarding || null,

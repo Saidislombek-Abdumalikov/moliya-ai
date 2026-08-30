@@ -31,11 +31,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const userId = `moliya_user_tg_${reqDoc.telegram_id}`;
         const { data: userDoc } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
 
-        // Create real Supabase Auth session
-        const authSession = await createSupabaseAuthSession(
-          reqDoc.telegram_id,
-          { name: userDoc?.name || '', telegram: userDoc?.telegram || '' }
-        );
+        // Create real Supabase Auth session (failsafe: optional)
+        let authSession: any = null;
+        try {
+          authSession = await createSupabaseAuthSession(
+            reqDoc.telegram_id,
+            { name: userDoc?.name || '', telegram: userDoc?.telegram || '' }
+          );
+        } catch (e) {
+          console.warn('[CHECK-LOGIN] Warning creating auth session:', e);
+        }
 
         return res.status(200).json({
           status: 'VERIFIED',
