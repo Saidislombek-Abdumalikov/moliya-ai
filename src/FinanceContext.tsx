@@ -155,6 +155,15 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   // Helper: Persist auth state after successful verification
   const persistAuthState = (data: { userId: string; sessionToken?: string; onboarding?: any; cards?: any[]; transactions?: any[] }) => {
+    const prevUserId = localStorage.getItem('user_id_v1')
+    if (prevUserId && prevUserId !== data.userId) {
+      console.log('[AUTH] Switching user profile cache from', prevUserId, 'to', data.userId)
+      localStorage.removeItem('user_cards_v1')
+      localStorage.removeItem('user_transactions_v1')
+      localStorage.removeItem('user_onboarding_v1')
+      localStorage.removeItem('user_session_token_v1')
+    }
+
     setUserId(data.userId)
     localStorage.setItem('user_id_v1', data.userId)
     if (data.sessionToken) {
@@ -164,15 +173,18 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     if (data.onboarding) {
       setOnboarding(data.onboarding)
       localStorage.setItem('user_onboarding_v1', JSON.stringify(data.onboarding))
+      if (data.onboarding.completed) {
+        localStorage.setItem('user_onboarding_completed_v1', 'true')
+      }
     }
-    if (Array.isArray(data.cards) && data.cards.length > 0) {
-      setCards(data.cards)
-      localStorage.setItem('user_cards_v1', JSON.stringify(data.cards))
-    }
-    if (Array.isArray(data.transactions)) {
-      setCustomTransactions(data.transactions)
-      localStorage.setItem('user_transactions_v1', JSON.stringify(data.transactions))
-    }
+    const userCards = Array.isArray(data.cards) ? data.cards : []
+    setCards(userCards)
+    localStorage.setItem('user_cards_v1', JSON.stringify(userCards))
+
+    const userTransactions = Array.isArray(data.transactions) ? data.transactions : []
+    setCustomTransactions(userTransactions)
+    localStorage.setItem('user_transactions_v1', JSON.stringify(userTransactions))
+
     // Clean saved pending request since auth is done
     localStorage.removeItem('moliya_pending_request_id')
     window.dispatchEvent(new Event('user_logged_in_updated'))
@@ -187,26 +199,66 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       try {
         console.log('[AUTH] Initializing authentication...');
 
-        // ===== STEP 0: Check for existing real Supabase Auth session =====
-        const { data: existingSession } = await supabase.auth.getSession()
-        if (existingSession?.session?.user) {
-          const user = existingSession.session.user
-          const tgId = user.user_metadata?.telegram_id || (user.email?.startsWith('tg') ? user.email.replace(/^tg/, '').replace(/@.*$/, '') : null)
-          if (tgId) {
-            const profileId = `moliya_user_tg_${tgId}`
-            setUserId(profileId)
-            localStorage.setItem('user_id_v1', profileId)
-            localStorage.setItem('user_logged_in_v1', 'true')
-            console.log('[AUTH] ✅ Restored from existing Supabase Auth session for:', profileId)
-            window.dispatchEvent(new Event('user_logged_in_updated'))
-            setIsAuthReady(true)
-            return
+        // ===== STEP 0: Telegram Mini App native container check (HIGHEST PRIORITY) =====
+        const tg = (window as any).Telegram?.WebApp
+        if (tg) {
+          try {
+            if (typeof tg.ready === 'function') tg.ready()
+            if (typeof tg.expand === 'function') tg.expand()
+          } catch (tgErr) {
+            console.error('[AUTH] Telegram WebApp error:', tgErr)
+          }
+        }
+        const initData = tg?.initData || ''
+        const initDataUnsafe = tg?.initDataUnsafe
+        const currentTgId = initDataUnsafe?.user?.id ? String(initDataUnsafe.user.id) : null
+
+        if (tg && (initData || currentTgId)) {
+          try {
+            console.log('[AUTH] Telegram Mini App detected, active Telegram user:', currentTgId)
+            const cachedUserId = localStorage.getItem('user_id_v1')
+            if (currentTgId && cachedUserId && cachedUserId !== `moliya_user_tg_${currentTgId}`) {
+              console.log('[AUTH] User switch detected in Telegram Mini App:', cachedUserId, '->', `moliya_user_tg_${currentTgId}`)
+              localStorage.removeItem('user_session_token_v1')
+              localStorage.removeItem('user_cards_v1')
+              localStorage.removeItem('user_transactions_v1')
+              localStorage.removeItem('user_onboarding_v1')
+              await supabase.auth.signOut().catch(() => {})
+            }
+
+            const res = await fetch('/api/auth/telegram', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ initData, initDataUnsafe })
+            })
+            if (res.ok) {
+              const data = await res.json()
+              if (data.userId) {
+                if (data.access_token && data.refresh_token) {
+                  await setSupabaseSession(data.access_token, data.refresh_token)
+                }
+                persistAuthState({
+                  userId: data.userId,
+                  sessionToken: data.sessionToken,
+                  onboarding: data.onboarding,
+                  cards: data.cards,
+                  transactions: data.transactions
+                })
+                console.log('[AUTH] ✅ Authenticated via Telegram Mini App initData for:', data.userId)
+                setIsAuthReady(true)
+                return
+              }
+            } else {
+              const errData = await res.json().catch(() => ({}))
+              console.error('[AUTH] Telegram initData verification failed:', errData)
+            }
+          } catch (err) {
+            console.error('[AUTH] Telegram initData auth error:', err)
           }
         }
 
-        const urlParams = new URLSearchParams(window.location.search)
-
         // ===== STEP 1: Check for URL ?code= parameter (exchange code from bot) =====
+        const urlParams = new URLSearchParams(window.location.search)
         const exchangeCode = urlParams.get('code')
         if (exchangeCode && exchangeCode.length >= 16) {
           try {
@@ -243,7 +295,24 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           window.history.replaceState({}, document.title, cleanUrl)
         }
 
-        // ===== STEP 1b: Check for URL ?s= parameter (legacy — validate-session) =====
+        // ===== STEP 2: Check for existing real Supabase Auth session =====
+        const { data: existingSession } = await supabase.auth.getSession()
+        if (existingSession?.session?.user) {
+          const user = existingSession.session.user
+          const tgId = user.user_metadata?.telegram_id || (user.email?.startsWith('tg') ? user.email.replace(/^tg/, '').replace(/@.*$/, '') : null)
+          if (tgId) {
+            const profileId = `moliya_user_tg_${tgId}`
+            setUserId(profileId)
+            localStorage.setItem('user_id_v1', profileId)
+            localStorage.setItem('user_logged_in_v1', 'true')
+            console.log('[AUTH] ✅ Restored from existing Supabase Auth session for:', profileId)
+            window.dispatchEvent(new Event('user_logged_in_updated'))
+            setIsAuthReady(true)
+            return
+          }
+        }
+
+        // ===== STEP 3: Check for URL ?s= parameter (legacy — validate-session) =====
         const sessionParam = urlParams.get('s')
         if (sessionParam) {
           try {
@@ -272,7 +341,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           }
         }
 
-        // ===== STEP 2: Check for URL ?req= parameter (polling redirect) =====
+        // ===== STEP 4: Check for URL ?req= parameter (polling redirect) =====
         const reqParam = urlParams.get('req')
         if (reqParam) {
           try {
@@ -296,7 +365,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           }
         }
 
-        // ===== STEP 3: Check stored 60-day custom session token =====
+        // ===== STEP 5: Check stored 60-day custom session token =====
         const sessionToken = localStorage.getItem('user_session_token_v1')
         if (sessionToken) {
           try {
@@ -322,56 +391,14 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           }
         }
 
-        // ===== STEP 4: Telegram Mini App native container check =====
-        const tg = (window as any).Telegram?.WebApp
-        if (tg) {
-          try {
-            if (typeof tg.ready === 'function') tg.ready()
-            if (typeof tg.expand === 'function') tg.expand()
-          } catch (tgErr) {
-            console.error('[AUTH] Telegram WebApp error:', tgErr)
-          }
-        }
-        const initData = tg?.initData || ''
-        const initDataUnsafe = tg?.initDataUnsafe
-        if (tg && (initData || initDataUnsafe?.user?.id)) {
-          try {
-            console.log('[AUTH] Telegram Mini App detected, verifying initData...')
-            const res = await fetch('/api/auth/telegram', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ initData, initDataUnsafe })
-            })
-            if (res.ok) {
-              const data = await res.json()
-              if (data.userId) {
-                if (data.access_token && data.refresh_token) {
-                  await setSupabaseSession(data.access_token, data.refresh_token)
-                }
-                persistAuthState({ userId: data.userId, sessionToken: data.sessionToken, onboarding: data.onboarding, cards: data.cards, transactions: data.transactions })
-                console.log('[AUTH] ✅ Authenticated via Telegram Mini App initData')
-                setIsAuthReady(true)
-                return
-              }
-            } else {
-              const errData = await res.json().catch(() => ({}))
-              console.error('[AUTH] Telegram initData verification failed:', errData)
-            }
-          } catch (err) {
-            console.error('[AUTH] Telegram initData auth error:', err)
-          }
-        }
-
-        // ===== STEP 5: Resume polling for pending login request (mobile redirect recovery) =====
+        // ===== STEP 6: Resume polling for pending login request (mobile redirect recovery) =====
         const pendingRequestId = localStorage.getItem('moliya_pending_request_id')
         if (pendingRequestId) {
           console.log('[AUTH] Found pending login request, resuming polling...')
           resumePolling(pendingRequestId)
-          // Don't return — let isAuthReady be set so the user sees loading/onboarding
-          // The polling callback will transition them to authenticated when complete
         }
 
-        // ===== STEP 6: Local fallback =====
+        // ===== STEP 7: Local fallback =====
         const savedUserId = localStorage.getItem('user_id_v1')
         if (savedUserId && localStorage.getItem('user_logged_in_v1') === 'true') {
           setUserId(savedUserId)
@@ -724,11 +751,17 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const logout = () => {
     // Sign out from real Supabase Auth
     supabase.auth.signOut().catch(() => {});
-    // Clear custom tokens
+    // Clear all custom tokens and cached data
     localStorage.removeItem('user_logged_in_v1');
     localStorage.removeItem('user_session_token_v1');
     localStorage.removeItem('user_id_v1');
     localStorage.removeItem('user_onboarding_v1');
+    localStorage.removeItem('user_onboarding_completed_v1');
+    localStorage.removeItem('user_onboarding_pre_completed_v1');
+    localStorage.removeItem('user_cards_v1');
+    localStorage.removeItem('user_transactions_v1');
+    localStorage.removeItem('user_security_v1');
+    localStorage.removeItem('user_has_sample_v1');
     localStorage.removeItem('moliya_pending_request_id');
     setUserId(null);
     setOnboarding(null);
