@@ -19,8 +19,21 @@ type Stage = 'loading' | 'onboarding' | 'app'
 export default function App() {
   const { onboarding, updateOnboarding, setHasSampleData, logout, isAuthReady, userId } = useFinance()
 
+  const getInitialStage = (): Stage => {
+    try {
+      const isOnboarded = localStorage.getItem('user_onboarding_completed_v1') === 'true'
+      const isLoggedIn = localStorage.getItem('user_logged_in_v1') === 'true'
+      if (isOnboarded || isLoggedIn) {
+        return 'app'
+      }
+      return 'onboarding'
+    } catch {
+      return 'onboarding'
+    }
+  }
+
   const [showTour, setShowTour] = useState(false)
-  const [stage, setStage] = useState<Stage>('loading')
+  const [stage, setStage] = useState<Stage>(getInitialStage)
   const [activeScreen, setActiveScreen] = useState<Screen>('home')
 
   // ═══════════════════════════════════════════════════════════
@@ -33,7 +46,10 @@ export default function App() {
   useEffect(() => {
     if (!isAuthReady) return
 
-    if (userId || localStorage.getItem('user_logged_in_v1') === 'true') {
+    const isOnboarded = localStorage.getItem('user_onboarding_completed_v1') === 'true'
+    const isLoggedIn = Boolean(userId || localStorage.getItem('user_logged_in_v1') === 'true')
+
+    if (isOnboarded || isLoggedIn) {
       setStage('app')
     } else {
       setStage('onboarding')
@@ -51,8 +67,9 @@ export default function App() {
   // Auto-transition to app/onboarding when user gets authenticated or logs out
   useEffect(() => {
     const checkLoggedIn = () => {
+      const isOnboarded = localStorage.getItem('user_onboarding_completed_v1') === 'true'
       const isLoggedIn = localStorage.getItem('user_logged_in_v1') === 'true'
-      if (isLoggedIn) {
+      if (isOnboarded || isLoggedIn) {
         setStage('app')
       } else if (isAuthReady) {
         setStage('onboarding')

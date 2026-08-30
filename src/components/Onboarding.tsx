@@ -571,6 +571,20 @@ export default function Onboarding({ onComplete }: Props) {
                   >
                     <span>{t.loginTelegramBtn}</span>
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={finish}
+                    style={{
+                      width: '100%', padding: '12px', borderRadius: 16,
+                      border: 'none', background: 'transparent',
+                      color: '#8B82C4', fontSize: 13, fontWeight: 600,
+                      cursor: 'pointer', fontFamily: 'inherit',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}
+                  >
+                    <span>{t.skipTelegramBtn}</span>
+                  </button>
                 </div>
               </>
             ) : (
@@ -612,6 +626,20 @@ export default function Onboarding({ onComplete }: Props) {
                     }}
                   >
                     <span>🔄 {(language === 'uz' || language === 'uz_cyrl') ? (language === 'uz_cyrl' ? "Қайта уриниш" : "Qayta urinish") : (language === 'ru' ? "Попробовать снова" : "Try Again")}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={finish}
+                    style={{
+                      width: '100%', padding: '12px', borderRadius: 16,
+                      border: 'none', background: 'transparent',
+                      color: '#8B82C4', fontSize: 13, fontWeight: 600,
+                      cursor: 'pointer', fontFamily: 'inherit',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}
+                  >
+                    <span>{t.skipTelegramBtn}</span>
                   </button>
                 </div>
               </>
