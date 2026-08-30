@@ -3,7 +3,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import crypto from "crypto";
 import { supabase } from './_supabaseClient.js';
 
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8955141731:AAF0axUBdGs6D1LN32tNncb2cOp47-z9oho";
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8955141731:AAFfSMSEBE67-W5aIjQskVx-b34svyTyA08";
 const appUrl = process.env.APP_URL || "https://moliya-ai-pi.vercel.app";
 
 // Helper: Create 60-day Session Token & Mark Login Request VERIFIED in Supabase
