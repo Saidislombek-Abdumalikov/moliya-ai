@@ -2,6 +2,8 @@
   "version": 2,
   "rewrites": [
     { "source": "/api/telegram-webhook", "destination": "/api/telegram-webhook" },
+    { "source": "/api/admin/(.*)", "destination": "/api/admin.ts?route=$1" },
+    { "source": "/api/auth/(.*)", "destination": "/api/auth.ts?action=$1" },
     { "source": "/api/(.*)", "destination": "/api/$1" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
