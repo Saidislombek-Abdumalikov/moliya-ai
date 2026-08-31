@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { GoogleGenAI, Type } from "@google/genai";
 import { checkAndRecordAiUsage } from './_aiQuotaHelper.js';
+import { executeAiWithRotation } from './_aiRouter.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -17,7 +17,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Missing text' });
     }
 
-    // 1. Quota Check & Enforcement for Free users
+    // 1. Quota Check & Enforcement
     const quota = await checkAndRecordAiUsage(userId, 'text', text);
     if (!quota.allowed) {
       return res.status(429).json({
@@ -25,86 +25,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         error: 'quota_exceeded',
         limit: quota.limit,
         usedCount: quota.usedCount,
-        message: quota.message || 'Bepul AI so\'rov limiti tugadi. Davom etish uchun VIP Premium obunasini faollashtiring!'
+        message: quota.message || "Bepul AI so'rov limiti tugadi. Davom etish uchun VIP Premium obunasini faollashtiring!"
       });
     }
 
-    // 2. Gemini AI Parsing Execution
-    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || "";
-    if (apiKey) {
-      const ai = new GoogleGenAI({ apiKey });
-      const prompt = `Parse this financial transaction text in Uzbek/Russian/English: "${text}".
-Return JSON object:
-- type: 'expense' | 'income' | 'debt' | 'lending'
-- amount: number in UZS (e.g. 25000, 1000000)
-- category: string ('Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\'liq', 'Ta\'lim', 'Boshqa', 'Maosh', 'Freelance', 'Biznes')
-- note: string (clear description)
-- title: string (short title)
-- debtWho: string (person name if debt or lending, else empty)`;
+    // 2. Execute AI with key rotation from database
+    const result = await executeAiWithRotation(text);
 
-      let response;
-      try {
-        response = await ai.models.generateContent({
-          model: "gemini-2.5-flash",
-          contents: prompt,
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                type: { type: Type.STRING },
-                amount: { type: Type.NUMBER },
-                category: { type: Type.STRING },
-                note: { type: Type.STRING },
-                title: { type: Type.STRING },
-                debtWho: { type: Type.STRING },
-              },
-              required: ["type", "amount", "category", "note"],
-            }
-          }
-        });
-      } catch (err) {
-        console.warn('Gemini 2.5 flash parse failed, trying gemini-1.5-flash:', err);
-        response = await ai.models.generateContent({
-          model: "gemini-1.5-flash",
-          contents: prompt,
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                type: { type: Type.STRING },
-                amount: { type: Type.NUMBER },
-                category: { type: Type.STRING },
-                note: { type: Type.STRING },
-                title: { type: Type.STRING },
-                debtWho: { type: Type.STRING },
-              },
-              required: ["type", "amount", "category", "note"],
-            }
-          }
-        });
-      }
-
-      if (response && response.text) {
-        const parsed = JSON.parse(response.text);
-        if (parsed.amount) {
-          const fmtAmt = parsed.amount.toLocaleString('en-US').replace(/,/g, ' ');
-          return res.status(200).json({
-            success: true,
-            type: parsed.type || 'expense',
-            amount: fmtAmt,
-            category: parsed.category || 'Boshqa',
-            note: parsed.note || text,
-            title: parsed.title || parsed.note || text,
-            debtWho: parsed.debtWho || '',
-          });
-        }
-      }
+    if (result.success && result.amount) {
+      return res.status(200).json({
+        success: true,
+        type: result.type || 'expense',
+        amount: result.amount,
+        category: result.category || 'Boshqa',
+        note: result.note || text,
+        title: result.title || result.note || text,
+        debtWho: result.debtWho || '',
+        providerUsed: result.providerUsed,
+        keyNameUsed: result.keyNameUsed,
+      });
     }
-  } catch (e) {
-    console.error('Error in /api/parse-expense:', e);
-  }
 
-  return res.status(500).json({ error: 'AI parsing failed' });
+    // AI router returned no valid result
+    return res.status(500).json({
+      error: 'AI parsing failed',
+      details: result.error || 'No valid response from any AI provider'
+    });
+  } catch (e: any) {
+    console.error('Error in /api/parse-expense:', e);
+    return res.status(500).json({ error: 'AI parsing failed', details: e?.message });
+  }
 }

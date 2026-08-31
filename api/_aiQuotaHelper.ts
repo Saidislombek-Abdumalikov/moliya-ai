@@ -15,9 +15,9 @@ export interface QuotaCheckResult {
 export async function checkAiQuota(
   userId: string | undefined
 ): Promise<QuotaCheckResult> {
-  // Reject unauthenticated requests — don't allow unlimited free AI
+  // Allow guest users with a small limit (they haven't connected Telegram yet)
   if (!userId) {
-    return { allowed: false, isPremium: false, limit: 0, usedCount: 0, message: 'Authentication required' };
+    return { allowed: true, isPremium: false, limit: 10, usedCount: 0 };
   }
 
   try {

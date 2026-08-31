@@ -259,7 +259,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
         setRecording(false)
 
         try {
-          const parsed = await parseAIText(resultText, cards)
+          const parsed = await parseAIText(resultText, cards, userId || undefined)
           const localISOTime = (new Date(Date.now() - new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 16)
           setEntry(prev => ({
             ...prev,
