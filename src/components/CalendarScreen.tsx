@@ -474,8 +474,9 @@ export default function CalendarScreen({ onboarding }: Props) {
                 
                 // Get transactions for this specific day of the current month
                 const dayTxs = transactions.filter(tx => {
-                  const txMonth = tx.month || 7
-                  return tx.day === day && txMonth === currentMonth
+                  const txMonth = tx.month || (new Date().getMonth() + 1)
+                  const txYear = tx.year || new Date().getFullYear()
+                  return tx.day === day && txMonth === currentMonth && txYear === currentYear
                 })
 
                 return (

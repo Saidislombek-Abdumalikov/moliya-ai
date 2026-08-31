@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { supabase } from '../_supabaseClient.js';
 import { createSupabaseAuthSession } from '../_authHelper.js';
 
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8955141731:AAFfSMSEBE67-W5aIjQskVx-b34svyTyA08";
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 
 function verifyTelegramInitData(initData: string, botToken: string): { isValid: boolean; user?: any } {
   if (!botToken || !initData) {
@@ -72,9 +72,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    if (!tgUser && initDataUnsafe?.user) {
-      tgUser = initDataUnsafe.user;
-    }
+    // initDataUnsafe bypass removed for security — require valid HMAC signature
 
     if (!tgUser || !tgUser.id) {
       return res.status(400).json({ error: "Invalid Telegram authentication data" });

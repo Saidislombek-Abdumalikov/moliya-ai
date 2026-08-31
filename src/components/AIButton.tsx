@@ -106,13 +106,9 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
           }
 
           if (!parsed || !parsed.amount) {
-            parsed = {
-              type: 'expense',
-              amount: '50 000',
-              category: 'Oziq-ovqat',
-              title: 'Chek xarajati',
-              note: 'Rasm orqali kiritildi',
-            }
+            // Show error instead of silently injecting fake data
+            setStep('idle')
+            return
           }
 
           setSelectedType(parsed.type || 'expense')
@@ -121,9 +117,9 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
             ...prev,
             type: parsed.type || 'expense',
             amount: parsed.amount || '0',
-            note: parsed.note || 'Chek xarajati',
-            category: parsed.category || 'Oziq-ovqat',
-            title: parsed.title || 'Chek xarajati',
+            note: parsed.note || '',
+            category: parsed.category || 'Boshqa',
+            title: parsed.title || '',
             date: parsed.date || localISOTime,
             cardId: prev.cardId || 'cash',
           }))
@@ -167,22 +163,27 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
   }
 
   
+  const AI_FREE_LIMIT = 20
+
   const checkAndDeductAIQuery = (): boolean => {
     if (onboarding?.isPremium) return true
-    const currentCount = parseInt(localStorage.getItem('ai_query_count_v1') || '0', 10)
-    if (currentCount >= 5) {
+    // Monthly reset: use month-keyed counter
+    const now = new Date()
+    const monthKey = `ai_query_count_${now.getFullYear()}_${now.getMonth() + 1}`
+    const currentCount = parseInt(localStorage.getItem(monthKey) || '0', 10)
+    if (currentCount >= AI_FREE_LIMIT) {
       setAiError(
         (language === 'uz' || language === 'uz_cyrl')
           ? (language === 'uz_cyrl'
-              ? 'Free тарифда ойлик 5 та AI савол лимити тугади. Чексиз AI учун Premium га ўтинг!'
-              : 'Free tarifda oylik 5 ta AI savol limiti tugadi. Cheksiz AI uchun Premium ga o\'ting!')
+              ? `Free тарифда ойлик ${AI_FREE_LIMIT} та AI савол лимити тугади. Чексиз AI учун Premium га ўтинг!`
+              : `Free tarifda oylik ${AI_FREE_LIMIT} ta AI savol limiti tugadi. Cheksiz AI uchun Premium ga o'ting!`)
           : language === 'ru'
-          ? 'Лимит 5 ИИ-запросов исчерпан. Перейдите на Премиум!'
-          : 'Monthly limit of 5 AI queries reached. Upgrade to Premium!'
+          ? `Лимит ${AI_FREE_LIMIT} ИИ-запросов за месяц исчерпан. Перейдите на Премиум!`
+          : `Monthly limit of ${AI_FREE_LIMIT} AI queries reached. Upgrade to Premium!`
       )
       return false
     }
-    localStorage.setItem('ai_query_count_v1', (currentCount + 1).toString())
+    localStorage.setItem(monthKey, (currentCount + 1).toString())
     return true
   }
 

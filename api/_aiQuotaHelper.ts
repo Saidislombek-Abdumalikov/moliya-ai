@@ -15,9 +15,9 @@ export interface QuotaCheckResult {
 export async function checkAiQuota(
   userId: string | undefined
 ): Promise<QuotaCheckResult> {
-  // If no userId, allow as guest with default 20 limit
+  // Reject unauthenticated requests — don't allow unlimited free AI
   if (!userId) {
-    return { allowed: true, isPremium: false, limit: 20, usedCount: 0 };
+    return { allowed: false, isPremium: false, limit: 0, usedCount: 0, message: 'Authentication required' };
   }
 
   try {

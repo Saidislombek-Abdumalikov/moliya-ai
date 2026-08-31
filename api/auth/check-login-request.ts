@@ -42,6 +42,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           console.warn('[CHECK-LOGIN] Warning creating auth session:', e);
         }
 
+        // Mark request as consumed to prevent replay
+        await supabase.from('users').update({ login_request_status: 'CONSUMED' }).eq('id', `req_${cleanId}`);
+
         return res.status(200).json({
           status: 'VERIFIED',
           userId,

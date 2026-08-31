@@ -368,7 +368,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
         ...c,
         bank: newCardBank,
         number: newCardNumber,
-        name: newCardHolder.toUpperCase() || 'JASUR TOSHMATOV',
+        name: newCardHolder.toUpperCase() || 'FOYDALANUVCHI',
         brand: newCardBrand,
         balance: c.balance // preserve existing initial balance
       } : c)
@@ -391,7 +391,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
         id: newCardId,
         bank: newCardBank,
         number: newCardNumber,
-        name: newCardHolder.toUpperCase() || 'JASUR TOSHMATOV',
+        name: newCardHolder.toUpperCase() || 'FOYDALANUVCHI',
         balance: '0',
         brand: newCardBrand
       }

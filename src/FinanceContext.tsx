@@ -692,17 +692,19 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       date: tx.date || localISOTime
     };
 
-    const updated = [newTx, ...customTransactions];
-    setCustomTransactions(updated);
-    localStorage.setItem('user_transactions_v1', JSON.stringify(updated));
-    window.dispatchEvent(new Event('user_transactions_updated'));
-
-    if (userId) {
-      await supabase.from('users').update({
-        transactions: updated,
-        updated_at: new Date().toISOString()
-      }).eq('id', userId);
-    }
+    setCustomTransactions(prev => {
+      const updated = [newTx, ...prev];
+      localStorage.setItem('user_transactions_v1', JSON.stringify(updated));
+      window.dispatchEvent(new Event('user_transactions_updated'));
+  
+      if (userId) {
+        supabase.from('users').update({
+          transactions: updated,
+          updated_at: new Date().toISOString()
+        }).eq('id', userId);
+      }
+      return updated;
+    });
   };
 
   const deleteTransaction = async (id: string | number) => {
@@ -711,17 +713,19 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setDeletedTxIds(updatedDeleted);
     localStorage.setItem('user_deleted_tx_ids_v1', JSON.stringify(updatedDeleted));
 
-    const updatedTxs = customTransactions.filter(t => String(t.id) !== idStr);
-    setCustomTransactions(updatedTxs);
-    localStorage.setItem('user_transactions_v1', JSON.stringify(updatedTxs));
-    window.dispatchEvent(new Event('user_transactions_updated'));
-
-    if (userId) {
-      await supabase.from('users').update({
-        transactions: updatedTxs,
-        updated_at: new Date().toISOString()
-      }).eq('id', userId);
-    }
+    setCustomTransactions(prev => {
+      const updatedTxs = prev.filter(t => String(t.id) !== idStr);
+      localStorage.setItem('user_transactions_v1', JSON.stringify(updatedTxs));
+      window.dispatchEvent(new Event('user_transactions_updated'));
+  
+      if (userId) {
+        supabase.from('users').update({
+          transactions: updatedTxs,
+          updated_at: new Date().toISOString()
+        }).eq('id', userId);
+      }
+      return updatedTxs;
+    });
   };
 
   const clearAllData = async () => {

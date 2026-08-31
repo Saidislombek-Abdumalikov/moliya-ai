@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabase } from '../_supabaseClient.js';
 
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8955141731:AAFfSMSEBE67-W5aIjQskVx-b34svyTyA08";
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -11,6 +11,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  // Admin authentication
+  const ADMIN_KEY = process.env.ADMIN_SECRET_KEY;
+  if (!ADMIN_KEY || req.headers['x-admin-key'] !== ADMIN_KEY) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
 
   try {
     const { message, target } = req.body || {};

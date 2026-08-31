@@ -25,7 +25,7 @@ const translations = {
       planLabel: 'Joriy tarif',
       planName: 'Bepul',
       planPremium: 'Premium Pro 🌟',
-      usage: '10/50 AI savol',
+      usage: '10/20 AI savol',
       usagePremium: 'Cheksiz AI yordamchi',
       action: 'Premium →',
       actionPremium: 'Premium faol ✔️'
@@ -137,7 +137,7 @@ const translations = {
       planLabel: 'Жорий тариф',
       planName: 'Бепул',
       planPremium: 'Premium Pro 🌟',
-      usage: '10/50 AI савол',
+      usage: '10/20 AI савол',
       usagePremium: 'Чексиз AI ёрдамчи',
       action: 'Premium →',
       actionPremium: 'Premium фаол ✔️'
@@ -249,7 +249,7 @@ const translations = {
       planLabel: 'Текущий тариф',
       planName: 'Бесплатный',
       planPremium: 'Премиум Pro 🌟',
-      usage: '10/50 вопросов ИИ',
+      usage: '10/20 вопросов ИИ',
       usagePremium: 'Безлимитный ИИ-помощник',
       action: 'Премиум →',
       actionPremium: 'Премиум активен ✔️'
@@ -361,7 +361,7 @@ const translations = {
       planLabel: 'Current plan',
       planName: 'Free',
       planPremium: 'Premium Pro 🌟',
-      usage: '10/50 AI questions',
+      usage: '10/20 AI questions',
       usagePremium: 'Unlimited AI Advisor',
       action: 'Premium →',
       actionPremium: 'Premium Active ✔️'
@@ -473,9 +473,9 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
   const isPremium = onboarding?.monthlyIncome === undefined && onboarding?.monthlyGoal === 999999 ? true : (onboarding as any)?.isPremium || false
 
   // Profile data
-  const userName = (onboarding as any)?.name || 'Jasur Toshmatov'
-  const userPhone = (onboarding as any)?.phone || '+998 90 123 45 67'
-  const userTelegram = (onboarding as any)?.telegram || '@jasur_moliya'
+  const userName = (onboarding as any)?.name || ''
+  const userPhone = (onboarding as any)?.phone || ''
+  const userTelegram = (onboarding as any)?.telegram || ''
 
   // Modal States
   const [activeModal, setActiveModal] = useState<
@@ -845,7 +845,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
     const parts = nameStr.trim().split(' ')
     if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase()
     if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
-    return 'JT'
+    return 'M'
   }
 
   return (
@@ -956,7 +956,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
         const dynamicStats = [
           { val: activeMonths.toString(), label: t.stats[0].label },
           { val: totalTxCount.toString(), label: t.stats[1].label },
-          { val: isPremium ? (lang === 'uz' ? 'Cheksiz' : lang === 'uz_cyrl' ? 'Чексиз' : lang === 'ru' ? 'Безлимит' : 'Unlimited') : '10/50', label: t.stats[2].label },
+          { val: isPremium ? (lang === 'uz' ? 'Cheksiz' : lang === 'uz_cyrl' ? 'Чексиз' : lang === 'ru' ? 'Безлимит' : 'Unlimited') : '10/20', label: t.stats[2].label },
         ]
         return (
           <div style={{ padding: '0 20px 20px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>

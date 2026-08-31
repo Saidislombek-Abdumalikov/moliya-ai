@@ -4,6 +4,11 @@ import { supabase } from '../_supabaseClient.js';
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     if (req.method === 'GET') {
+      // Admin authentication
+      const ADMIN_KEY = process.env.ADMIN_SECRET_KEY;
+      if (!ADMIN_KEY || req.headers['x-admin-key'] !== ADMIN_KEY) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
       const now = new Date();
       
       const dayAgo = new Date(now);

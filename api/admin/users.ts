@@ -9,6 +9,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (req.method === 'OPTIONS') return res.status(200).end();
 
+  // Admin authentication
+  const ADMIN_KEY = process.env.ADMIN_SECRET_KEY;
+  if (!ADMIN_KEY || req.headers['x-admin-key'] !== ADMIN_KEY) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
   // 1. GET: Fetch all users from Supabase with device info
   if (req.method === 'GET') {
     try {
