@@ -48,34 +48,40 @@ export function maskApiKey(key: string): string {
 
 /**
  * Retrieves ordered list of active candidate AI keys from Supabase
+ * Handles both column schemas: (is_active + health_status) and (status)
  */
 export async function getCandidateAiKeys(): Promise<AiKeyRecord[]> {
   try {
+    // Fetch ALL keys — filter in code to handle both DB column schemas
     const { data: dbKeys, error } = await supabase
       .from('ai_keys')
       .select('*')
-      .eq('is_active', true)
-      .neq('health_status', 'invalid')
-      .order('priority', { ascending: true })
-      .order('last_used_at', { ascending: true, nullsFirst: true });
+      .order('priority', { ascending: true });
 
     if (!error && Array.isArray(dbKeys) && dbKeys.length > 0) {
-      return dbKeys.map((k: any) => ({
-        id: k.id,
-        name: k.name || 'AI Key',
-        provider: (k.provider === 'gemini' ? 'google' : (k.provider || 'google')) as any,
-        api_key: k.api_key,
-        model: k.model || 'gemini-3.7-flash',
-        priority: k.priority || 1,
-        status: (k.is_active ? (k.health_status === 'healthy' ? 'active' : k.health_status || 'active') : 'disabled') as any,
-        total_requests: k.total_requests || 0,
-        today_requests: k.today_requests || 0,
-        success_requests: k.total_requests || 0,
-        failed_requests: 0,
-        last_used_at: k.last_used_at,
-        created_at: k.created_at,
-        updated_at: k.updated_at
-      }));
+      return dbKeys
+        .filter((k: any) => {
+          // Support both schemas: is_active (bool) OR status (string)
+          const isActive = k.is_active !== undefined ? k.is_active : (k.status !== 'disabled');
+          const notInvalid = k.health_status !== 'invalid' && k.status !== 'invalid';
+          return isActive && notInvalid;
+        })
+        .map((k: any) => ({
+          id: k.id,
+          name: k.name || 'AI Key',
+          provider: (k.provider === 'gemini' ? 'google' : (k.provider || 'google')) as any,
+          api_key: k.api_key,
+          model: k.model || 'gemini-2.5-flash',
+          priority: k.priority || 1,
+          status: 'active' as any,
+          total_requests: k.total_requests || 0,
+          today_requests: k.today_requests || 0,
+          success_requests: k.success_requests || k.total_requests || 0,
+          failed_requests: k.failed_requests || 0,
+          last_used_at: k.last_used_at,
+          created_at: k.created_at,
+          updated_at: k.updated_at
+        }));
     }
   } catch (err) {
     console.warn('[AI_ROUTER] Supabase ai_keys query notice:', err);
@@ -88,7 +94,7 @@ export async function getCandidateAiKeys(): Promise<AiKeyRecord[]> {
   }
 
   // Fallback to environment variables if database is empty
-  const envKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || "";
+  const envKey = process.env.GEMINI_API_KEY || "";
   if (envKey) {
     return [
       {
@@ -96,7 +102,7 @@ export async function getCandidateAiKeys(): Promise<AiKeyRecord[]> {
         name: 'Default Environment Key',
         provider: 'google',
         api_key: envKey,
-        model: 'gemini-3.7-flash',
+        model: 'gemini-2.5-flash',
         priority: 1,
         status: 'active',
         total_requests: 0,
@@ -171,57 +177,55 @@ export async function recordKeyResult(
 }
 
 /**
- * Execute AI prompt with Google GenAI / REST API with model fallback
+ * Execute AI prompt with Google GenAI SDK — fast structured output
  */
 async function callGoogleGenAi(key: AiKeyRecord, prompt: string): Promise<any> {
   const cleanKey = (key.api_key || '').trim();
-  const candidateModels = [
-    (key.model || 'gemini-3.7-flash').trim(),
-    'gemini-3.7-flash',
-    'gemini-flash-latest',
-    'gemini-2.0-flash',
-    'gemini-1.5-flash',
-    'gemini-1.5-pro'
-  ];
-  const uniqueModels = [...new Set(candidateModels)];
+  const primaryModel = (key.model || 'gemini-2.5-flash').trim();
+  // Only try 2 models for speed: the key's configured model, then a known-good fallback
+  const models = primaryModel === 'gemini-2.5-flash'
+    ? ['gemini-2.5-flash', 'gemini-2.0-flash']
+    : [primaryModel, 'gemini-2.5-flash'];
 
-  let lastError = null;
+  let lastError: any = null;
+  const ai = new GoogleGenAI({ apiKey: cleanKey });
 
-  for (const modelName of uniqueModels) {
+  for (const modelName of models) {
     try {
-      const genUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${cleanKey}`;
-      const res = await fetch(genUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            responseMimeType: "application/json"
+      const response = await ai.models.generateContent({
+        model: modelName,
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              type: { type: Type.STRING },
+              amount: { type: Type.NUMBER },
+              category: { type: Type.STRING },
+              note: { type: Type.STRING },
+              title: { type: Type.STRING },
+              debtWho: { type: Type.STRING },
+            },
+            required: ["type", "amount", "category", "note"],
           }
-        })
+        }
       });
 
-      if (res.status === 200) {
-        const data = await res.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (text) return JSON.parse(text);
-      }
-
-      const errJson = await res.json().catch(() => ({}));
-      lastError = errJson.error?.message || `HTTP ${res.status}`;
-
-      if (res.status === 429 || res.status === 400 || res.status === 401 || res.status === 403) {
-        throw new Error(lastError);
+      if (response?.text) {
+        return JSON.parse(response.text);
       }
     } catch (e: any) {
-      lastError = e.message;
-      if (e.message?.includes('429') || e.message?.includes('API_KEY_INVALID') || e.message?.includes('401') || e.message?.includes('403')) {
+      lastError = e;
+      // If auth/quota error, don't try next model — rotate to next key
+      if (e.message?.includes('429') || e.message?.includes('API_KEY_INVALID') || 
+          e.message?.includes('401') || e.message?.includes('403')) {
         throw e;
       }
     }
   }
 
-  throw new Error(lastError || "Google AI call failed across model versions");
+  throw lastError || new Error("Google AI call failed");
 }
 
 /**
@@ -356,7 +360,7 @@ export async function testSpecificAiKey(keyData: {
 
   try {
     if (keyData.provider === 'google') {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${keyData.model || 'gemini-3.7-flash'}:generateContent?key=${cleanKey}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${keyData.model || 'gemini-2.5-flash'}:generateContent?key=${cleanKey}`;
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
