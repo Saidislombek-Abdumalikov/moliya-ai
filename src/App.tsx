@@ -159,8 +159,8 @@ export default function App() {
         onComplete={(result) => {
           updateOnboarding(result)
           setHasSampleData(false)
-          // NOTE: Do NOT set user_logged_in_v1 here — it should only be set
-          // by actual Telegram authentication in FinanceContext
+          localStorage.setItem('user_onboarding_completed_v1', 'true')
+          window.dispatchEvent(new Event('user_logged_in_updated'))
           setStage('app')
           setShowTour(true)
         }}

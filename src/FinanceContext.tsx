@@ -170,12 +170,12 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       localStorage.setItem('user_session_token_v1', data.sessionToken)
     }
     localStorage.setItem('user_logged_in_v1', 'true')
+    // Always mark onboarding as completed on successful auth —
+    // the user should never see onboarding again after logging in
+    localStorage.setItem('user_onboarding_completed_v1', 'true')
     if (data.onboarding) {
       setOnboarding(data.onboarding)
       localStorage.setItem('user_onboarding_v1', JSON.stringify(data.onboarding))
-      if (data.onboarding.completed) {
-        localStorage.setItem('user_onboarding_completed_v1', 'true')
-      }
     }
     const userCards = Array.isArray(data.cards) ? data.cards : []
     setCards(userCards)
@@ -305,6 +305,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
             setUserId(profileId)
             localStorage.setItem('user_id_v1', profileId)
             localStorage.setItem('user_logged_in_v1', 'true')
+            localStorage.setItem('user_onboarding_completed_v1', 'true')
             console.log('[AUTH] ✅ Restored from existing Supabase Auth session for:', profileId)
             window.dispatchEvent(new Event('user_logged_in_updated'))
             setIsAuthReady(true)
@@ -402,6 +403,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         const savedUserId = localStorage.getItem('user_id_v1')
         if (savedUserId && localStorage.getItem('user_logged_in_v1') === 'true') {
           setUserId(savedUserId)
+          localStorage.setItem('user_onboarding_completed_v1', 'true')
           console.log('[AUTH] Restored from localStorage fallback')
         }
       } catch (e) {
