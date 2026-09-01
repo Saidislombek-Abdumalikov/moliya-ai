@@ -557,29 +557,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (text.startsWith('/start') || text === '👤 Hisobim') {
       deleteTelegramMessage(chatId, message.message_id).catch(() => {});
 
-      const rawArg = text.replace('/start', '').trim();
-      const requestId = rawArg.replace('req_', '').trim();
+      // Only check login request if explicitly /start with an argument (e.g. /start req_xxxx)
+      if (text.startsWith('/start') && text.trim().length > 6) {
+        const rawArg = text.replace('/start', '').trim();
+        const requestId = rawArg.replace('req_', '').trim();
 
-      if (requestId && requestId.length >= 8) {
-        // Web login exchange flow
-        const verifyResult = await verifyAndMarkLoginRequest(requestId, fromUser);
-        const code = verifyResult?.exchangeCode;
-        const targetUrl = code ? `${appUrl}?code=${code}` : appUrl;
+        if (requestId && requestId.length >= 8 && !rawArg.includes(' ')) {
+          // Web login exchange flow
+          const verifyResult = await verifyAndMarkLoginRequest(requestId, fromUser);
+          const code = verifyResult?.exchangeCode;
+          const targetUrl = code ? `${appUrl}?code=${code}` : appUrl;
 
-        await sendTelegramMessage(
-          chatId,
-          `<b>Assalomu alaykum, ${fromUser.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
-          `✅ <b>Profilingiz tasdiqlandi!</b> 🚀\n` +
-          `Brauzeringizdagi Moliya AI sahifasiga qaytsangiz, profilingiz avtomatik ochiladi.\n\n` +
-          `👇 <i>Ilovaga kirish:</i>`,
-          {
-            inline_keyboard: [
-              [{ text: "📱 Moliya Mini App", web_app: { url: targetUrl } }],
-              [{ text: "🌐 Web Ilovaga o'tish", url: targetUrl }]
-            ]
-          }
-        );
-        return res.status(200).json({ status: 'ok' });
+          await sendTelegramMessage(
+            chatId,
+            `<b>Assalomu alaykum, ${fromUser.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
+            `✅ <b>Profilingiz tasdiqlandi!</b> 🚀\n` +
+            `Brauzeringizdagi Moliya AI sahifasiga qaytsangiz, profilingiz avtomatik ochiladi.\n\n` +
+            `👇 <i>Ilovaga kirish:</i>`,
+            {
+              inline_keyboard: [
+                [{ text: "📱 Moliya Mini App", web_app: { url: targetUrl } }]
+              ]
+            }
+          );
+          return res.status(200).json({ status: 'ok' });
+        }
       }
 
       // Check user plan & trial
