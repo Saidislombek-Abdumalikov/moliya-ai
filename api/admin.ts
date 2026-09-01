@@ -213,19 +213,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
         });
 
-        const safeKeys = keys.map(k => ({
+        const safeKeys = keys.map((k: any) => ({
           id: k.id,
           name: k.name || 'Unnamed Key',
-          provider: k.provider || 'google',
+          provider: k.provider || 'gemini',
           maskedKey: maskApiKey(k.api_key),
-          model: k.model || 'gemini-2.5-flash',
+          model: k.model || 'gemini-2.0-flash',
           priority: k.priority || 1,
-          status: k.status || 'active',
+          status: k.is_active === false ? 'disabled' : (k.health_status || k.status || 'active'),
+          isActive: k.is_active !== false,
+          healthStatus: k.health_status || 'healthy',
           totalRequests: k.total_requests || 0,
+          todayRequests: k.today_requests || 0,
           successRequests: k.success_requests || 0,
           failedRequests: k.failed_requests || 0,
           lastError: k.last_error || null,
-          lastErrorAt: k.last_error_at || null,
           lastUsedAt: k.last_used_at || null,
           createdAt: k.created_at || nowIso,
           updatedAt: k.updated_at || nowIso,
@@ -233,10 +235,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         const metrics = {
           totalKeys: safeKeys.length,
-          activeKeys: safeKeys.filter(k => k.status === 'active').length,
-          rateLimitedKeys: safeKeys.filter(k => k.status === 'rate_limited').length,
-          exhaustedKeys: safeKeys.filter(k => k.status === 'exhausted').length,
-          disabledKeys: safeKeys.filter(k => k.status === 'disabled').length,
+          activeKeys: safeKeys.filter((k: any) => k.isActive).length,
+          rateLimitedKeys: safeKeys.filter((k: any) => k.healthStatus === 'rate_limited').length,
+          exhaustedKeys: safeKeys.filter((k: any) => k.healthStatus === 'quota_exhausted').length,
+          disabledKeys: safeKeys.filter((k: any) => !k.isActive).length,
           requestsToday,
           requestsMonth,
           totalLogged: aiLogs?.length || 0
@@ -253,33 +255,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const { action, keyData, keyId } = req.body || {};
 
         if (action === 'create') {
-          const { name, provider, apiKey, model, priority, status } = keyData || {};
+          const { name, provider, apiKey, model, priority } = keyData || {};
           if (!apiKey || !provider) {
             return res.status(400).json({ error: 'Missing required apiKey or provider' });
           }
 
-          const newId = `key_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-          const record: AiKeyRecord = {
-            id: newId,
+          const trimmedKey = apiKey.trim();
+          const keyPreview = trimmedKey.length > 4 ? `••••••••••••${trimmedKey.slice(-4)}` : '••••••••';
+          const record = {
             name: name || `${provider.toUpperCase()} Key`,
-            provider: provider || 'google',
-            api_key: apiKey.trim(),
-            model: model || (provider === 'google' ? 'gemini-2.5-flash' : 'gpt-4o-mini'),
+            provider: provider === 'google' ? 'gemini' : (provider || 'gemini'),
+            api_key: trimmedKey,
+            key_preview: keyPreview,
+            model: model || (provider === 'google' || provider === 'gemini' ? 'gemini-2.0-flash' : 'gpt-4o-mini'),
             priority: Number(priority) || 1,
-            status: status || 'active',
+            is_active: true,
+            health_status: 'healthy',
             total_requests: 0,
-            success_requests: 0,
-            failed_requests: 0,
+            today_requests: 0,
             created_at: nowIso,
             updated_at: nowIso
           };
 
-          await supabase.from('ai_keys').insert(record);
+          const { data, error } = await supabase.from('ai_keys').insert(record).select();
+          if (error) {
+            console.error('[ADMIN] AI key insert error:', error);
+            return res.status(500).json({ error: 'Failed to save AI key', details: error.message });
+          }
 
           return res.status(200).json({
             success: true,
             message: 'AI kaliti muvaffaqiyatli saqlandi! 🔑',
-            key: { ...record, maskedKey: maskApiKey(record.api_key), api_key: undefined }
+            key: { ...(data?.[0] || record), api_key: undefined, maskedKey: keyPreview }
           });
         }
 
@@ -288,12 +295,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const updatePayload: any = { updated_at: nowIso };
 
           if (keyData.name) updatePayload.name = keyData.name;
-          if (keyData.provider) updatePayload.provider = keyData.provider;
+          if (keyData.provider) updatePayload.provider = keyData.provider === 'google' ? 'gemini' : keyData.provider;
           if (keyData.model) updatePayload.model = keyData.model;
           if (keyData.priority !== undefined) updatePayload.priority = Number(keyData.priority);
-          if (keyData.status) updatePayload.status = keyData.status;
+          if (keyData.isActive !== undefined) updatePayload.is_active = Boolean(keyData.isActive);
+          if (keyData.status !== undefined) {
+            updatePayload.is_active = keyData.status === 'active';
+            updatePayload.health_status = keyData.status === 'active' ? 'healthy' : keyData.status;
+          }
           if (keyData.apiKey && !keyData.apiKey.startsWith('••••')) {
-            updatePayload.api_key = keyData.apiKey.trim();
+            const trimmedKey = keyData.apiKey.trim();
+            updatePayload.api_key = trimmedKey;
+            updatePayload.key_preview = trimmedKey.length > 4 ? `••••••••••••${trimmedKey.slice(-4)}` : '••••••••';
           }
 
           await supabase.from('ai_keys').update(updatePayload).eq('id', keyId);
@@ -302,10 +315,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (action === 'toggle') {
           if (!keyId) return res.status(400).json({ error: 'Missing keyId' });
-          const { data: existing } = await supabase.from('ai_keys').select('status').eq('id', keyId).maybeSingle();
-          const nextStatus = existing?.status === 'active' ? 'disabled' : 'active';
-          await supabase.from('ai_keys').update({ status: nextStatus, updated_at: nowIso }).eq('id', keyId);
-          return res.status(200).json({ success: true, status: nextStatus });
+          const { data: existing } = await supabase.from('ai_keys').select('is_active').eq('id', keyId).maybeSingle();
+          const nextActive = !(existing?.is_active ?? true);
+          await supabase.from('ai_keys').update({ 
+            is_active: nextActive, 
+            health_status: nextActive ? 'healthy' : 'disabled',
+            updated_at: nowIso 
+          }).eq('id', keyId);
+          return res.status(200).json({ success: true, is_active: nextActive });
         }
 
         if (action === 'delete') {
