@@ -21,33 +21,248 @@ interface Props {
   onComplete: (result: OnboardingResult) => void
 }
 
-type StepIndex = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8
+type Step = 'welcome' | 'language' | 'goal' | 'ai_ask' | 'ai_nlp' | 'trial' | 'ready'
+
+const languages: { code: 'uz' | 'uz_cyrl' | 'ru' | 'en'; label: string; tag: string }[] = [
+  { code: 'uz', label: "O'zbekcha", tag: '🇺🇿' },
+  { code: 'ru', label: 'Русский', tag: '🇷🇺' },
+  { code: 'en', label: 'English', tag: '🇺🇸' },
+]
+
+const uzbekScriptTypes: { code: 'uz' | 'uz_cyrl'; label: string; sublabel: string }[] = [
+  { code: 'uz', label: 'Lotin', sublabel: 'A B C D' },
+  { code: 'uz_cyrl', label: 'Кирилл', sublabel: 'А Б В Г' },
+]
+
+const translations = {
+  uz: {
+    welcomeTitle: "Moliya AI ga xush kelibsiz!",
+    welcomeSub: "Shaxsiy moliyangizni sun'iy intellekt yordamida oson, tezkor va professional nazorat qiling.",
+    welcomeFeat1: "Ovozli va matnli xarajatlarni avtomatik qayd qilish",
+    welcomeFeat2: "To'liq oylik va yillik aqlli hisobotlar",
+    welcomeFeat3: "1 kunlik cheksiz Premium va AI imkoniyati",
+    selectLanguage: "Tilni tanlang",
+    selectLangSub: "Iltimos, dastur tilini tanlang",
+    setGoalTitle: "Moliyaviy maqsadingiz",
+    setGoalSub: "Har oy qancha mablag' tejashni rejalashtiryapsiz?",
+    starter: "Boshlang'ich",
+    recommended: "Tavsiya etiladi",
+    intensive: "Intensiv",
+    perMonth: "so'm / oyiga",
+    customGoal: "O'zim kiritaman",
+    otherAmount: "Boshqa summa",
+    enterAmount: "Summani kiriting",
+    saveGoalBtn: "Maqsadni saqlash →",
+    continueBtn: "Davom etish →",
+    askAiTitle: "Pulingiz haqida savol bering",
+    askAiSub: "Sun'iy intellekt xarajatlaringizni tahlil qilib, aqlli maslahatlar beradi.",
+    aiQuestions: [
+      "Pulim qayerga ketyapti?",
+      "Oyiga qancha tejay olaman?",
+      "Eng ko'p sarflagan kategoriyam?"
+    ],
+    aiPulseBadge: "✨ AI Yordamchi",
+    aiNlpTitle: "Tabiiy tilda AI tahlil",
+    aiNlpSub: "Oddiy so'zlar bilan yozsangiz yoki ovoz yuborsangiz yetarli",
+    aiNlpEx1Label: "Siz yozasiz:",
+    aiNlpEx1Text: "«Taksiga 25 000 so'm»",
+    aiNlpEx1Res: "🚕 Transport • 25 000 so'm",
+    aiNlpEx2Label: "Siz yozasiz:",
+    aiNlpEx2Text: "«14 mln maosh tushdi»",
+    aiNlpEx2Res: "💼 Maosh • 14 000 000 so'm",
+    trialBadge: "Maxsus Sovg'a",
+    trialTitle: "1 Kunlik Cheksiz Premium",
+    trialSub: "Yangi foydalanuvchimiz bo'lganingiz uchun 24 soat davomida barcha AI imkoniyatlari mutlaqo bepul va cheksiz berildi!",
+    trialItem1: "⚡ Cheksiz AI so'rovlar (5 ta chegarasisiz)",
+    trialItem2: "📊 To'liq tahlil va chek skanerlash",
+    trialItem3: "⏳ Sinovdan so'ng: kuniga 5 ta bepul AI so'rovi",
+    readyTitle: "Boshlashga tayyorsiz!",
+    readySub: "Moliya AI sizning moliyaviy barqarorligingiz va oqilona tejamkorligingiz yo'lida doimo yordamchi bo'ladi.",
+    readyAction: "Dasturni Boshlash 🚀",
+  },
+  uz_cyrl: {
+    welcomeTitle: "Moliya AI га хуш келибсиз!",
+    welcomeSub: "Шахсий молиянгизни сунъий интеллект ёрдамида осон, тезкор ва профессионал назорат қилинг.",
+    welcomeFeat1: "Овозли ва матнли харажатларни автоматик қайд қилиш",
+    welcomeFeat2: "Тўлиқ ойлик ва йиллик ақлли ҳисоботлар",
+    welcomeFeat3: "1 кунлик чексиз Premium ва AI имконияти",
+    selectLanguage: "Тилни танланг",
+    selectLangSub: "Илтимос, дастур тилини танланг",
+    setGoalTitle: "Молиявий мақсадингиз",
+    setGoalSub: "Ҳар ой қанча маблағ тежашни режалаштиряпсиз?",
+    starter: "Бошланғич",
+    recommended: "Тавсия этилади",
+    intensive: "Интенсив",
+    perMonth: "сўм / ойига",
+    customGoal: "Ўзим киритаман",
+    otherAmount: "Бошқа сумма",
+    enterAmount: "Суммани киритинг",
+    saveGoalBtn: "Мақсадни сақлаш →",
+    continueBtn: "Давом этиш →",
+    askAiTitle: "Пулингиз ҳақида савол беринг",
+    askAiSub: "Сунъий интеллект харажатларингизни таҳлил қилиб, ақлли маслаҳатлар беради.",
+    aiQuestions: [
+      "Пулим қаерга кетяпти?",
+      "Ойига қанча тежай оламан?",
+      "Энг кўп сарфлаган категоришам?"
+    ],
+    aiPulseBadge: "✨ AI Ёрдамчи",
+    aiNlpTitle: "Табиий тилда AI таҳлил",
+    aiNlpSub: "Оддий сўзлар билан ёзсангиз ёки овоз юборсангиз етарли",
+    aiNlpEx1Label: "Сиз ёзасиз:",
+    aiNlpEx1Text: "«Таксига 25 000 сўм»",
+    aiNlpEx1Res: "🚕 Транспорт • 25 000 сўм",
+    aiNlpEx2Label: "Сиз ёзасиз:",
+    aiNlpEx2Text: "«14 млн маош тушди»",
+    aiNlpEx2Res: "💼 Маош • 14 000 000 сўм",
+    trialBadge: "Махсус Совға",
+    trialTitle: "1 Кунлик Чексиз Premium",
+    trialSub: "Янги фойдаланувчимиз бўлганингиз учун 24 соат давомида барча AI имкониятлари мутлақо бепул ва чексиз берилди!",
+    trialItem1: "⚡ Чексиз AI сўровлар (5 та чегарасисиз)",
+    trialItem2: "📊 Тўлиқ таҳлил ва чек сканерлаш",
+    trialItem3: "⏳ Синовдан сўнг: кунига 5 та бепул AI сўрови",
+    readyTitle: "Бошлашга тайёрсиз!",
+    readySub: "Moliya AI сизнинг молиявий барқарорлигингиз ва оқилона тежамкорлигингиз йўлида доимо ёрдамчи бўлади.",
+    readyAction: "Дастурни Бошлаш 🚀",
+  },
+  ru: {
+    welcomeTitle: "Добро пожаловать в Moliya AI!",
+    welcomeSub: "Управляйте личными финансами легко, быстро и профессионально с помощью искусственного интеллекта.",
+    welcomeFeat1: "Автоматический учет расходов голосом и текстом",
+    welcomeFeat2: "Полные ежемесячные и годовые умные отчеты",
+    welcomeFeat3: "1 день безлимитного Premium и AI бесплатно",
+    selectLanguage: "Выберите язык",
+    selectLangSub: "Пожалуйста, выберите язык приложения",
+    setGoalTitle: "Финансовая цель",
+    setGoalSub: "Сколько вы планируете экономить каждый месяц?",
+    starter: "Начальный",
+    recommended: "Рекомендуемый",
+    intensive: "Интенсивный",
+    perMonth: "сум / месяц",
+    customGoal: "Ввести вручную",
+    otherAmount: "Другая сумма",
+    enterAmount: "Введите сумму",
+    saveGoalBtn: "Сохранить цель →",
+    continueBtn: "Продолжить →",
+    askAiTitle: "Задайте вопрос о деньгах",
+    askAiSub: "Искусственный интеллект проанализирует ваши расходы и даст умные советы.",
+    aiQuestions: [
+      "Куда уходят мои деньги?",
+      "Сколько я могу сэкономить в месяц?",
+      "Моя самая затратная категория?"
+    ],
+    aiPulseBadge: "✨ ИИ Помощник",
+    aiNlpTitle: "ИИ анализ на естественном языке",
+    aiNlpSub: "Просто напишите или отправьте голосовое сообщение",
+    aiNlpEx1Label: "Вы говорите:",
+    aiNlpEx1Text: "«Такси 25 000 сум»",
+    aiNlpEx1Res: "🚕 Транспорт • 25 000 сум",
+    aiNlpEx2Label: "Вы говорите:",
+    aiNlpEx2Text: "«Зарплата 14 млн»",
+    aiNlpEx2Res: "💼 Зарплата • 14 000 000 сум",
+    trialBadge: "Специальный Подарок",
+    trialTitle: "1 День Безлимитного Premium",
+    trialSub: "Как новому пользователю, вам предоставлен 24-часовой бесплатный и безлимитный доступ ко всем функциям ИИ!",
+    trialItem1: "⚡ Безлимитные запросы ИИ (без ограничения 5/день)",
+    trialItem2: "📊 Полная аналитика и сканирование чеков",
+    trialItem3: "⏳ После теста: 5 бесплатных ИИ запросов в день",
+    readyTitle: "Все готово к старту!",
+    readySub: "Moliya AI станет вашим надежным помощником на пути к финансовой стабильности.",
+    readyAction: "Запустить Приложение 🚀",
+  },
+  en: {
+    welcomeTitle: "Welcome to Moliya AI!",
+    welcomeSub: "Manage your personal finances effortlessly, swiftly, and professionally with Artificial Intelligence.",
+    welcomeFeat1: "Automatic expense tracking via voice & text",
+    welcomeFeat2: "Comprehensive monthly & annual smart analytics",
+    welcomeFeat3: "1-Day Unlimited Premium & AI Trial included",
+    selectLanguage: "Choose Language",
+    selectLangSub: "Please select your preferred language",
+    setGoalTitle: "Your Savings Goal",
+    setGoalSub: "How much would you like to save each month?",
+    starter: "Starter",
+    recommended: "Recommended",
+    intensive: "Intensive",
+    perMonth: "UZS / month",
+    customGoal: "Custom Amount",
+    otherAmount: "Other Amount",
+    enterAmount: "Enter amount",
+    saveGoalBtn: "Save Goal →",
+    continueBtn: "Continue →",
+    askAiTitle: "Ask AI About Your Money",
+    askAiSub: "Artificial Intelligence analyzes your finances and delivers smart insights.",
+    aiQuestions: [
+      "Where does my money go?",
+      "How much can I save monthly?",
+      "What is my top spending category?"
+    ],
+    aiPulseBadge: "✨ AI Assistant",
+    aiNlpTitle: "Natural Language AI Tracking",
+    aiNlpSub: "Simply type or speak naturally to record expenses",
+    aiNlpEx1Label: "You say:",
+    aiNlpEx1Text: "“Taxi 25,000 UZS”",
+    aiNlpEx1Res: "🚕 Transport • 25,000 UZS",
+    aiNlpEx2Label: "You say:",
+    aiNlpEx2Text: "“Salary 14 mln”",
+    aiNlpEx2Res: "💼 Salary • 14,000,000 UZS",
+    trialBadge: "Special Welcome Gift",
+    trialTitle: "1-Day Unlimited Premium Trial",
+    trialSub: "As a new user, you receive 24 hours of unlimited AI queries and VIP features completely free!",
+    trialItem1: "⚡ Unlimited AI queries (no 5/day limit)",
+    trialItem2: "📊 Full reports & receipt scanner",
+    trialItem3: "⏳ After trial: 5 free AI queries daily",
+    readyTitle: "You're All Set!",
+    readySub: "Moliya AI will accompany you every step towards financial peace of mind.",
+    readyAction: "Launch App 🚀",
+  }
+}
+
+const goalOptions = [
+  { amount: 1000000, labelKey: 'starter', icon: '🌱' },
+  { amount: 3000000, labelKey: 'recommended', icon: '⭐', isPopular: true },
+  { amount: 5000000, labelKey: 'intensive', icon: '🚀' },
+]
 
 export default function Onboarding({ onComplete }: Props) {
   const { onboarding, updateOnboarding } = useFinance()
-  const [step, setStep] = useState<StepIndex>(1)
-  const [selectedLang, setSelectedLang] = useState<'uz' | 'uz_cyrl' | 'ru' | 'en'>(
+  const [step, setStep] = useState<Step>('welcome')
+  const [language, setLanguage] = useState<'uz' | 'uz_cyrl' | 'ru' | 'en'>(
     onboarding?.language || 'uz'
   )
+  const [selectedGoal, setSelectedGoal] = useState<number>(3000000)
+  const [customGoalInput, setCustomGoalInput] = useState('')
+  const [isCustomGoal, setIsCustomGoal] = useState(false)
+  const [selectedAiQuestion, setSelectedAiQuestion] = useState<number | null>(null)
 
-  const handleNext = () => {
-    if (step < 8) {
-      setStep((prev) => (prev + 1) as StepIndex)
+  const t = translations[language] || translations.uz
+
+  const stepsList: Step[] = ['welcome', 'language', 'goal', 'ai_ask', 'ai_nlp', 'trial', 'ready']
+  const currentStepIndex = stepsList.indexOf(step) + 1
+
+  const goNext = () => {
+    const nextIdx = stepsList.indexOf(step) + 1
+    if (nextIdx < stepsList.length) {
+      setStep(stepsList[nextIdx])
     } else {
-      handleFinish()
+      finish()
     }
   }
 
-  const handleBack = () => {
-    if (step > 1) {
-      setStep((prev) => (prev - 1) as StepIndex)
+  const goBack = () => {
+    const prevIdx = stepsList.indexOf(step) - 1
+    if (prevIdx >= 0) {
+      setStep(stepsList[prevIdx])
     }
   }
 
-  const handleFinish = () => {
+  const finish = () => {
+    const goal = isCustomGoal
+      ? parseInt(customGoalInput.replace(/\D/g, ''), 10) || 3000000
+      : selectedGoal
+
     const result: OnboardingResult = {
-      language: selectedLang,
-      monthlyGoal: 1000000,
+      language,
+      monthlyGoal: goal,
       firstExpense: null,
       monthlyIncome: 0,
       baseBalance: 0,
@@ -64,314 +279,554 @@ export default function Onboarding({ onComplete }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col justify-between bg-[#0F172A] text-white select-none overflow-hidden">
-      {/* Background Decorative Gradients */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-96 h-96 bg-indigo-600/20 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-96 h-96 bg-emerald-600/15 rounded-full blur-3xl pointer-events-none" />
+    <div
+      style={{
+        position: 'relative',
+        minHeight: '100dvh',
+        width: '100%',
+        maxWidth: 430,
+        margin: '0 auto',
+        background: '#FAF8FE',
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'space-between',
+        padding: '24px 20px 32px',
+        boxSizing: 'border-box',
+        fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+      }}
+    >
+      {/* Top Navigation & Progress Segmented Bar */}
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+          {currentStepIndex > 1 ? (
+            <button
+              onClick={goBack}
+              style={{
+                width: 36, height: 36, borderRadius: 12, border: '1.5px solid #E8E3F8',
+                background: '#FFFFFF', color: '#1E1A3C', fontSize: 16, fontWeight: 700,
+                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center'
+              }}
+            >
+              ←
+            </button>
+          ) : <div style={{ width: 36 }} />}
 
-      {/* Top Header & Progress Dots */}
-      <header className="relative z-10 px-6 pt-12 pb-4 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center font-bold text-sm shadow-lg shadow-indigo-500/25">
-            M
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{
+              width: 24, height: 24, borderRadius: 8,
+              background: 'linear-gradient(135deg, #7C3AED, #5B21B6)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: '#FFFFFF', fontSize: 12, fontWeight: 800
+            }}>
+              M
+            </div>
+            <span style={{ fontSize: 14, fontWeight: 700, color: '#1E1A3C' }}>Moliya AI</span>
           </div>
-          <span className="font-bold tracking-tight text-slate-100">Moliya AI</span>
+
+          <span style={{ fontSize: 12, fontWeight: 600, color: '#8B82C4' }}>
+            {currentStepIndex} / {stepsList.length}
+          </span>
         </div>
 
-        {/* Progress Pills */}
-        <div className="flex items-center gap-1.5">
-          {[1, 2, 3, 4, 5, 6, 7, 8].map((s) => (
+        {/* Segmented Progress Indicators */}
+        <div style={{ display: 'flex', gap: 4, marginBottom: 24 }}>
+          {stepsList.map((s, idx) => (
             <div
               key={s}
-              className={`h-1.5 rounded-full transition-all duration-300 ${
-                s === step
-                  ? 'w-6 bg-indigo-500 shadow-sm shadow-indigo-500/50'
-                  : s < step
-                  ? 'w-2 bg-indigo-400/60'
-                  : 'w-2 bg-slate-700'
-              }`}
+              style={{
+                flex: 1, height: 4, borderRadius: 2,
+                background: idx < currentStepIndex ? '#7C3AED' : '#E8E3F8',
+                transition: 'background 0.3s ease'
+              }}
             />
           ))}
         </div>
-      </header>
+      </div>
 
-      {/* Main Step Cards (Animated Transitions) */}
-      <main className="relative z-10 flex-1 flex flex-col justify-center px-6 py-4 max-w-md mx-auto w-full">
+      {/* Main Step Cards (Original Design & Palette) */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
         <AnimatePresence mode="wait">
-          {/* ── STEP 1: Welcome ── */}
-          {step === 1 && (
+          {/* ── STEP 1: Welcome (Moliya AI Imkoniyatlari) ── */}
+          {step === 'welcome' && (
             <motion.div
-              key="step1"
-              initial={{ opacity: 0, y: 16 }}
+              key="welcome"
+              initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -16 }}
-              className="text-center"
+              exit={{ opacity: 0, y: -12 }}
+              style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}
             >
-              <div className="w-24 h-24 mx-auto mb-6 rounded-3xl bg-gradient-to-tr from-indigo-500/20 to-violet-500/20 border border-indigo-500/30 flex items-center justify-center text-4xl shadow-xl shadow-indigo-500/10">
+              <div style={{
+                width: 72, height: 72, borderRadius: 24,
+                background: 'linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 32, boxShadow: '0 8px 24px rgba(124, 58, 237, 0.3)'
+              }}>
                 ✨
               </div>
-              <h1 className="text-2xl font-bold text-slate-50 mb-3">
-                Moliya AI ga xush kelibsiz!
+              <h1 style={{ fontSize: 22, fontWeight: 800, color: '#1E1A3C', letterSpacing: -0.4, margin: 0 }}>
+                {t.welcomeTitle}
               </h1>
-              <p className="text-slate-400 text-sm leading-relaxed mb-6">
-                Shaxsiy moliyangizni sun'iy intellekt yordamida oson, tezkor va professional nazorat qiling.
+              <p style={{ fontSize: 13, color: '#8B82C4', lineHeight: 1.5, margin: 0, maxWidth: 320 }}>
+                {t.welcomeSub}
               </p>
-              <div className="p-4 rounded-2xl bg-slate-800/60 border border-slate-700/60 text-left text-xs text-slate-300 space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-indigo-400 font-bold">✓</span> Ovozli va matnli xarajatlarni avtomatik hisoblash
+
+              <div style={{ width: '100%', marginTop: 8, display: 'flex', flexDirection: 'column', gap: 10, textAlign: 'left' }}>
+                <div style={{
+                  padding: '12px 14px', borderRadius: 16, background: '#FFFFFF',
+                  border: '1.5px solid #E8E3F8', display: 'flex', alignItems: 'center', gap: 10,
+                  boxShadow: '0 2px 8px rgba(124, 58, 237, 0.04)'
+                }}>
+                  <span style={{ fontSize: 18 }}>🎙️</span>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: '#1E1A3C' }}>{t.welcomeFeat1}</span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-indigo-400 font-bold">✓</span> To'liq oylik va yillik tahlillar
+                <div style={{
+                  padding: '12px 14px', borderRadius: 16, background: '#FFFFFF',
+                  border: '1.5px solid #E8E3F8', display: 'flex', alignItems: 'center', gap: 10,
+                  boxShadow: '0 2px 8px rgba(124, 58, 237, 0.04)'
+                }}>
+                  <span style={{ fontSize: 18 }}>📈</span>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: '#1E1A3C' }}>{t.welcomeFeat2}</span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-indigo-400 font-bold">✓</span> 1 kunlik cheksiz Premium va AI imkoniyati
+                <div style={{
+                  padding: '12px 14px', borderRadius: 16, background: '#FFFFFF',
+                  border: '1.5px solid #E8E3F8', display: 'flex', alignItems: 'center', gap: 10,
+                  boxShadow: '0 2px 8px rgba(124, 58, 237, 0.04)'
+                }}>
+                  <span style={{ fontSize: 18 }}>👑</span>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: '#7C3AED' }}>{t.welcomeFeat3}</span>
                 </div>
               </div>
             </motion.div>
           )}
 
-          {/* ── STEP 2: Language Selection ── */}
-          {step === 2 && (
+          {/* ── STEP 2: Language Selection (Original) ── */}
+          {step === 'language' && (
             <motion.div
-              key="step2"
-              initial={{ opacity: 0, y: 16 }}
+              key="language"
+              initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -16 }}
+              exit={{ opacity: 0, y: -12 }}
+              style={{ display: 'flex', flexDirection: 'column', gap: 14 }}
             >
-              <div className="text-center mb-6">
-                <div className="text-3xl mb-2">🌐</div>
-                <h2 className="text-xl font-bold text-slate-50">Dastur tilini tanlang</h2>
-                <p className="text-slate-400 text-xs mt-1">O'zingizga qulay tilni tanlang</p>
+              <div style={{ textAlign: 'center', marginBottom: 4 }}>
+                <h1 style={{ fontSize: 21, fontWeight: 700, color: '#1E1A3C', letterSpacing: -0.3, margin: '0 0 4px' }}>
+                  {t.selectLanguage}
+                </h1>
+                <p style={{ fontSize: 13, color: '#8B82C4', margin: 0 }}>
+                  {t.selectLangSub}
+                </p>
               </div>
 
-              <div className="space-y-2.5">
-                {[
-                  { code: 'uz' as const, label: "O'zbekcha (Lotin)", flag: '🇺🇿' },
-                  { code: 'uz_cyrl' as const, label: 'Ўзбекча (Кирилл)', flag: '🇺🇿' },
-                  { code: 'ru' as const, label: 'Русский', flag: '🇷🇺' },
-                  { code: 'en' as const, label: 'English', flag: '🇺🇸' }
-                ].map((l) => (
-                  <button
-                    key={l.code}
-                    onClick={() => setSelectedLang(l.code)}
-                    className={`w-full p-4 rounded-2xl border transition-all flex items-center justify-between ${
-                      selectedLang === l.code
-                        ? 'bg-indigo-600/20 border-indigo-500 text-white shadow-lg shadow-indigo-500/10'
-                        : 'bg-slate-800/40 border-slate-700/60 text-slate-300 hover:bg-slate-800/70'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <span className="text-2xl">{l.flag}</span>
-                      <span className="font-semibold text-sm">{l.label}</span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {languages.map((l) => {
+                  const isSelected = language === l.code || (l.code === 'uz' && language === 'uz_cyrl')
+                  return (
+                    <div key={l.code} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <button
+                        onClick={() => {
+                          if (l.code === 'uz') {
+                            setLanguage('uz')
+                          } else {
+                            setLanguage(l.code)
+                          }
+                        }}
+                        style={{
+                          width: '100%', padding: '15px 16px', borderRadius: 16,
+                          border: isSelected ? '1.5px solid #7C3AED' : '1.5px solid #E8E3F8',
+                          background: isSelected ? '#F3EEFF' : '#FFFFFF',
+                          cursor: 'pointer', fontFamily: 'inherit',
+                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                          boxShadow: isSelected ? '0 4px 12px rgba(124, 58, 237, 0.12)' : '0 2px 6px rgba(0,0,0,0.02)',
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <span style={{ fontSize: 22 }}>{l.tag}</span>
+                          <span style={{ fontSize: 15, fontWeight: 700, color: isSelected ? '#7C3AED' : '#1E1A3C' }}>
+                            {l.label}
+                          </span>
+                        </div>
+                        {isSelected && (
+                          <div style={{
+                            width: 20, height: 20, borderRadius: 10, background: '#7C3AED',
+                            color: '#FFFFFF', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center'
+                          }}>
+                            ✓
+                          </div>
+                        )}
+                      </button>
+
+                      {/* Uzbek script sub-selector (Lotin vs Кирилл) */}
+                      {l.code === 'uz' && isSelected && (
+                        <div style={{ display: 'flex', gap: 8, paddingLeft: 12 }}>
+                          {uzbekScriptTypes.map((st) => (
+                            <button
+                              key={st.code}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setLanguage(st.code)
+                              }}
+                              style={{
+                                flex: 1, padding: '8px 10px', borderRadius: 12,
+                                border: language === st.code ? '1.5px solid #7C3AED' : '1.5px solid #E8E3F8',
+                                background: language === st.code ? '#FFFFFF' : '#FAF8FE',
+                                color: language === st.code ? '#7C3AED' : '#8B82C4',
+                                fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
+                              }}
+                            >
+                              <span>{st.label}</span>
+                              <span style={{ fontSize: 10, opacity: 0.7 }}>({st.sublabel})</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                    {selectedLang === l.code && (
-                      <div className="w-5 h-5 rounded-full bg-indigo-500 flex items-center justify-center text-xs">
-                        ✓
+                  )
+                })}
+              </div>
+            </motion.div>
+          )}
+
+          {/* ── STEP 3: Moliyaviy Maqsadingiz (Original) ── */}
+          {step === 'goal' && (
+            <motion.div
+              key="goal"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -12 }}
+              style={{ display: 'flex', flexDirection: 'column', gap: 14 }}
+            >
+              <div style={{ textAlign: 'center', marginBottom: 4 }}>
+                <h1 style={{ fontSize: 21, fontWeight: 700, color: '#1E1A3C', letterSpacing: -0.3, margin: '0 0 4px' }}>
+                  {t.setGoalTitle}
+                </h1>
+                <p style={{ fontSize: 13, color: '#8B82C4', margin: 0 }}>
+                  {t.setGoalSub}
+                </p>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {goalOptions.map((opt) => {
+                  const isSelected = !isCustomGoal && selectedGoal === opt.amount
+                  return (
+                    <button
+                      key={opt.amount}
+                      onClick={() => {
+                        setSelectedGoal(opt.amount)
+                        setIsCustomGoal(false)
+                      }}
+                      style={{
+                        width: '100%', padding: '14px 16px', borderRadius: 16,
+                        border: isSelected ? '1.5px solid #7C3AED' : '1.5px solid #E8E3F8',
+                        background: isSelected ? '#F3EEFF' : '#FFFFFF',
+                        cursor: 'pointer', fontFamily: 'inherit',
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        boxShadow: isSelected ? '0 4px 12px rgba(124, 58, 237, 0.12)' : '0 2px 6px rgba(0,0,0,0.02)',
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <span style={{ fontSize: 22 }}>{opt.icon}</span>
+                        <div style={{ textAlign: 'left' }}>
+                          <div style={{ fontSize: 15, fontWeight: 700, color: isSelected ? '#7C3AED' : '#1E1A3C' }}>
+                            {opt.amount.toLocaleString('en-US').replace(/,/g, ' ')} {t.perMonth}
+                          </div>
+                          <div style={{ fontSize: 11, color: '#8B82C4', fontWeight: 600 }}>
+                            {t[opt.labelKey as keyof typeof t] as string}
+                          </div>
+                        </div>
                       </div>
-                    )}
+                      {isSelected && (
+                        <div style={{
+                          width: 20, height: 20, borderRadius: 10, background: '#7C3AED',
+                          color: '#FFFFFF', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center'
+                        }}>
+                          ✓
+                        </div>
+                      )}
+                    </button>
+                  )
+                })}
+
+                {/* Custom Goal Option */}
+                <button
+                  onClick={() => setIsCustomGoal(true)}
+                  style={{
+                    width: '100%', padding: '14px 16px', borderRadius: 16,
+                    border: isCustomGoal ? '1.5px solid #7C3AED' : '1.5px solid #E8E3F8',
+                    background: isCustomGoal ? '#F3EEFF' : '#FFFFFF',
+                    cursor: 'pointer', fontFamily: 'inherit',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    boxShadow: isCustomGoal ? '0 4px 12px rgba(124, 58, 237, 0.12)' : '0 2px 6px rgba(0,0,0,0.02)',
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <span style={{ fontSize: 22 }}>✏️</span>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: isCustomGoal ? '#7C3AED' : '#1E1A3C' }}>
+                      {t.customGoal}
+                    </span>
+                  </div>
+                  {isCustomGoal && (
+                    <div style={{
+                      width: 20, height: 20, borderRadius: 10, background: '#7C3AED',
+                      color: '#FFFFFF', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center'
+                    }}>
+                      ✓
+                    </div>
+                  )}
+                </button>
+
+                {isCustomGoal && (
+                  <input
+                    type="number"
+                    placeholder={t.enterAmount}
+                    value={customGoalInput}
+                    onChange={(e) => setCustomGoalInput(e.target.value)}
+                    autoFocus
+                    style={{
+                      width: '100%', padding: '12px 16px', borderRadius: 14,
+                      border: '1.5px solid #7C3AED', background: '#FFFFFF',
+                      fontSize: 14, fontWeight: 700, color: '#1E1A3C',
+                      outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit'
+                    }}
+                  />
+                )}
+              </div>
+            </motion.div>
+          )}
+
+          {/* ── STEP 4: Pulingiz Haqida Savol Bering (Original) ── */}
+          {step === 'ai_ask' && (
+            <motion.div
+              key="ai_ask"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -12 }}
+              style={{ display: 'flex', flexDirection: 'column', gap: 14, textAlign: 'center' }}
+            >
+              <div style={{
+                width: 64, height: 64, borderRadius: 22,
+                background: 'linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: '0 8px 24px rgba(124, 58, 237, 0.35)', margin: '0 auto'
+              }}>
+                <span style={{ fontSize: 28 }}>🤖</span>
+              </div>
+
+              <div>
+                <h1 style={{ fontSize: 21, fontWeight: 700, color: '#1E1A3C', letterSpacing: -0.3, margin: '0 0 4px' }}>
+                  {t.askAiTitle}
+                </h1>
+                <p style={{ fontSize: 13, color: '#8B82C4', lineHeight: 1.4, margin: 0 }}>
+                  {t.askAiSub}
+                </p>
+              </div>
+
+              <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+                {t.aiQuestions.map((q, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => setSelectedAiQuestion(idx)}
+                    style={{
+                      width: '100%', padding: '13px 16px', borderRadius: 16,
+                      border: selectedAiQuestion === idx ? '1.5px solid #7C3AED' : '1.5px solid #E8E3F8',
+                      background: selectedAiQuestion === idx ? '#F3EEFF' : '#FFFFFF',
+                      color: selectedAiQuestion === idx ? '#7C3AED' : '#1E1A3C',
+                      fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+                      textAlign: 'left', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      boxShadow: '0 2px 6px rgba(0,0,0,0.02)', transition: 'all 0.2s ease'
+                    }}
+                  >
+                    <span>💬 {q}</span>
+                    <span style={{ color: '#7C3AED', fontWeight: 700 }}>→</span>
                   </button>
                 ))}
               </div>
             </motion.div>
           )}
 
-          {/* ── STEP 3: What Moliya Does ── */}
-          {step === 3 && (
+          {/* ── STEP 5: Tabiiy Tilda Yozish (New) ── */}
+          {step === 'ai_nlp' && (
             <motion.div
-              key="step3"
-              initial={{ opacity: 0, y: 16 }}
+              key="ai_nlp"
+              initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -16 }}
-              className="text-center"
+              exit={{ opacity: 0, y: -12 }}
+              style={{ display: 'flex', flexDirection: 'column', gap: 14, textAlign: 'center' }}
             >
-              <div className="w-20 h-20 mx-auto mb-6 rounded-3xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-3xl">
-                💰
-              </div>
-              <h2 className="text-xl font-bold text-slate-50 mb-3">
-                Daromad va xarajatlar nazorati
-              </h2>
-              <p className="text-slate-400 text-sm leading-relaxed mb-6">
-                Har bir sarflangan so'm va kelgan daromadlarni bir joyda xavfsiz tartibga soling.
-              </p>
-              <div className="grid grid-cols-2 gap-3 text-left">
-                <div className="p-3.5 rounded-2xl bg-slate-800/60 border border-slate-700/60">
-                  <div className="text-emerald-400 font-bold text-xs mb-1">🟢 Daromadlar</div>
-                  <div className="text-slate-300 text-xs">Oylik, biznes, keshbek va sovg'alar</div>
-                </div>
-                <div className="p-3.5 rounded-2xl bg-slate-800/60 border border-slate-700/60">
-                  <div className="text-rose-400 font-bold text-xs mb-1">🔴 Xarajatlar</div>
-                  <div className="text-slate-300 text-xs">Bozor, taksi, ovqat, ijara va kiyim</div>
-                </div>
-              </div>
-            </motion.div>
-          )}
-
-          {/* ── STEP 4: AI Natural Language Tracking ── */}
-          {step === 4 && (
-            <motion.div
-              key="step4"
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -16 }}
-            >
-              <div className="text-center mb-6">
-                <div className="w-16 h-16 mx-auto mb-3 rounded-2xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-2xl">
-                  🤖
-                </div>
-                <h2 className="text-xl font-bold text-slate-50">Tabiiy tilda AI tahlil</h2>
-                <p className="text-slate-400 text-xs mt-1">Oddiy so'zlar bilan yozsangiz yetarli</p>
+              <div style={{
+                width: 64, height: 64, borderRadius: 22,
+                background: 'linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: '0 8px 24px rgba(124, 58, 237, 0.35)', margin: '0 auto'
+              }}>
+                <span style={{ fontSize: 28 }}>💬</span>
               </div>
 
-              <div className="space-y-3">
-                <div className="p-3 rounded-2xl bg-slate-800/70 border border-slate-700 text-xs">
-                  <div className="text-slate-400 mb-1">Siz yozasiz:</div>
-                  <div className="text-slate-100 font-medium italic">"Bugun taksiga 30 ming sarfladim"</div>
-                  <div className="mt-2 pt-2 border-t border-slate-700/80 flex items-center justify-between text-indigo-300">
-                    <span>🚕 Transport</span>
-                    <span className="font-bold text-slate-100">30 000 so'm</span>
+              <div>
+                <h1 style={{ fontSize: 21, fontWeight: 700, color: '#1E1A3C', letterSpacing: -0.3, margin: '0 0 4px' }}>
+                  {t.aiNlpTitle}
+                </h1>
+                <p style={{ fontSize: 13, color: '#8B82C4', lineHeight: 1.4, margin: 0 }}>
+                  {t.aiNlpSub}
+                </p>
+              </div>
+
+              <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 10, textAlign: 'left' }}>
+                <div style={{
+                  padding: '14px', borderRadius: 16, background: '#FFFFFF',
+                  border: '1.5px solid #E8E3F8', boxShadow: '0 2px 8px rgba(124, 58, 237, 0.04)'
+                }}>
+                  <div style={{ fontSize: 11, color: '#8B82C4', fontWeight: 600, marginBottom: 2 }}>
+                    {t.aiNlpEx1Label}
+                  </div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: '#1E1A3C', marginBottom: 8 }}>
+                    {t.aiNlpEx1Text}
+                  </div>
+                  <div style={{
+                    paddingTop: 8, borderTop: '1px solid #F3EEFF',
+                    fontSize: 12, fontWeight: 700, color: '#7C3AED', display: 'flex', alignItems: 'center', gap: 6
+                  }}>
+                    {t.aiNlpEx1Res}
                   </div>
                 </div>
 
-                <div className="p-3 rounded-2xl bg-slate-800/70 border border-slate-700 text-xs">
-                  <div className="text-slate-400 mb-1">Siz yozasiz:</div>
-                  <div className="text-slate-100 font-medium italic">"14 mln maosh tushdi"</div>
-                  <div className="mt-2 pt-2 border-t border-slate-700/80 flex items-center justify-between text-emerald-400">
-                    <span>💼 Maosh</span>
-                    <span className="font-bold text-slate-100">14 000 000 so'm</span>
+                <div style={{
+                  padding: '14px', borderRadius: 16, background: '#FFFFFF',
+                  border: '1.5px solid #E8E3F8', boxShadow: '0 2px 8px rgba(124, 58, 237, 0.04)'
+                }}>
+                  <div style={{ fontSize: 11, color: '#8B82C4', fontWeight: 600, marginBottom: 2 }}>
+                    {t.aiNlpEx2Label}
+                  </div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: '#1E1A3C', marginBottom: 8 }}>
+                    {t.aiNlpEx2Text}
+                  </div>
+                  <div style={{
+                    paddingTop: 8, borderTop: '1px solid #F3EEFF',
+                    fontSize: 12, fontWeight: 700, color: '#10B981', display: 'flex', alignItems: 'center', gap: 6
+                  }}>
+                    {t.aiNlpEx2Res}
                   </div>
                 </div>
               </div>
             </motion.div>
           )}
 
-          {/* ── STEP 5: Dashboard Overview ── */}
-          {step === 5 && (
+          {/* ── STEP 6: 1 Kunlik Cheksiz Premium Sinovi (New) ── */}
+          {step === 'trial' && (
             <motion.div
-              key="step5"
-              initial={{ opacity: 0, y: 16 }}
+              key="trial"
+              initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -16 }}
-              className="text-center"
+              exit={{ opacity: 0, y: -12 }}
+              style={{ display: 'flex', flexDirection: 'column', gap: 14, textAlign: 'center', alignItems: 'center' }}
             >
-              <div className="w-20 h-20 mx-auto mb-6 rounded-3xl bg-violet-500/20 border border-violet-500/30 flex items-center justify-center text-3xl">
-                📊
-              </div>
-              <h2 className="text-xl font-bold text-slate-50 mb-3">
-                Qulay Dashboard va Tahlillar
-              </h2>
-              <p className="text-slate-400 text-sm leading-relaxed mb-6">
-                Barcha kartalaringiz, oylik hisobotlar va toifalar bo'yicha sarflangan mablag'lar diagrammalarda.
-              </p>
-              <div className="p-4 rounded-2xl bg-slate-800/60 border border-slate-700/60 text-left text-xs text-slate-300 space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-violet-400 font-bold">💳</span> Uzcard, Humo, Visa kartalari
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-violet-400 font-bold">📈</span> Oylik sarf-xarajat statistikasi
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-violet-400 font-bold">📄</span> PDF va Excel hisobotlarni yuklab olish
-                </div>
-              </div>
-            </motion.div>
-          )}
-
-          {/* ── STEP 6: Voice Recording ── */}
-          {step === 6 && (
-            <motion.div
-              key="step6"
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -16 }}
-              className="text-center"
-            >
-              <div className="w-24 h-24 mx-auto mb-6 rounded-full bg-gradient-to-tr from-rose-500/20 to-orange-500/20 border border-rose-500/30 flex items-center justify-center text-4xl shadow-xl shadow-rose-500/10">
-                🎙
-              </div>
-              <h2 className="text-xl font-bold text-slate-50 mb-3">
-                OvozYozman — Ovoz bilan kiritish
-              </h2>
-              <p className="text-slate-400 text-sm leading-relaxed mb-6">
-                Telegram botda yoki dastur ichida ovozli xabar yuboring — AI bir necha soniyada xarajatni to'g'ri qayd qiladi.
-              </p>
-              <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-300 font-medium">
-                ⚡ Hech qanday murakkab shakllarsiz — faqat gapiring!
-              </div>
-            </motion.div>
-          )}
-
-          {/* ── STEP 7: 1-Day Unlimited Premium Trial ── */}
-          {step === 7 && (
-            <motion.div
-              key="step7"
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -16 }}
-              className="text-center"
-            >
-              <div className="w-24 h-24 mx-auto mb-6 rounded-3xl bg-gradient-to-tr from-amber-500/20 to-yellow-500/20 border border-amber-500/40 flex items-center justify-center text-4xl shadow-xl shadow-amber-500/15">
+              <div style={{
+                width: 72, height: 72, borderRadius: 24,
+                background: 'linear-gradient(135deg, #F59E0B 0%, #D97706 100%)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: '0 8px 24px rgba(245, 158, 11, 0.35)', fontSize: 32
+              }}>
                 👑
               </div>
-              <span className="inline-block px-3 py-1 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-bold uppercase tracking-wider mb-2">
-                Maxsus Sovg'a
-              </span>
-              <h2 className="text-xl font-bold text-slate-50 mb-3">
-                1 Kunlik Cheksiz Premium Sinovi
-              </h2>
-              <p className="text-slate-400 text-sm leading-relaxed mb-6">
-                Yangi foydalanuvchimiz bo'lganingiz uchun sizga 24 soat davomida barcha AI imkoniyatlari mutlaqo bepul va cheksiz berildi!
-              </p>
-              <div className="p-3 rounded-2xl bg-slate-800/60 border border-slate-700/60 text-xs text-slate-300 text-left space-y-1.5">
-                <div>⚡ <b>Cheksiz AI so'rovlar</b> (kunlik 5 ta cheklovisiz)</div>
-                <div>📊 <b>To'liq tahlil va chek skaner</b></div>
-                <div>⏳ Sinovdan so'ng: kuniga 5 ta bepul AI so'rovi</div>
+
+              <div>
+                <span style={{
+                  display: 'inline-block', padding: '4px 10px', borderRadius: 20,
+                  background: '#FEF3C7', color: '#B45309', fontSize: 11, fontWeight: 800,
+                  textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6
+                }}>
+                  {t.trialBadge}
+                </span>
+                <h1 style={{ fontSize: 21, fontWeight: 800, color: '#1E1A3C', letterSpacing: -0.3, margin: '0 0 4px' }}>
+                  {t.trialTitle}
+                </h1>
+                <p style={{ fontSize: 13, color: '#8B82C4', lineHeight: 1.4, margin: 0, maxWidth: 320 }}>
+                  {t.trialSub}
+                </p>
+              </div>
+
+              <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 8, textAlign: 'left' }}>
+                <div style={{
+                  padding: '12px 14px', borderRadius: 16, background: '#FFFFFF',
+                  border: '1.5px solid #E8E3F8', fontSize: 13, fontWeight: 600, color: '#1E1A3C'
+                }}>
+                  {t.trialItem1}
+                </div>
+                <div style={{
+                  padding: '12px 14px', borderRadius: 16, background: '#FFFFFF',
+                  border: '1.5px solid #E8E3F8', fontSize: 13, fontWeight: 600, color: '#1E1A3C'
+                }}>
+                  {t.trialItem2}
+                </div>
+                <div style={{
+                  padding: '12px 14px', borderRadius: 16, background: '#FFFFFF',
+                  border: '1.5px solid #E8E3F8', fontSize: 12, fontWeight: 500, color: '#8B82C4'
+                }}>
+                  {t.trialItem3}
+                </div>
               </div>
             </motion.div>
           )}
 
-          {/* ── STEP 8: Ready to Launch! ── */}
-          {step === 8 && (
+          {/* ── STEP 7: Boshlashga Tayyorsiz! (New) ── */}
+          {step === 'ready' && (
             <motion.div
-              key="step8"
-              initial={{ opacity: 0, y: 16 }}
+              key="ready"
+              initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -16 }}
-              className="text-center"
+              exit={{ opacity: 0, y: -12 }}
+              style={{ display: 'flex', flexDirection: 'column', gap: 14, textAlign: 'center', alignItems: 'center' }}
             >
-              <div className="w-24 h-24 mx-auto mb-6 rounded-3xl bg-gradient-to-tr from-emerald-500/20 to-teal-500/20 border border-emerald-500/30 flex items-center justify-center text-4xl shadow-xl shadow-emerald-500/10">
+              <div style={{
+                width: 72, height: 72, borderRadius: 24,
+                background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: '0 8px 24px rgba(16, 185, 129, 0.35)', fontSize: 34
+              }}>
                 🚀
               </div>
-              <h2 className="text-2xl font-bold text-slate-50 mb-3">
-                Boshlashga tayyorsiz!
-              </h2>
-              <p className="text-slate-400 text-sm leading-relaxed mb-6">
-                Moliya AI sizning moliyaviy barqarorligingiz va oqilona tejamkorligingiz yo'lida doimo yordamchi bo'ladi.
-              </p>
-              <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-semibold">
-                ✨ Keling, birinchi xarajatingizni birgalikda kiritamiz!
+
+              <div>
+                <h1 style={{ fontSize: 22, fontWeight: 800, color: '#1E1A3C', letterSpacing: -0.3, margin: '0 0 6px' }}>
+                  {t.readyTitle}
+                </h1>
+                <p style={{ fontSize: 13, color: '#8B82C4', lineHeight: 1.5, margin: 0, maxWidth: 320 }}>
+                  {t.readySub}
+                </p>
+              </div>
+
+              <div style={{
+                width: '100%', padding: '16px', borderRadius: 18,
+                background: '#ECFDF5', border: '1.5px solid #A7F3D0',
+                color: '#065F46', fontSize: 13, fontWeight: 600, textAlign: 'center'
+              }}>
+                ✨ Birinchi xarajatingizni birgalikda kiritamiz!
               </div>
             </motion.div>
           )}
         </AnimatePresence>
-      </main>
+      </div>
 
-      {/* Bottom Navigation Buttons */}
-      <footer className="relative z-10 p-6 flex items-center gap-3 max-w-md mx-auto w-full">
-        {step > 1 && (
-          <button
-            onClick={handleBack}
-            className="px-5 py-3.5 rounded-2xl bg-slate-800 border border-slate-700 text-slate-300 font-semibold text-sm hover:bg-slate-700 transition"
-          >
-            ←
-          </button>
-        )}
+      {/* Bottom Action Button (Original Purple Gradient) */}
+      <div style={{ paddingTop: 16 }}>
         <button
-          onClick={handleNext}
-          className="flex-1 py-3.5 rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600 text-white font-bold text-sm shadow-lg shadow-indigo-500/25 hover:from-indigo-500 hover:to-violet-500 transition active:scale-[0.98]"
+          onClick={goNext}
+          style={{
+            width: '100%', padding: '15px', borderRadius: 16, border: 'none',
+            background: 'linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%)',
+            color: '#FFFFFF', fontSize: 15, fontWeight: 700,
+            cursor: 'pointer', fontFamily: 'inherit',
+            boxShadow: '0 6px 20px rgba(124, 58, 237, 0.35)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+            transition: 'transform 0.1s ease',
+          }}
         >
-          {step === 8 ? "Dasturni Boshlash 🚀" : "Davom etish →"}
+          <span>{step === 'ready' ? t.readyAction : (step === 'goal' ? t.saveGoalBtn : t.continueBtn)}</span>
         </button>
-      </footer>
+      </div>
     </div>
   )
 }
