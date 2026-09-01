@@ -270,8 +270,10 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
             })
             if (res.ok) {
               const data = await res.json()
-              if (data.access_token && data.refresh_token && data.userId) {
-                await setSupabaseSession(data.access_token, data.refresh_token)
+              if (data.userId) {
+                if (data.access_token && data.refresh_token) {
+                  await setSupabaseSession(data.access_token, data.refresh_token)
+                }
                 persistAuthState({
                   userId: data.userId,
                   sessionToken: data.sessionToken,

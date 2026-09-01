@@ -54,8 +54,10 @@ Return JSON:
       
       try {
         const ai = new GoogleGenAI({ apiKey: key.api_key.trim() });
+        // Use gemini-2.0-flash for speed (no thinking overhead), fallback to key's configured model
+        const modelToUse = 'gemini-2.0-flash';
         const response = await ai.models.generateContent({
-          model: key.model || 'gemini-2.5-flash',
+          model: modelToUse,
           contents: prompt,
           config: {
             responseMimeType: "application/json",
