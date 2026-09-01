@@ -162,13 +162,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         phone: restrictionCheck?.phone || '',
         telegram: tgUsername,
         telegramId: tgId,
+        session_token: sessionToken,
+        session_expires_at: expiresAt,
         registration_status: 'completed'
       };
 
       await supabase.from('users').update({
-        session_token: sessionToken,
-        session_expires_at: expiresAt,
-        registration_status: 'completed',
         onboarding: updatedOnboarding,
         updated_at: now.toISOString()
       }).eq('id', userId);

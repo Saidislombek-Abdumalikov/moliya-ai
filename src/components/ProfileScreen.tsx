@@ -472,10 +472,17 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
   // Global premium state (can read from onboarding, default false)
   const isPremium = onboarding?.monthlyIncome === undefined && onboarding?.monthlyGoal === 999999 ? true : (onboarding as any)?.isPremium || false
 
-  // Profile data
-  const userName = (onboarding as any)?.name || ''
+  // Profile data from Telegram WebApp and onboarding
+  const tgUser = (typeof window !== 'undefined' && (window as any).Telegram?.WebApp?.initDataUnsafe?.user) || null
+  const tgPhotoUrl = tgUser?.photo_url || null
+  const tgFirstName = tgUser?.first_name || ''
+  const tgLastName = tgUser?.last_name || ''
+  const tgFullName = [tgFirstName, tgLastName].filter(Boolean).join(' ')
+
+  const userName = (onboarding as any)?.name || tgFullName || 'Moliya Foydalanuvchisi'
   const userPhone = (onboarding as any)?.phone || ''
-  const userTelegram = (onboarding as any)?.telegram || ''
+  const userTelegram = (onboarding as any)?.telegram || (tgUser?.username ? `@${tgUser.username}` : '')
+  const telegramId = (onboarding as any)?.telegramId || (tgUser?.id ? String(tgUser.id) : '')
 
   // Modal States
   const [activeModal, setActiveModal] = useState<
@@ -841,7 +848,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
       if (tg?.close) {
         tg.close();
       } else {
-        window.location.href = 'https://t.me/MoliyaAI_Bot';
+        window.location.href = 'https://t.me/moliya_v2bot';
       }
     }, 1000);
   }
@@ -894,15 +901,30 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
             width: 64, height: 64, borderRadius: 20, background: '#EDE9FE',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontSize: 22, fontWeight: 800, color: '#7C3AED', flexShrink: 0,
-            boxShadow: 'inset 0 1px 3px rgba(124, 58, 237, 0.1)'
+            boxShadow: 'inset 0 1px 3px rgba(124, 58, 237, 0.1)',
+            overflow: 'hidden', border: '1.5px solid #E4E1F4'
           }}>
-            {getInitials(userName)}
+            {tgPhotoUrl ? (
+              <img
+                src={tgPhotoUrl}
+                alt={userName}
+                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }}
+              />
+            ) : (
+              getInitials(userName)
+            )}
           </div>
-          <div style={{ flex: 1 }}>
-            <h3 style={{ fontSize: 17, fontWeight: 700, color: '#1E1A3C', marginBottom: 2 }}>{userName}</h3>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h3 style={{ fontSize: 17, fontWeight: 700, color: '#1E1A3C', marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {userName}
+            </h3>
             {userPhone && (
-              <p style={{ fontSize: 12.5, color: '#64748B', marginBottom: 3, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}>
+              <p style={{ fontSize: 12.5, color: '#059669', marginBottom: 4, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5 }}>
                 <span>📞</span> <span>{userPhone}</span>
+                <span style={{ fontSize: 10, background: '#ECFDF5', color: '#059669', border: '1px solid #A7F3D0', padding: '1px 5px', borderRadius: 6, fontWeight: 700 }}>
+                  ✅ Tasdiqlangan
+                </span>
               </p>
             )}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
@@ -911,9 +933,9 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                   {userTelegram.startsWith('@') ? userTelegram : '@' + userTelegram}
                 </span>
               )}
-              {onboarding?.telegramId && (
+              {telegramId && (
                 <span style={{ fontSize: 11, background: '#F1F5F9', color: '#64748B', padding: '2px 8px', borderRadius: 8, fontWeight: 600 }}>
-                  ID: {onboarding.telegramId}
+                  ID: {telegramId}
                 </span>
               )}
             </div>

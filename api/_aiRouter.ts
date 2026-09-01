@@ -71,7 +71,7 @@ export async function getCandidateAiKeys(): Promise<AiKeyRecord[]> {
           name: k.name || 'AI Key',
           provider: (k.provider === 'gemini' ? 'google' : (k.provider || 'google')) as any,
           api_key: k.api_key,
-          model: k.model || 'gemini-2.5-flash',
+          model: k.model || 'gemini-3.5-flash',
           priority: k.priority || 1,
           status: 'active' as any,
           total_requests: k.total_requests || 0,
@@ -102,7 +102,7 @@ export async function getCandidateAiKeys(): Promise<AiKeyRecord[]> {
         name: 'Default Environment Key',
         provider: 'google',
         api_key: envKey,
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3.5-flash',
         priority: 1,
         status: 'active',
         total_requests: 0,
@@ -181,11 +181,9 @@ export async function recordKeyResult(
  */
 async function callGoogleGenAi(key: AiKeyRecord, prompt: string): Promise<any> {
   const cleanKey = (key.api_key || '').trim();
-  const primaryModel = (key.model || 'gemini-2.5-flash').trim();
-  // Only try 2 models for speed: the key's configured model, then a known-good fallback
-  const models = primaryModel === 'gemini-2.5-flash'
-    ? ['gemini-2.5-flash', 'gemini-2.0-flash']
-    : [primaryModel, 'gemini-2.5-flash'];
+  const primaryModel = (key.model || 'gemini-3.5-flash').trim();
+  const candidateModels = ['gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest'];
+  const models = [primaryModel, ...candidateModels.filter(m => m !== primaryModel)];
 
   let lastError: any = null;
   const ai = new GoogleGenAI({ apiKey: cleanKey });

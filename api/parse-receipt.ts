@@ -48,7 +48,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 - title: store name or main item (e.g. 'Korzinka', 'Makro', 'Taksi')
 - note: summary of purchased items`;
 
-    const visionModels = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+    const visionModels = ['gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest'];
 
     // Try each key with model fallback
     for (const key of googleKeys) {

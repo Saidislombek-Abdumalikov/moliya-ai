@@ -91,6 +91,22 @@ async function deleteTelegramMessage(chatId: number | string, messageId: number 
   }
 }
 
+async function setLastTempMsgId(userId: string, msgId: number | string | undefined) {
+  if (!userId || !msgId) return;
+  try {
+    const { data: u } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
+    const updatedOb = { ...(u?.onboarding || {}), last_temp_msg_id: Number(msgId) };
+    await supabase.from('users').update({ onboarding: updatedOb }).eq('id', userId);
+  } catch {}
+}
+
+async function cleanTemporaryBotMessages(chatId: number | string, user: any) {
+  const prevMsgId = user?.onboarding?.last_temp_msg_id;
+  if (prevMsgId) {
+    deleteTelegramMessage(chatId, prevMsgId).catch(() => {});
+  }
+}
+
 function getMainAppKeyboard(appUrl: string) {
   return {
     keyboard: [
@@ -187,10 +203,11 @@ async function resolveCanonicalUser(fromUser: any) {
       existing.device_info?.restricted
     );
 
-    // Check if registered (has verified phone)
+    // Check if registered (has verified phone or completed registration)
     const isRegistered = Boolean(
-      existing.phone &&
-      (existing.registration_status === 'completed' || existing.onboarding?.registration_status === 'completed')
+      (existing.phone && String(existing.phone).trim() !== '' && existing.phone !== '—') ||
+      existing.registration_status === 'completed' ||
+      existing.onboarding?.registration_status === 'completed'
     );
 
     return { user: existing, userId, isBlocked, isRegistered, isNew: false };
@@ -212,7 +229,6 @@ async function resolveCanonicalUser(fromUser: any) {
     telegram: username,
     telegram_id: tgId,
     phone: null,
-    registration_status: 'pending_phone',
     language: 'uz',
     is_premium: false,
     ai_limit: 5,
@@ -225,7 +241,10 @@ async function resolveCanonicalUser(fromUser: any) {
     updated_at: now
   };
 
-  await supabase.from('users').upsert(newPayload, { onConflict: 'id' });
+  const { error: upErr } = await supabase.from('users').upsert(newPayload, { onConflict: 'id' });
+  if (upErr) {
+    console.error('[BOT] Error creating initial user record:', upErr.message);
+  }
 
   return { user: newPayload, userId, isBlocked: false, isRegistered: false, isNew: true };
 }
@@ -239,7 +258,10 @@ async function completePhoneRegistration(fromUser: any, phoneNumber: string) {
   const fullName = [fromUser.first_name, fromUser.last_name].filter(Boolean).join(' ') || 'Foydalanuvchi';
   const username = fromUser.username ? `@${fromUser.username}` : null;
 
-  const { data: existing } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
+  const { data: existing, error: fetchErr } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
+  if (fetchErr) {
+    console.error('[BOT] Error fetching existing user on registration:', fetchErr.message);
+  }
 
   const updatedOnboarding = {
     ...(existing?.onboarding || {}),
@@ -260,7 +282,6 @@ async function completePhoneRegistration(fromUser: any, phoneNumber: string) {
     telegram: username,
     telegram_id: tgId,
     phone: phoneNumber,
-    registration_status: 'completed',
     is_premium: true, // 1-Day Unlimited Premium Trial!
     premium_expires_at: trialEndsAt,
     ai_limit: null, // Unlimited for trial
@@ -269,7 +290,10 @@ async function completePhoneRegistration(fromUser: any, phoneNumber: string) {
     updated_at: now.toISOString()
   };
 
-  await supabase.from('users').upsert(updatePayload, { onConflict: 'id' });
+  const { error: saveErr } = await supabase.from('users').upsert(updatePayload, { onConflict: 'id' });
+  if (saveErr) {
+    console.error('[BOT] Error saving verified phone registration:', saveErr.message);
+  }
   return updatePayload;
 }
 
@@ -350,7 +374,6 @@ const CATEGORY_EMOJIS: Record<string, string> = {
   'Hamkasb': '👥'
 };
 
-// ── AI Parser Helper with Uzbek Normalization ────────────────
 async function parseTextWithAi(text: string) {
   // Pre-process and normalize Uzbek abbreviations & multipliers (e.g. 14 mln, 50k, 2 yarim mln)
   const normalized = normalizeUzbekFinancialText(text);
@@ -358,46 +381,54 @@ async function parseTextWithAi(text: string) {
   const candidateKeys = await getCandidateAiKeys();
   const envKey = process.env.GEMINI_API_KEY;
   const keysToTry = candidateKeys.length > 0
-    ? candidateKeys.map(k => k.api_key)
-    : (envKey ? [envKey] : []);
+    ? candidateKeys
+    : (envKey ? [{ id: 'env_gemini', api_key: envKey, name: 'ENV Key', model: 'gemini-3.5-flash' }] : []);
 
   if (keysToTry.length === 0) {
     return null;
   }
 
   const prompt = buildUzbekFinancialAiPrompt(normalized.normalizedText);
+  const activeModels = ['gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest'];
 
-  for (const key of keysToTry) {
-    try {
-      const ai = new GoogleGenAI({ apiKey: key.trim() });
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.0-flash',
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              type: { type: Type.STRING },
-              amount: { type: Type.NUMBER },
-              category: { type: Type.STRING },
-              note: { type: Type.STRING },
-              title: { type: Type.STRING }
-            },
-            required: ["type", "amount", "category", "note"]
+  for (const keyObj of keysToTry) {
+    const rawApiKey = (keyObj.api_key || '').trim();
+    if (!rawApiKey) continue;
+
+    for (const modelToUse of activeModels) {
+      try {
+        const ai = new GoogleGenAI({ apiKey: rawApiKey });
+        const response = await ai.models.generateContent({
+          model: modelToUse,
+          contents: prompt,
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                type: { type: Type.STRING },
+                amount: { type: Type.NUMBER },
+                category: { type: Type.STRING },
+                note: { type: Type.STRING },
+                title: { type: Type.STRING }
+              },
+              required: ["type", "amount", "category", "note"]
+            }
+          }
+        });
+
+        if (response?.text) {
+          const rawParsed = JSON.parse(response.text);
+          const validated = validateAiFinancialOutput(rawParsed, normalized);
+          if (validated.isValid) {
+            recordKeyResult(keyObj.id, true).catch(() => {});
+            return validated;
           }
         }
-      });
-
-      if (response?.text) {
-        const rawParsed = JSON.parse(response.text);
-        const validated = validateAiFinancialOutput(rawParsed, normalized);
-        if (validated.isValid) {
-          return validated;
-        }
+      } catch (e: any) {
+        recordKeyResult(keyObj.id, false, e?.message, 'temporary').catch(() => {});
+        console.warn(`[BOT] Gemini parse error with key on ${modelToUse}, trying next...`, e?.message);
       }
-    } catch (e) {
-      console.warn('[BOT] Gemini parse error with key, trying next...', e);
     }
   }
 
@@ -556,6 +587,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ── Command: /start or 👤 Hisobim (For Registered Users) ─────
     if (text.startsWith('/start') || text === '👤 Hisobim') {
       deleteTelegramMessage(chatId, message.message_id).catch(() => {});
+      await cleanTemporaryBotMessages(chatId, user);
 
       // Only check login request if explicitly /start with an argument (e.g. /start req_xxxx)
       if (text.startsWith('/start') && text.trim().length > 6) {
@@ -568,7 +600,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const code = verifyResult?.exchangeCode;
           const targetUrl = code ? `${appUrl}?code=${code}` : appUrl;
 
-          await sendTelegramMessage(
+          const sent = await sendTelegramMessage(
             chatId,
             `<b>Assalomu alaykum, ${fromUser.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
             `✅ <b>Profilingiz tasdiqlandi!</b> 🚀\n` +
@@ -580,6 +612,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               ]
             }
           );
+          if (sent?.result?.message_id) await setLastTempMsgId(userId, sent.result.message_id);
           return res.status(200).json({ status: 'ok' });
         }
       }
@@ -609,15 +642,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         `• <b>Chek skaner:</b> Xarid cheki rasmini yuboring 📸\n\n` +
         `👇 <i>Quyidagi menyu tugmalaridan foydalaning:</i>`;
 
-      await sendTelegramMessage(chatId, welcomeText, getMainAppKeyboard(appUrl));
+      const sent = await sendTelegramMessage(chatId, welcomeText, getMainAppKeyboard(appUrl));
+      if (sent?.result?.message_id) await setLastTempMsgId(userId, sent.result.message_id);
       return res.status(200).json({ status: 'ok' });
     }
 
     // ── Command: /app or 📱 Mini App ──────────────────────────────
     if (text.startsWith('/app') || text === '📱 Mini App') {
       deleteTelegramMessage(chatId, message.message_id).catch(() => {});
+      await cleanTemporaryBotMessages(chatId, user);
 
-      await sendTelegramMessage(
+      const sent = await sendTelegramMessage(
         chatId,
         `📱 <b>Moliya Mini App</b>\n\nBarcha hisob-kitoblar, kartalar, grafiklar va hisobotlar bir joyda! 👇`,
         {
@@ -626,12 +661,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           ]
         }
       );
+      if (sent?.result?.message_id) await setLastTempMsgId(userId, sent.result.message_id);
       return res.status(200).json({ status: 'ok' });
     }
 
     // ── Command: /help or /yordam or ❓ Yordam ───────────────────
     if (text.startsWith('/help') || text.startsWith('/yordam') || text === '❓ Yordam') {
       deleteTelegramMessage(chatId, message.message_id).catch(() => {});
+      await cleanTemporaryBotMessages(chatId, user);
 
       const helpText =
         `ℹ️ <b>Moliya AI Botdan foydalanish yo'riqnomasi</b>\n\n` +
@@ -654,13 +691,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         `• <b>📊 Statistika</b> — Balans va hisobotlar\n` +
         `• <b>👤 Hisobim</b> — Hisob holati va kvota`;
 
-      await sendTelegramMessage(chatId, helpText, getMainAppKeyboard(appUrl));
+      const sent = await sendTelegramMessage(chatId, helpText, getMainAppKeyboard(appUrl));
+      if (sent?.result?.message_id) await setLastTempMsgId(userId, sent.result.message_id);
       return res.status(200).json({ status: 'ok' });
     }
 
     // ── Command: /stats or /hisobot or 📊 Statistika ─────────────
     if (text.startsWith('/stats') || text.startsWith('/hisobot') || text === '📊 Statistika') {
       deleteTelegramMessage(chatId, message.message_id).catch(() => {});
+      await cleanTemporaryBotMessages(chatId, user);
 
       const { data: u } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
       const txs = Array.isArray(u?.transactions) ? u.transactions : [];
@@ -716,11 +755,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         `⚡ <b>Bugungi AI so'rovlar:</b> ${quotaStatus}\n\n` +
         `👇 <i>Batafsil tahlil uchun Mini Appni oching:</i>`;
 
-      await sendTelegramMessage(chatId, statsText, {
+      const sent = await sendTelegramMessage(chatId, statsText, {
         inline_keyboard: [
           [{ text: "📱 Mini Appda to'liq ko'rish", web_app: { url: appUrl } }]
         ]
       });
+      if (sent?.result?.message_id) await setLastTempMsgId(userId, sent.result.message_id);
       return res.status(200).json({ status: 'ok' });
     }
 
@@ -741,11 +781,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
           const candidateKeys = await getCandidateAiKeys();
           const envKey = process.env.GEMINI_API_KEY;
-          const apiKey = candidateKeys[0]?.api_key || envKey || '';
+          const keysToTry = candidateKeys.length > 0
+            ? candidateKeys
+            : (envKey ? [{ id: 'env_gemini', api_key: envKey, name: 'ENV Key', model: 'gemini-3.5-flash' }] : []);
 
-          if (apiKey) {
-            const ai = new GoogleGenAI({ apiKey: apiKey.trim() });
-            const prompt = `You are a financial AI assistant for Moliya AI. Listen to this voice note in Uzbek/Russian and extract the transaction.
+          const activeModels = ['gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest'];
+
+          for (const keyObj of keysToTry) {
+            const rawApiKey = (keyObj.api_key || '').trim();
+            if (!rawApiKey) continue;
+
+            let parsed: any = null;
+            for (const modelToUse of activeModels) {
+              try {
+                const ai = new GoogleGenAI({ apiKey: rawApiKey });
+                const prompt = `You are a financial AI assistant for Moliya AI. Listen to this voice note in Uzbek/Russian and extract the transaction.
 Return JSON with:
 - type: 'expense' | 'income'
 - amount: integer in UZS (e.g. "14 mln" -> 14000000, "50 ming" -> 50000)
@@ -753,62 +803,72 @@ Return JSON with:
 - note: text description
 - title: 2-3 word title`;
 
-            const audioResult = await ai.models.generateContent({
-              model: 'gemini-2.0-flash',
-              contents: [
-                {
-                  role: 'user',
-                  parts: [
+                const audioResult = await ai.models.generateContent({
+                  model: modelToUse,
+                  contents: [
                     {
-                      inlineData: {
-                        mimeType: 'audio/ogg',
-                        data: base64Audio
-                      }
-                    },
-                    { text: prompt }
-                  ]
-                }
-              ],
-              config: {
-                responseMimeType: "application/json"
-              }
-            });
-
-            if (audioResult.text) {
-              const parsed = JSON.parse(audioResult.text);
-              if (parsed.amount && Number(parsed.amount) > 0) {
-                const txId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-                const now = new Date();
-                const newTx = {
-                  id: txId,
-                  type: parsed.type || 'expense',
-                  name: parsed.title || parsed.note || 'Ovozli xarajat',
-                  category: parsed.category || 'Boshqa',
-                  amount: Number(parsed.amount),
-                  date: now.toISOString().slice(0, 10),
-                  time: now.toTimeString().slice(0, 5),
-                  note: parsed.note || 'Ovozli kiritilgan'
-                };
-
-                await saveBotTransaction(userId, newTx);
-                await recordAiUsage(userId, 'text', parsed.note || 'Voice expense', quota.isPremium);
-
-                const emoji = CATEGORY_EMOJIS[newTx.category] || '💸';
-                const successMsg =
-                  `✅ <b>Ovozli xabar saqlandi!</b>\n\n` +
-                  `${emoji} <b>Kategoriya:</b> ${newTx.category}\n` +
-                  `💰 <b>Summa:</b> ${newTx.amount.toLocaleString()} so'm\n` +
-                  `📝 <b>Izoh:</b> ${newTx.name}\n` +
-                  `📅 <b>Sana:</b> ${newTx.date} ${newTx.time}`;
-
-                await sendTelegramMessage(chatId, successMsg, {
-                  inline_keyboard: [
-                    [{ text: "🗑 O'chirish", callback_data: `del_${txId}` }],
-                    [{ text: "📱 Mini Appda ko'rish", web_app: { url: appUrl } }]
-                  ]
+                      role: 'user',
+                      parts: [
+                        {
+                          inlineData: {
+                            mimeType: 'audio/ogg',
+                            data: base64Audio
+                          }
+                        },
+                        { text: prompt }
+                      ]
+                    }
+                  ],
+                  config: {
+                    responseMimeType: "application/json"
+                  }
                 });
-                return res.status(200).json({ status: 'ok' });
+
+                if (audioResult.text) {
+                  const resJson = JSON.parse(audioResult.text);
+                  if (resJson.amount && Number(resJson.amount) > 0) {
+                    parsed = resJson;
+                    recordKeyResult(keyObj.id, true).catch(() => {});
+                    break;
+                  }
+                }
+              } catch (voiceErr: any) {
+                recordKeyResult(keyObj.id, false, voiceErr?.message, 'temporary').catch(() => {});
               }
+            }
+
+            if (parsed) {
+              const txId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              const now = new Date();
+              const newTx = {
+                id: txId,
+                type: parsed.type || 'expense',
+                name: parsed.title || parsed.note || 'Ovozli xarajat',
+                category: parsed.category || 'Boshqa',
+                amount: Number(parsed.amount),
+                date: now.toISOString().slice(0, 10),
+                time: now.toTimeString().slice(0, 5),
+                note: parsed.note || 'Ovozli kiritilgan'
+              };
+
+              await saveBotTransaction(userId, newTx);
+              await recordAiUsage(userId, 'text', parsed.note || 'Voice expense', quota.isPremium);
+
+              const emoji = CATEGORY_EMOJIS[newTx.category] || '💸';
+              const successMsg =
+                `✅ <b>Ovozli xabar saqlandi!</b>\n\n` +
+                `${emoji} <b>Kategoriya:</b> ${newTx.category}\n` +
+                `💰 <b>Summa:</b> ${newTx.amount.toLocaleString()} so'm\n` +
+                `📝 <b>Izoh:</b> ${newTx.name}\n` +
+                `📅 <b>Sana:</b> ${newTx.date} ${newTx.time}`;
+
+              await sendTelegramMessage(chatId, successMsg, {
+                inline_keyboard: [
+                  [{ text: "🗑 O'chirish", callback_data: `del_${txId}` }],
+                  [{ text: "📱 Mini Appda ko'rish", web_app: { url: appUrl } }]
+                ]
+              });
+              return res.status(200).json({ status: 'ok' });
             }
           }
         } catch (voiceErr) {
@@ -835,73 +895,93 @@ Return JSON with:
 
           const candidateKeys = await getCandidateAiKeys();
           const envKey = process.env.GEMINI_API_KEY;
-          const apiKey = candidateKeys[0]?.api_key || envKey || '';
+          const keysToTry = candidateKeys.length > 0
+            ? candidateKeys
+            : (envKey ? [{ id: 'env_gemini', api_key: envKey, name: 'ENV Key', model: 'gemini-3.5-flash' }] : []);
 
-          if (apiKey) {
-            const ai = new GoogleGenAI({ apiKey: apiKey.trim() });
-            const prompt = `You are an OCR receipt scanner for Moliya AI. Extract receipt info into JSON:
+          const activeModels = ['gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest'];
+
+          for (const keyObj of keysToTry) {
+            const rawApiKey = (keyObj.api_key || '').trim();
+            if (!rawApiKey) continue;
+
+            let parsed: any = null;
+            for (const modelToUse of activeModels) {
+              try {
+                const ai = new GoogleGenAI({ apiKey: rawApiKey });
+                const prompt = `You are an OCR receipt scanner for Moliya AI. Extract receipt info into JSON:
 - type: 'expense'
 - amount: total integer amount paid in UZS
 - category: choose best fit from ['Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\\'liq', 'Ko\\'ngil ochar', 'Boshqa']
 - note: store or merchant name and summary
 - title: merchant name`;
 
-            const imgResult = await ai.models.generateContent({
-              model: 'gemini-2.0-flash',
-              contents: [
-                {
-                  role: 'user',
-                  parts: [
+                const imgResult = await ai.models.generateContent({
+                  model: modelToUse,
+                  contents: [
                     {
-                      inlineData: {
-                        mimeType: 'image/jpeg',
-                        data: base64Img
-                      }
-                    },
-                    { text: prompt }
-                  ]
-                }
-              ],
-              config: {
-                responseMimeType: "application/json"
-              }
-            });
-
-            if (imgResult.text) {
-              const parsed = JSON.parse(imgResult.text);
-              if (parsed.amount && Number(parsed.amount) > 0) {
-                const txId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-                const now = new Date();
-                const newTx = {
-                  id: txId,
-                  type: 'expense',
-                  name: parsed.title || parsed.note || 'Chek xarajati',
-                  category: parsed.category || 'Oziq-ovqat',
-                  amount: Number(parsed.amount),
-                  date: now.toISOString().slice(0, 10),
-                  time: now.toTimeString().slice(0, 5),
-                  note: parsed.note || 'Chek skaner qilindi'
-                };
-
-                await saveBotTransaction(userId, newTx);
-                await recordAiUsage(userId, 'receipt', parsed.note || 'Receipt scan', quota.isPremium);
-
-                const emoji = CATEGORY_EMOJIS[newTx.category] || '🧾';
-                const successMsg =
-                  `🧾 <b>Chek muvaffaqiyatli saqlandi!</b>\n\n` +
-                  `${emoji} <b>Do'kon/Joy:</b> ${newTx.name}\n` +
-                  `💰 <b>Jami summa:</b> ${newTx.amount.toLocaleString()} so'm\n` +
-                  `📁 <b>Kategoriya:</b> ${newTx.category}\n` +
-                  `📅 <b>Sana:</b> ${newTx.date} ${newTx.time}`;
-
-                await sendTelegramMessage(chatId, successMsg, {
-                  inline_keyboard: [
-                    [{ text: "🗑 O'chirish", callback_data: `del_${txId}` }],
-                    [{ text: "📱 Mini Appda ko'rish", web_app: { url: appUrl } }]
-                  ]
+                      role: 'user',
+                      parts: [
+                        {
+                          inlineData: {
+                            mimeType: 'image/jpeg',
+                            data: base64Img
+                          }
+                        },
+                        { text: prompt }
+                      ]
+                    }
+                  ],
+                  config: {
+                    responseMimeType: "application/json"
+                  }
                 });
-                return res.status(200).json({ status: 'ok' });
+
+                if (imgResult.text) {
+                  const resJson = JSON.parse(imgResult.text);
+                  if (resJson.amount && Number(resJson.amount) > 0) {
+                    parsed = resJson;
+                    recordKeyResult(keyObj.id, true).catch(() => {});
+                    break;
+                  }
+                }
+              } catch (imgErr: any) {
+                recordKeyResult(keyObj.id, false, imgErr?.message, 'temporary').catch(() => {});
               }
+            }
+
+            if (parsed) {
+              const txId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              const now = new Date();
+              const newTx = {
+                id: txId,
+                type: 'expense',
+                name: parsed.title || parsed.note || 'Chek xarajati',
+                category: parsed.category || 'Oziq-ovqat',
+                amount: Number(parsed.amount),
+                date: now.toISOString().slice(0, 10),
+                time: now.toTimeString().slice(0, 5),
+                note: parsed.note || 'Chek skaner qilindi'
+              };
+
+              await saveBotTransaction(userId, newTx);
+              await recordAiUsage(userId, 'receipt', parsed.note || 'Receipt scan', quota.isPremium);
+
+              const emoji = CATEGORY_EMOJIS[newTx.category] || '🧾';
+              const successMsg =
+                `🧾 <b>Chek muvaffaqiyatli saqlandi!</b>\n\n` +
+                `${emoji} <b>Do'kon/Joy:</b> ${newTx.name}\n` +
+                `💰 <b>Jami summa:</b> ${newTx.amount.toLocaleString()} so'm\n` +
+                `📁 <b>Kategoriya:</b> ${newTx.category}\n` +
+                `📅 <b>Sana:</b> ${newTx.date} ${newTx.time}`;
+
+              await sendTelegramMessage(chatId, successMsg, {
+                inline_keyboard: [
+                  [{ text: "🗑 O'chirish", callback_data: `del_${txId}` }],
+                  [{ text: "📱 Mini Appda ko'rish", web_app: { url: appUrl } }]
+                ]
+              });
+              return res.status(200).json({ status: 'ok' });
             }
           }
         } catch (imgErr) {

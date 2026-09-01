@@ -8,7 +8,7 @@ import ProfileScreen from './components/ProfileScreen'
 import BottomNav from './components/BottomNav'
 import AIButton from './components/AIButton'
 import AppTour from './components/AppTour'
-import { useFinance } from './FinanceContext'
+import { useFinance, isTelegramMiniApp } from './FinanceContext'
 
 import InstallPromptModal from './components/InstallPromptModal'
 import OfflineStatusBanner from './components/OfflineStatusBanner'
@@ -114,6 +114,41 @@ export default function App() {
   // CONDITIONAL RENDERS — all hooks are above this line
   // ═══════════════════════════════════════════════════════════
 
+  // 1. Wait until Telegram WebApp / Auth initialization completes
+  if (!isAuthReady) {
+    return (
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#FAF8FE] text-[#1E1A3C] p-6 text-center select-none font-sans">
+        <div className="w-12 h-12 border-4 border-[#DDD6FE] border-t-[#7C3AED] rounded-full animate-spin mb-4" />
+        <p className="text-sm text-[#64748B] font-medium">Moliya AI yuklanmoqda...</p>
+      </div>
+    );
+  }
+
+  // 2. Block normal browsers outside Telegram — require entering through Telegram
+  if (!isTelegramMiniApp() && !userId) {
+    return (
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#FAF8FE] text-[#1E1A3C] p-6 text-center select-none font-sans">
+        <div className="w-20 h-20 mb-6 rounded-3xl bg-[#EDE9FE] border border-[#DDD6FE] flex items-center justify-center text-4xl shadow-xl shadow-purple-500/10">
+          ✈️
+        </div>
+        <h2 className="text-2xl font-bold text-[#1E1A3C] mb-2 tracking-tight">
+          Telegram orqali kiring
+        </h2>
+        <p className="text-[#64748B] text-sm max-w-xs leading-relaxed mb-8">
+          Moliya AI ilovasi xavfsiz Telegram Mini App sifatida ishlaydi. Ilovadan foydalanish uchun Telegram botimizga o'ting.
+        </p>
+        <a
+          href="https://t.me/moliya_v2bot?start=open"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="w-full max-w-xs py-4 rounded-2xl bg-gradient-to-r from-[#7C3AED] to-[#6D28D9] text-white font-bold text-base shadow-lg shadow-purple-500/25 active:scale-95 transition-transform flex items-center justify-center gap-2"
+        >
+          <span>Telegramni ochish</span>
+          <span>🚀</span>
+        </a>
+      </div>
+    );
+  }
 
   if (authError) {
     return (

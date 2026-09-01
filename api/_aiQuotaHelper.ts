@@ -207,12 +207,13 @@ export async function recordAiUsage(
       })
       .eq('id', userId);
 
-    // Write audit log
+    // Write audit log safely
+    const { data: userExists } = await supabase.from('users').select('id').eq('id', userId).maybeSingle();
     await supabase
       .from('ai_logs')
       .insert([{
-        user_id: userId,
-        query_type: queryType,
+        user_id: userExists ? userId : null,
+        query_type: queryType || 'text',
         prompt_summary: (promptSummary || '').slice(0, 300),
         is_premium: isPremium,
         timestamp: now.toISOString()

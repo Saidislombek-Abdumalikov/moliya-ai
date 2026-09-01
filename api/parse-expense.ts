@@ -44,55 +44,58 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Build prompt with normalized financial context
     const prompt = buildUzbekFinancialPrompt(normalized.normalizedText || text);
 
-    // Try each key with fast SDK + structured output
+    // Try each key with active Gemini models
+    const activeModels = ['gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest'];
+
     for (const key of candidateKeys) {
       if (key.provider !== 'google') continue;
       
-      try {
-        const ai = new GoogleGenAI({ apiKey: key.api_key.trim() });
-        // Use gemini-2.0-flash for speed (no thinking overhead), fallback to key's configured model
-        const modelToUse = 'gemini-2.0-flash';
-        const response = await ai.models.generateContent({
-          model: modelToUse,
-          contents: prompt,
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                type: { type: Type.STRING },
-                amount: { type: Type.NUMBER },
-                category: { type: Type.STRING },
-                note: { type: Type.STRING },
-                title: { type: Type.STRING },
-                debtWho: { type: Type.STRING },
-              },
-              required: ["type", "amount", "category", "note"],
+      const keyModels = [key.model, ...activeModels.filter(m => m !== key.model)].filter(Boolean);
+
+      for (const modelToUse of keyModels) {
+        try {
+          const ai = new GoogleGenAI({ apiKey: key.api_key.trim() });
+          const response = await ai.models.generateContent({
+            model: modelToUse,
+            contents: prompt,
+            config: {
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  type: { type: Type.STRING },
+                  amount: { type: Type.NUMBER },
+                  category: { type: Type.STRING },
+                  note: { type: Type.STRING },
+                  title: { type: Type.STRING },
+                  debtWho: { type: Type.STRING },
+                },
+                required: ["type", "amount", "category", "note"],
+              }
+            }
+          });
+
+          if (response?.text) {
+            const parsed = JSON.parse(response.text);
+            if (parsed.amount) {
+              recordKeyResult(key.id, true).catch(() => {});
+              const fmtAmt = Number(parsed.amount).toLocaleString('en-US').replace(/,/g, ' ');
+              return res.status(200).json({
+                success: true,
+                type: parsed.type || 'expense',
+                amount: fmtAmt,
+                category: parsed.category || 'Boshqa',
+                note: parsed.note || text,
+                title: parsed.title || parsed.note || text,
+                debtWho: parsed.debtWho || '',
+              });
             }
           }
-        });
-
-        if (response?.text) {
-          const parsed = JSON.parse(response.text);
-          if (parsed.amount) {
-            // Don't await stats recording — fire and forget for speed
-            recordKeyResult(key.id, true).catch(() => {});
-            const fmtAmt = Number(parsed.amount).toLocaleString('en-US').replace(/,/g, ' ');
-            return res.status(200).json({
-              success: true,
-              type: parsed.type || 'expense',
-              amount: fmtAmt,
-              category: parsed.category || 'Boshqa',
-              note: parsed.note || text,
-              title: parsed.title || parsed.note || text,
-              debtWho: parsed.debtWho || '',
-            });
-          }
+        } catch (err: any) {
+          console.warn(`[PARSE] Key ${key.name} model ${modelToUse} failed:`, err?.message);
+          recordKeyResult(key.id, false, err?.message, 'temporary').catch(() => {});
+          // Try next model or next key
         }
-      } catch (err: any) {
-        console.warn(`[PARSE] Key ${key.name} failed:`, err?.message);
-        recordKeyResult(key.id, false, err?.message, 'temporary').catch(() => {});
-        // Continue to next key
       }
     }
 

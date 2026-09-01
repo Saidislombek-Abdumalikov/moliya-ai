@@ -162,6 +162,8 @@ export function normalizeUzbekFinancialText(rawText: string): NormalizedFinancia
 /**
  * Builds the robust, Uzbek-specialized system prompt for Gemini
  */
+export const buildUzbekFinancialPrompt = (normalizedText: string): string => buildUzbekFinancialAiPrompt(normalizedText);
+
 export function buildUzbekFinancialAiPrompt(normalizedText: string): string {
   return `You are an expert financial AI assistant for Moliya AI (Uzbekistan).
 Your job is to parse financial transactions from natural language inputs (Uzbek, Russian, English, or mixed slang).

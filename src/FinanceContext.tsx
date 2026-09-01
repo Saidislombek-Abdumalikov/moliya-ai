@@ -64,6 +64,18 @@ export const useFinance = () => {
   return context
 }
 
+// Helper: Detect if running inside Telegram Mini App
+export function isTelegramMiniApp(): boolean {
+  if (typeof window === 'undefined') return false
+  const hash = window.location.hash || ''
+  const search = window.location.search || ''
+  const hasTgHashOrQuery = hash.includes('tgWebAppData') || hash.includes('tgWebAppVersion') || search.includes('tgWebAppData') || search.includes('tgWebAppVersion') || search.includes('code=')
+  const tg = (window as any).Telegram?.WebApp
+  const hasTgObject = Boolean(tg && (tg.initData || tg.initDataUnsafe?.user?.id || typeof tg.ready === 'function'))
+  const hasTgProxy = Boolean((window as any).TelegramWebviewProxy)
+  return Boolean(hasTgHashOrQuery || hasTgObject || hasTgProxy)
+}
+
 // Helper: Establish real Supabase Auth session from tokens
 async function setSupabaseSession(accessToken: string, refreshToken: string): Promise<boolean> {
   try {
@@ -84,11 +96,14 @@ async function setSupabaseSession(accessToken: string, refreshToken: string): Pr
 }
 
 export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const isTg = isTelegramMiniApp()
+
   const [userId, setUserId] = useState<string | null>(() => {
-    return localStorage.getItem('user_id_v1') || null
+    return isTg ? (localStorage.getItem('user_id_v1') || null) : null
   })
 
   const [onboarding, setOnboarding] = useState<OnboardingResult | null>(() => {
+    if (!isTg) return null
     try {
       const saved = localStorage.getItem('user_onboarding_v1')
       return saved ? JSON.parse(saved) : null
@@ -98,6 +113,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   })
 
   const [cards, setCards] = useState<Card[]>(() => {
+    if (!isTg) return []
     try {
       const saved = localStorage.getItem('user_cards_v1')
       return saved ? JSON.parse(saved) : []
@@ -113,6 +129,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   })
 
   const [customTransactions, setCustomTransactions] = useState<Transaction[]>(() => {
+    if (!isTg) return []
     try {
       const saved = localStorage.getItem('user_transactions_v1')
       return saved ? JSON.parse(saved) : []
@@ -213,6 +230,13 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           } catch (tgErr) {
             console.error('[AUTH] Telegram WebApp error:', tgErr)
           }
+        }
+
+        // If outside Telegram (regular web browser without credentials), do not restore session or authenticate
+        if (!isTelegramMiniApp() && !window.location.search.includes('code=')) {
+          console.log('[AUTH] Normal browser detected outside Telegram. Access restricted to Telegram Mini App.');
+          setIsAuthReady(true);
+          return;
         }
         const initData = tg?.initData || ''
         const initDataUnsafe = tg?.initDataUnsafe
@@ -654,23 +678,48 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   // Context Functions with Supabase Persistence
   // ═══════════════════════════════════════════════════════════
   const updateOnboarding = async (newData: Partial<OnboardingResult>) => {
-    const updated = onboarding ? { ...onboarding, ...newData } : (newData as OnboardingResult);
+    let existingPhone = onboarding?.phone || null;
+    let existingRegStatus = onboarding?.registration_status || 'completed';
+    let existingTgId = onboarding?.telegramId || null;
+
+    if (userId) {
+      const { data: dbUser } = await supabase
+        .from('users')
+        .select('phone, telegram_id, onboarding')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (dbUser) {
+        if (dbUser.phone) existingPhone = dbUser.phone;
+        if (dbUser.onboarding?.registration_status) existingRegStatus = dbUser.onboarding.registration_status;
+        if (dbUser.telegram_id) existingTgId = dbUser.telegram_id;
+      }
+    }
+
+    const updated = {
+      ...(onboarding || {}),
+      ...newData,
+      phone: newData.phone || existingPhone || '',
+      registration_status: newData.registration_status || existingRegStatus || 'completed',
+      telegramId: newData.telegramId || existingTgId || ''
+    } as OnboardingResult;
+
     setOnboarding(updated);
     localStorage.setItem('user_onboarding_v1', JSON.stringify(updated));
 
     if (userId) {
       const nowIso = new Date().toISOString();
-      await supabase.from('users').upsert({
-        id: userId,
-        name: updated.name || '—',
-        phone: updated.phone || null,
-        telegram: updated.telegram || '—',
-        telegram_id: updated.telegramId || null,
-        language: updated.language || 'uz',
-        is_premium: !!updated.isPremium,
-        onboarding: updated,
-        updated_at: nowIso
-      }, { onConflict: 'id' });
+      const payload: any = {
+        updated_at: nowIso,
+        onboarding: updated
+      };
+      if (updated.name && updated.name !== '—') payload.name = updated.name;
+      if (updated.language) payload.language = updated.language;
+      if (updated.isPremium !== undefined) payload.is_premium = updated.isPremium;
+      if (existingPhone || updated.phone) payload.phone = updated.phone || existingPhone;
+      if (existingTgId || updated.telegramId) payload.telegram_id = updated.telegramId || existingTgId;
+
+      await supabase.from('users').update(payload).eq('id', userId);
     }
   };
 
