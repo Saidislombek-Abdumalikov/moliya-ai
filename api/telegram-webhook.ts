@@ -2,525 +2,74 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI, Type } from "@google/genai";
 import crypto from "crypto";
 import { supabase } from './_supabaseClient.js';
+import { getCandidateAiKeys } from './_aiRouter.js';
+import { checkAiQuota, recordAiUsage } from './_aiQuotaHelper.js';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const appUrl = process.env.APP_URL || "https://moliya-ai-pi.vercel.app";
 
-// Helper: Create 60-day Session Token & Mark Login Request VERIFIED in Supabase
-async function verifyAndMarkLoginRequest(requestId: string, fromUser: any, phone?: string) {
+// ── Telegram API Helpers ─────────────────────────────────────
+async function sendTelegramMessage(
+  chatId: number | string,
+  text: string,
+  replyMarkup?: any
+) {
+  if (!BOT_TOKEN) {
+    console.error('[BOT] TELEGRAM_BOT_TOKEN is missing');
+    return null;
+  }
   try {
-    console.log('[BOT] verifyAndMarkLoginRequest called with requestId:', requestId, 'user:', fromUser?.id);
-    if (!fromUser || !fromUser.id) {
-      console.error('[BOT] verifyAndMarkLoginRequest failed: fromUser is missing');
-      return null;
-    }
-
-    const tgId = String(fromUser.id);
-    const userId = `moliya_user_tg_${tgId}`;
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString();
-
-    const randomHex = Array.from({ length: 32 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
-    const sessionToken = 'sess_' + randomHex;
-
-    const tgName = [fromUser.first_name, fromUser.last_name].filter(Boolean).join(' ') || 'Telegram Foydalanuvchi';
-    const tgUsername = fromUser.username ? '@' + fromUser.username : '@moliya_user';
-
-    // 1. Fetch existing user from Supabase
-    const { data: existingUser } = await supabase
-      .from('users')
-      .select('*')
-      .eq('id', userId)
-      .maybeSingle();
-
-    const existingPhone = phone || existingUser?.phone || existingUser?.onboarding?.phone || '';
-
-    const updatedOnboarding = {
-      ...(existingUser?.onboarding || {}),
-      completed: true,
-      language: existingUser?.language || existingUser?.onboarding?.language || 'uz',
-      name: tgName,
-      phone: existingPhone,
-      telegram: tgUsername,
-      telegramId: tgId,
+    const payload: any = {
+      chat_id: String(chatId),
+      text,
+      parse_mode: 'HTML',
     };
-
-    // 2. Upsert user in Supabase users table
-    await supabase.from('users').upsert({
-      id: userId,
-      name: tgName,
-      telegram: tgUsername,
-      telegram_id: tgId,
-      phone: existingPhone || null,
-      language: updatedOnboarding.language,
-      is_premium: existingUser?.is_premium || false,
-      session_token: sessionToken,
-      session_expires_at: expiresAt,
-      onboarding: updatedOnboarding,
-      updated_at: now.toISOString()
-    }, { onConflict: 'id' });
-
-    // 3. Mark login request VERIFIED in Supabase
-    const cleanId = requestId.replace(/^req_/, '').trim();
-    await supabase.from('users').upsert({
-      id: `req_${cleanId}`,
-      login_request_id: cleanId,
-      login_request_status: 'VERIFIED',
-      telegram_id: tgId,
-      session_token: sessionToken,
-      updated_at: now.toISOString()
-    }, { onConflict: 'id' });
-
-    // 4. Generate short-lived exchange code (5-minute TTL, single-use)
-    const exchangeCode = crypto.randomBytes(24).toString('hex'); // 48-char random code
-    const codeExpiresAt = new Date(now.getTime() + 5 * 60 * 1000).toISOString(); // 5 minutes
-    await supabase.from('users').upsert({
-      id: `exchange_${exchangeCode}`,
-      telegram_id: tgId,
-      session_token: sessionToken,
-      login_request_status: 'VALID',
-      session_expires_at: codeExpiresAt,
-      updated_at: now.toISOString()
-    }, { onConflict: 'id' });
-
-    console.log('[BOT] ✅ Login request verified in Supabase for user:', userId);
-    return { sessionToken, userId, onboarding: updatedOnboarding, exchangeCode };
-  } catch (err) {
-    console.error('[BOT] ❌ Error verifying login request:', err);
-    return null;
-  }
-}
-
-// Transaction Helpers via Supabase users.transactions JSON Array
-async function saveBotTransaction(fromUser: any, txItem: { id: string; type: string; name: string; category: string; amount: number; date: string }) {
-  try {
-    const tgId = String(fromUser.id);
-    const userId = `moliya_user_tg_${tgId}`;
-    const { data: user } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
-    const currentTxs = Array.isArray(user?.transactions) ? user.transactions : [];
-    const updated = [txItem, ...currentTxs.filter((t: any) => t.id !== txItem.id)];
-    await supabase.from('users').update({ transactions: updated, updated_at: new Date().toISOString() }).eq('id', userId);
-    console.log(`[BOT] Saved transaction ${txItem.id} to Supabase for user ${userId}`);
-  } catch (err) {
-    console.error('[BOT] Error saving transaction to Supabase:', err);
-  }
-}
-
-async function getBotTransactions(fromUser: any) {
-  try {
-    const tgId = String(fromUser.id);
-    const userId = `moliya_user_tg_${tgId}`;
-    const { data: user } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
-    return Array.isArray(user?.transactions) ? user.transactions : [];
-  } catch (err) {
-    console.error('[BOT] Error fetching transactions from Supabase:', err);
-    return [];
-  }
-}
-
-async function deleteLastBotTransaction(fromUser: any) {
-  try {
-    const tgId = String(fromUser.id);
-    const userId = `moliya_user_tg_${tgId}`;
-    const { data: user } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
-    const currentTxs = Array.isArray(user?.transactions) ? user.transactions : [];
-    if (currentTxs.length > 0) {
-      const deleted = currentTxs[0];
-      const updated = currentTxs.slice(1);
-      await supabase.from('users').update({ transactions: updated, updated_at: new Date().toISOString() }).eq('id', userId);
-      return deleted;
+    if (replyMarkup) {
+      payload.reply_markup = replyMarkup;
     }
-    return null;
-  } catch (err) {
-    console.error('[BOT] Error deleting transaction from Supabase:', err);
-    return null;
-  }
-}
-
-async function checkAndIncrementAiLimitAsync(fromUser: any): Promise<{ allowed: boolean; remaining: number; isPremium: boolean }> {
-  try {
-    const tgId = String(fromUser?.id);
-    if (!tgId) return { allowed: true, remaining: 5, isPremium: false };
-    const userId = `moliya_user_tg_${tgId}`;
-    const { data: user } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
-
-    if (user) {
-      if (user.is_premium) {
-        return { allowed: true, remaining: 999, isPremium: true };
-      }
-
-      const currentCount = Number(user.ai_query_count || 0);
-      const limit = 5;
-
-      if (currentCount >= limit) {
-        return { allowed: false, remaining: 0, isPremium: false };
-      }
-
-      const newCount = currentCount + 1;
-      await supabase.from('users').update({
-        ai_query_count: newCount,
-        last_ai_query_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      }).eq('id', userId);
-
-      return { allowed: true, remaining: limit - newCount, isPremium: false };
-    } else {
-      await supabase.from('users').upsert({
-        id: userId,
-        telegram_id: tgId,
-        ai_query_count: 1,
-        last_ai_query_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      }, { onConflict: 'id' });
-      return { allowed: true, remaining: 4, isPremium: false };
-    }
-  } catch (e) {
-    console.error('Error checking AI limit in Supabase:', e);
-    return { allowed: true, remaining: 5, isPremium: false };
-  }
-}
-
-const getCleanInlineKeyboard = (exchangeCode?: string) => {
-  const urlWithAuth = exchangeCode ? `${appUrl}?code=${exchangeCode}` : appUrl;
-  return {
-    inline_keyboard: [
-      [
-        { text: "📱 Telegram Mini App", web_app: { url: urlWithAuth } },
-        { text: "🌐 Saytga o'tish 🚀", url: urlWithAuth }
-      ]
-    ]
-  };
-};
-
-const renderProgressBar = (ratio: number, length: number = 8) => {
-  const filled = Math.min(length, Math.max(0, Math.round(ratio * length)));
-  const empty = length - filled;
-  return '█'.repeat(filled) + '░'.repeat(empty);
-};
-
-async function getUserBudgets(fromUser: any) {
-  try {
-    const tgId = String(fromUser?.id);
-    if (!tgId) return {};
-    const userId = `moliya_user_tg_${tgId}`;
-    const { data: user } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
-    return user?.onboarding?.budgets || {};
-  } catch (e) {
-    console.error('Error fetching user budgets:', e);
-  }
-  return {};
-}
-
-async function setUserBudget(fromUser: any, category: string, limitAmt: number) {
-  try {
-    const tgId = String(fromUser?.id);
-    if (!tgId) return null;
-    const userId = `moliya_user_tg_${tgId}`;
-    const existing = await getUserBudgets(fromUser);
-    const updated = { ...existing, [category]: limitAmt };
-    const { data: user } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
-    const newOnboarding = { ...(user?.onboarding || {}), budgets: updated };
-    await supabase.from('users').update({ onboarding: newOnboarding, updated_at: new Date().toISOString() }).eq('id', userId);
-    return updated;
-  } catch (e) {
-    console.error('Error setting user budget:', e);
-    return null;
-  }
-}
-
-async function sendTelegramDocument(chatId: number | string, fileBuffer: Buffer, fileName: string, caption?: string) {
-  try {
-    const formData = new FormData();
-    formData.append('chat_id', String(chatId));
-    formData.append('document', new Blob([fileBuffer], { type: 'text/csv' }), fileName);
-    if (caption) formData.append('caption', caption);
-    formData.append('parse_mode', 'HTML');
-
-    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendDocument`, {
-      method: 'POST',
-      body: formData
-    });
-  } catch (err) {
-    console.error('Failed to send Telegram document:', err);
-  }
-}
-
-// In-memory pending draft cache for fast Telegram callbacks
-const pendingDraftsCache = new Map<string, any>();
-
-async function savePendingDraftTx(fromUser: any, draftTx: any) {
-  try {
-    const tgId = String(fromUser?.id);
-    if (!tgId) return null;
-    pendingDraftsCache.set(`${tgId}_${draftTx.id}`, draftTx);
-    return draftTx;
-  } catch (e) {
-    console.error('Error saving pending draft tx:', e);
-    return null;
-  }
-}
-
-async function getPendingDraftTx(fromUser: any, txId: string) {
-  try {
-    const tgId = String(fromUser?.id);
-    if (!tgId) return null;
-    return pendingDraftsCache.get(`${tgId}_${txId}`) || null;
-  } catch (e) {
-    console.error('Error fetching pending draft tx:', e);
-  }
-  return null;
-}
-
-async function confirmPendingDraftTx(fromUser: any, txId: string) {
-  try {
-    const tgId = String(fromUser?.id);
-    if (!tgId) return null;
-    const draftData = pendingDraftsCache.get(`${tgId}_${txId}`);
-    if (draftData) {
-      await saveBotTransaction(fromUser, {
-        id: draftData.id,
-        type: draftData.type,
-        name: draftData.name || draftData.note,
-        category: draftData.category,
-        amount: draftData.amount,
-        date: draftData.date || new Date().toISOString()
-      });
-      pendingDraftsCache.delete(`${tgId}_${txId}`);
-      return draftData;
-    }
-  } catch (e) {
-    console.error('Error confirming pending draft tx:', e);
-  }
-  return null;
-}
-
-async function cancelPendingDraftTx(fromUser: any, txId: string) {
-  try {
-    const tgId = String(fromUser?.id);
-    if (!tgId) return null;
-    pendingDraftsCache.delete(`${tgId}_${txId}`);
-    return true;
-  } catch (e) {
-    console.error('Error cancelling pending draft tx:', e);
-  }
-  return false;
-}
-
-function renderConfirmationCard(draftTx: any) {
-  const typeEmoji = draftTx.type === 'income' ? '🟢 Daromad' : '🛒 Xarajat';
-  const fmtAmt = Math.abs(draftTx.amount || 0).toLocaleString('en-US').replace(/,/g, ' ');
-
-  const text = `❓ <b>Ushbu operatsiyani saqlaymizmi?</b> 🤔\n\n` +
-    `📌 <b>Turi:</b> ${typeEmoji}\n` +
-    `💵 <b>Summa:</b> ${fmtAmt} so'm\n` +
-    `📂 <b>Kategoriya:</b> ${draftTx.category || 'Boshqa'}\n` +
-    `📝 <b>Izoh:</b> ${draftTx.name || draftTx.note || 'Operatsiya'}`;
-
-  const inlineKeyboard = {
-    inline_keyboard: [
-      [
-        { text: "✅ Saqlash", callback_data: `tx_confirm_${draftTx.id}` },
-        { text: "✏️ Tahrirlash", callback_data: `tx_edit_${draftTx.id}` },
-        { text: "❌ Bekor qilish", callback_data: `tx_cancel_${draftTx.id}` }
-      ]
-    ]
-  };
-
-  return { text, inlineKeyboard };
-}
-
-async function renderRichTransactionCard(fromUser: any, tx: any, isPending: boolean = false) {
-  const txs = await getBotTransactions(fromUser);
-  const now = new Date();
-  
-  const currentMonthTxs = txs.filter(t => {
-    const d = new Date(t.date || 0);
-    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-  });
-
-  const totalIncome = txs.filter(t => t.type === 'income').reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
-  const totalExpense = txs.filter(t => t.type === 'expense').reduce((acc, t) => acc + Math.abs(Number(t.amount) || 0), 0);
-  const netBalance = totalIncome - totalExpense;
-
-  const monthlyExpense = currentMonthTxs.filter(t => t.type === 'expense').reduce((acc, t) => acc + Math.abs(Number(t.amount) || 0), 0);
-
-  const txCategory = tx.category || 'Boshqa';
-  const categoryMonthlyTotal = currentMonthTxs
-    .filter(t => t.type === 'expense' && (t.category === txCategory || (!t.category && txCategory === 'Boshqa')))
-    .reduce((acc, t) => acc + Math.abs(Number(t.amount) || 0), 0) + (isPending ? Math.abs(Number(tx.amount) || 0) : 0);
-
-  const fmtAmt = (n: number) => Math.abs(n || 0).toLocaleString('en-US').replace(/,/g, ' ');
-  const fmtMln = (n: number) => {
-    const mln = n / 1000000;
-    return mln >= 1 ? `${mln.toFixed(1)}mln` : `${fmtAmt(n)}`;
-  };
-
-  const txDate = tx.date ? new Date(tx.date) : new Date();
-  const dateFormatted = `${String(txDate.getDate()).padStart(2, '0')}.${String(txDate.getMonth() + 1).padStart(2, '0')}.${txDate.getFullYear()}`;
-
-  let text = "";
-  if (tx.type === 'expense') {
-    text = `<b>${isPending ? "❓ Hisobotga qo'shilsinmi?" : "Hisobotga qo'shildi ✅"}</b>\n\n` +
-      `<b>Chiqim:</b>\n` +
-      `<b>Sana:</b> ${dateFormatted}\n\n` +
-      `<b>Summa:</b> UZS ${fmtAmt(tx.amount)}\n` +
-      `<b>Kategoriya:</b> 💲 ${txCategory}\n` +
-      `<b>Izoh:</b> ${tx.name || tx.note || "Xarajat"}\n\n` +
-      `💡 <i>${txCategory} kategoriyasidagi jami xarajatlar ${fmtMln(categoryMonthlyTotal)} UZS bo'ldi.</i>\n\n` +
-      `<b>Bu oygi chiqimlar:</b> ${fmtAmt(monthlyExpense + (isPending ? Math.abs(Number(tx.amount) || 0) : 0))} UZS\n\n` +
-      `<b>Balans:</b>\n` +
-      `💵 UY-Ro'zg'or: ${fmtAmt(netBalance - (isPending ? Math.abs(Number(tx.amount) || 0) : 0))} UZS`;
-  } else {
-    text = `✅ <b>${fmtAmt(tx.amount)} UZS miqdoridagi daromad «UY-Ro'zg'or» balansingizga muvaffaqiyatli qo'shildi.</b>\n\n` +
-      `<b>Balans:</b>\n` +
-      `💵 UY-Ro'zg'or: ${fmtAmt(netBalance + (isPending ? Math.abs(Number(tx.amount) || 0) : 0))} UZS`;
-  }
-
-  const inlineKeyboard = isPending
-    ? {
-        inline_keyboard: [
-          [
-            { text: "✅ Ha, to'g'ri", callback_data: `tx_confirm_${tx.id}` },
-            { text: "🔄 Turini o'zgartirish", callback_data: `tx_toggle_type_${tx.id}` }
-          ],
-          [
-            { text: "📂 Kategoriyani tanlash", callback_data: `tx_edit_cat_${tx.id}` },
-            { text: "✏️ Tahrirlash", callback_data: `tx_edit_${tx.id}` }
-          ],
-          [
-            { text: "❌ Bekor qilish", callback_data: `tx_cancel_${tx.id}` }
-          ]
-        ]
-      }
-    : {
-        inline_keyboard: [
-          [
-            { text: "🗑 O'chirish", callback_data: `del_${tx.id}` },
-            { text: "📱 Mini App", web_app: { url: appUrl } }
-          ]
-        ]
-      };
-
-  return { text, inlineKeyboard };
-}
-
-async function renderUserReportSummary(fromUser: any) {
-  const tgId = String(fromUser?.id);
-  const userId = `moliya_user_tg_${tgId}`;
-  const { data: user } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
-  const txs: any[] = Array.isArray(user?.transactions) ? user.transactions : [];
-
-  const now = new Date();
-  const currentMonthTxs = txs.filter(t => {
-    const d = new Date(t.date || 0);
-    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-  });
-
-  const totalIncome = txs.filter(t => t.type === 'income').reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
-  const totalExpense = txs.filter(t => t.type === 'expense').reduce((acc, t) => acc + Math.abs(Number(t.amount) || 0), 0);
-  const netBalance = totalIncome - totalExpense;
-
-  const monthlyExpense = currentMonthTxs.filter(t => t.type === 'expense').reduce((acc, t) => acc + Math.abs(Number(t.amount) || 0), 0);
-  const monthlyIncome = currentMonthTxs.filter(t => t.type === 'income').reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
-
-  const fmt = (n: number) => Math.abs(n || 0).toLocaleString('en-US').replace(/,/g, ' ');
-
-  const goal = Number(user?.onboarding?.monthlyGoal || user?.goal || 0);
-  let goalText = "";
-  if (goal > 0) {
-    const pct = Math.min(100, Math.round((monthlyExpense / goal) * 100));
-    goalText = `\n🎯 <b>Oylik limit:</b> ${fmt(goal)} so'm (${pct}% sarflandi)\n${renderProgressBar(monthlyExpense / goal)}`;
-  }
-
-  const text = `📊 <b>Moliya AI — Hisobot & Balans</b> ✨\n\n` +
-    `👤 <b>Foydalanuvchi:</b> ${fromUser?.first_name || 'Hurmatli foydalanuvchi'}\n` +
-    `💵 <b>Umumiy Sof Balans:</b> ${netBalance >= 0 ? '+' : ''}${fmt(netBalance)} so'm\n\n` +
-    `📅 <b>Joriy oy ko'rsatkichlari:</b>\n` +
-    `🟢 <b>Daromad:</b> +${fmt(monthlyIncome)} so'm\n` +
-    `🔴 <b>Xarajat:</b> -${fmt(monthlyExpense)} so'm` +
-    goalText + `\n\n` +
-    `👇 <i>Batafsil grafiklar va tahlil ilovada mavjud:</i>`;
-
-  const inlineKeyboard = {
-    inline_keyboard: [
-      [
-        { text: "📱 Mini App-da ko'rish", web_app: { url: appUrl } },
-        { text: "🌐 Web App", url: appUrl }
-      ]
-    ]
-  };
-
-  return { text, inlineKeyboard };
-}
-
-const getMainMenuKeyboard = () => {
-  return {
-    keyboard: [
-      [{ text: "📱 Mini App", web_app: { url: appUrl } }, { text: "🌐 Web App" }],
-      [{ text: "📊 Balans & Hisobot" }, { text: "🎯 Byudjet & Limitlar" }],
-      [{ text: "🧾 Chek Skanner" }, { text: "📥 Eksport" }],
-      [{ text: "💡 Yordam" }]
-    ],
-    resize_keyboard: true
-  };
-};
-
-async function sendTelegramMessage(chatId: number | string, text: string, replyMarkup?: any): Promise<number | null> {
-  try {
     const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text,
-        parse_mode: 'HTML',
-        reply_markup: replyMarkup
-      })
+      body: JSON.stringify(payload)
     });
-    const data = await res.json();
-    if (data.ok && data.result?.message_id) {
-      return data.result.message_id;
-    } else if (!data.ok) {
-      const cleanText = text.replace(/<[^>]*>/g, '');
-      const fallbackRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: cleanText,
-          reply_markup: replyMarkup
-        })
-      });
-      const fallbackData = await fallbackRes.json();
-      if (fallbackData.ok && fallbackData.result?.message_id) {
-        return fallbackData.result.message_id;
-      }
-    }
+    return await res.json();
   } catch (err) {
-    console.error('Failed to send Telegram message:', err);
+    console.error('[BOT] Failed to send Telegram message:', err);
+    return null;
   }
-  return null;
 }
 
-async function editTelegramMessage(chatId: number | string, messageId: number, text: string, replyMarkup?: any) {
+async function editTelegramMessage(
+  chatId: number | string,
+  messageId: number,
+  text: string,
+  replyMarkup?: any
+) {
+  if (!BOT_TOKEN) return null;
   try {
-    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
+    const payload: any = {
+      chat_id: String(chatId),
+      message_id: messageId,
+      text,
+      parse_mode: 'HTML'
+    };
+    if (replyMarkup) {
+      payload.reply_markup = replyMarkup;
+    }
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        message_id: messageId,
-        text,
-        parse_mode: 'HTML',
-        reply_markup: replyMarkup
-      })
+      body: JSON.stringify(payload)
     });
+    return await res.json();
   } catch (err) {
-    console.error('Failed to edit Telegram message:', err);
+    console.error('[BOT] Failed to edit Telegram message:', err);
+    return null;
   }
 }
 
 async function answerCallbackQuery(callbackQueryId: string, text?: string) {
+  if (!BOT_TOKEN) return;
   try {
     await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
       method: 'POST',
@@ -531,13 +80,219 @@ async function answerCallbackQuery(callbackQueryId: string, text?: string) {
       })
     });
   } catch (err) {
-    console.error('Failed to answer callback query:', err);
+    console.error('[BOT] Failed to answer callback query:', err);
   }
 }
 
+async function getTelegramFileUrl(fileId: string): Promise<string | null> {
+  if (!BOT_TOKEN) return null;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${fileId}`);
+    const data = await res.json();
+    if (data.ok && data.result?.file_path) {
+      return `https://api.telegram.org/file/bot${BOT_TOKEN}/${data.result.file_path}`;
+    }
+  } catch (err) {
+    console.error('[BOT] Failed to get file URL:', err);
+  }
+  return null;
+}
+
+// ── Canonical User Resolution & Creation ─────────────────────
+async function resolveCanonicalUser(fromUser: any) {
+  const tgId = String(fromUser.id);
+  const userId = `moliya_user_tg_${tgId}`;
+  const now = new Date().toISOString();
+  const fullName = [fromUser.first_name, fromUser.last_name].filter(Boolean).join(' ') || 'Foydalanuvchi';
+  const username = fromUser.username ? `@${fromUser.username}` : null;
+
+  // 1. Fetch existing user
+  const { data: existing } = await supabase
+    .from('users')
+    .select('*')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (existing) {
+    // Check if blocked
+    const isBlocked = Boolean(
+      existing.is_blocked ||
+      existing.onboarding?.is_blocked ||
+      existing.device_info?.is_blocked ||
+      existing.is_restricted ||
+      existing.onboarding?.is_restricted ||
+      existing.device_info?.restricted
+    );
+
+    return { user: existing, userId, isBlocked, isNew: false };
+  }
+
+  // 2. Create canonical user record
+  const newOnboarding = {
+    completed: true,
+    language: 'uz',
+    name: fullName,
+    telegram: username,
+    telegramId: tgId,
+  };
+
+  const newPayload = {
+    id: userId,
+    name: fullName,
+    telegram: username,
+    telegram_id: tgId,
+    phone: null,
+    language: 'uz',
+    is_premium: false,
+    ai_limit: 20,
+    ai_query_count: 0,
+    platform: 'telegram',
+    cards: [],
+    transactions: [],
+    onboarding: newOnboarding,
+    created_at: now,
+    updated_at: now
+  };
+
+  await supabase.from('users').upsert(newPayload, { onConflict: 'id' });
+
+  return { user: newPayload, userId, isBlocked: false, isNew: true };
+}
+
+// ── Authentication Handshake & Web Login ─────────────────────
+async function verifyAndMarkLoginRequest(requestId: string, fromUser: any) {
+  try {
+    const tgId = String(fromUser.id);
+    const userId = `moliya_user_tg_${tgId}`;
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString();
+
+    const randomHex = crypto.randomBytes(16).toString('hex');
+    const sessionToken = 'sess_' + randomHex;
+
+    const { user, isBlocked } = await resolveCanonicalUser(fromUser);
+    if (isBlocked) return null;
+
+    // Mark login request as VERIFIED
+    const cleanId = requestId.replace(/^req_/, '').trim();
+    await supabase.from('users').upsert({
+      id: `req_${cleanId}`,
+      login_request_id: cleanId,
+      login_request_status: 'VERIFIED',
+      telegram_id: tgId,
+      session_token: sessionToken,
+      updated_at: now.toISOString()
+    }, { onConflict: 'id' });
+
+    // Generate 5-minute single-use exchange code
+    const exchangeCode = crypto.randomBytes(24).toString('hex');
+    const codeExpiresAt = new Date(now.getTime() + 5 * 60 * 1000).toISOString();
+    await supabase.from('users').upsert({
+      id: `exchange_${exchangeCode}`,
+      telegram_id: tgId,
+      session_token: sessionToken,
+      login_request_status: 'VALID',
+      session_expires_at: codeExpiresAt,
+      updated_at: now.toISOString()
+    }, { onConflict: 'id' });
+
+    return { sessionToken, userId, exchangeCode };
+  } catch (err) {
+    console.error('[BOT] Error verifying login request:', err);
+    return null;
+  }
+}
+
+// ── Transaction Helper ───────────────────────────────────────
+async function saveBotTransaction(userId: string, txItem: { id: string; type: string; name: string; category: string; amount: number; date: string; time?: string; note?: string }) {
+  try {
+    const { data: user } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
+    const currentTxs = Array.isArray(user?.transactions) ? user.transactions : [];
+    const updated = [txItem, ...currentTxs.filter((t: any) => t.id !== txItem.id)];
+    await supabase.from('users').update({ transactions: updated, updated_at: new Date().toISOString() }).eq('id', userId);
+  } catch (err) {
+    console.error('[BOT] Error saving transaction:', err);
+  }
+}
+
+// ── Category Emoji Map ───────────────────────────────────────
+const CATEGORY_EMOJIS: Record<string, string> = {
+  'Oziq-ovqat': '🍔',
+  'Transport': '🚕',
+  'Kiyim': '👕',
+  'Kommunal': '💡',
+  'Sog\'liq': '💊',
+  'Ta\'lim': '📚',
+  'Ko\'ngil ochar': '🎮',
+  'Boshqa': '📦',
+  'Maosh': '💼',
+  'Freelance': '💻',
+  'Biznes': '📈',
+  'Sovg\'a': '🎁',
+  'Investitsiya': '📊',
+  'Do\'st': '🤝',
+  'Bank': '🏦',
+  'Oila': '👨‍👩‍👦',
+  'Hamkasb': '👥'
+};
+
+// ── AI Parser Helper ─────────────────────────────────────────
+async function parseTextWithAi(text: string) {
+  const candidateKeys = await getCandidateAiKeys();
+  const envKey = process.env.GEMINI_API_KEY;
+  const keysToTry = candidateKeys.length > 0
+    ? candidateKeys.map(k => k.api_key)
+    : (envKey ? [envKey] : []);
+
+  if (keysToTry.length === 0) {
+    return null;
+  }
+
+  const prompt = `You are a financial AI assistant for Moliya AI. Parse this transaction text in Uzbek, Russian, or English: "${text}".
+Return JSON object:
+- type: 'expense' (spending), 'income' (salary/earnings), 'debt' (borrowed), or 'lending' (loaned)
+- amount: total amount in numbers (e.g. "45 ming" -> 45000, "1.5 mln" -> 1500000, "100 dollar" -> 100, "ellik ming" -> 50000)
+- category: exactly one from: ['Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\\'liq', 'Ta\\'lim', 'Ko\\'ngil ochar', 'Boshqa', 'Maosh', 'Freelance', 'Biznes', 'Sovg\\'a', 'Investitsiya', 'Do\\'st', 'Bank', 'Oila', 'Hamkasb']
+- note: meaningful description of the item or expense
+- title: concise 2-3 word title`;
+
+  for (const key of keysToTry) {
+    try {
+      const ai = new GoogleGenAI({ apiKey: key.trim() });
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.0-flash',
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              type: { type: Type.STRING },
+              amount: { type: Type.NUMBER },
+              category: { type: Type.STRING },
+              note: { type: Type.STRING },
+              title: { type: Type.STRING }
+            },
+            required: ["type", "amount", "category", "note"]
+          }
+        }
+      });
+
+      if (response?.text) {
+        return JSON.parse(response.text);
+      }
+    } catch (e) {
+      console.warn('[BOT] Gemini parse error with key, trying next...', e);
+    }
+  }
+
+  return null;
+}
+
+// ── Main Webhook Handler ─────────────────────────────────────
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'GET') {
-    return res.status(200).json({ status: 'Moliya AI Telegram Webhook Live (Supabase)' });
+    return res.status(200).json({ status: 'Moliya AI Telegram Webhook Live' });
   }
 
   if (req.method !== 'POST') {
@@ -548,268 +303,467 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const update = req.body;
     if (!update) return res.status(200).json({ status: 'no_body' });
 
-    // Handle Inline Callbacks
+    // 1. Handle Inline Callbacks
     if (update.callback_query) {
       const cb = update.callback_query;
       const data = cb.data;
       const chatId = cb.message?.chat?.id;
+      const fromUser = cb.from;
 
-      if (chatId && data && data.startsWith('tx_confirm_')) {
-        const txId = data.replace('tx_confirm_', '');
-        const confirmed = await confirmPendingDraftTx(cb.from, txId);
-        if (confirmed) {
-          await answerCallbackQuery(cb.id, "✅ Operatsiya muvaffaqiyatli saqlandi!");
-          const card = await renderRichTransactionCard(cb.from, confirmed, false);
-          if (cb.message?.message_id) {
-            await editTelegramMessage(chatId, cb.message.message_id, card.text, card.inlineKeyboard);
-          }
-        } else {
-          await answerCallbackQuery(cb.id, "⚠️ Operatsiya allaqachon tasdiqlangan");
-        }
-      } else if (chatId && data && data.startsWith('tx_cancel_')) {
-        const txId = data.replace('tx_cancel_', '');
-        await cancelPendingDraftTx(cb.from, txId);
-        await answerCallbackQuery(cb.id, "❌ Operatsiya bekor qilindi");
-        if (cb.message?.message_id) {
-          await editTelegramMessage(chatId, cb.message.message_id, "❌ <b>Operatsiya bekor qilindi.</b>", getMainMenuKeyboard());
-        }
-      } else if (chatId && data && data.startsWith('del_')) {
+      if (!fromUser) return res.status(200).json({ status: 'no_user' });
+
+      const tgId = String(fromUser.id);
+      const userId = `moliya_user_tg_${tgId}`;
+
+      // Restriction check
+      const { data: userRow } = await supabase.from('users').select('is_blocked, onboarding, device_info').eq('id', userId).maybeSingle();
+      const isBlocked = Boolean(userRow?.is_blocked || userRow?.onboarding?.is_blocked || userRow?.device_info?.is_blocked);
+      if (isBlocked) {
+        await answerCallbackQuery(cb.id, "⛔ Hisobingiz cheklangan");
+        return res.status(200).json({ status: 'blocked' });
+      }
+
+      if (chatId && data && data.startsWith('del_')) {
         const txId = data.replace('del_', '');
-        const tgId = String(cb.from?.id || chatId);
-        const userId = `moliya_user_tg_${tgId}`;
-        const { data: user } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
-        const txs = Array.isArray(user?.transactions) ? user.transactions : [];
+        const { data: u } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
+        const txs = Array.isArray(u?.transactions) ? u.transactions : [];
         const updated = txs.filter((t: any) => String(t.id) !== String(txId));
         await supabase.from('users').update({ transactions: updated, updated_at: new Date().toISOString() }).eq('id', userId);
 
         await answerCallbackQuery(cb.id, "🗑 Operatsiya o'chirildi!");
-        await sendTelegramMessage(chatId, "🗑 <b>Operatsiya muvaffaqiyatli o'chirildi!</b> ✅", getMainMenuKeyboard());
+        if (cb.message?.message_id) {
+          await editTelegramMessage(chatId, cb.message.message_id, "🗑 <b>Operatsiya o'chirildi.</b> ✅");
+        }
       }
       return res.status(200).json({ status: 'ok' });
     }
 
+    // 2. Handle Messages
     const message = update.message || update.edited_message;
     if (!message) return res.status(200).json({ status: 'no_message' });
 
     const chatId = message.chat?.id;
     const fromUser = message.from;
-    const text = (message.text || "").trim();
+    const text = (message.text || '').trim();
+
+    if (!fromUser || !chatId) return res.status(200).json({ status: 'invalid_chat' });
+
+    // Canonical Identity Resolution & Restriction Check
+    const { user, userId, isBlocked } = await resolveCanonicalUser(fromUser);
+
+    if (isBlocked) {
+      await sendTelegramMessage(
+        chatId,
+        `⛔ <b>Hisobingiz ma'muriyat tomonidan cheklangan!</b>\n\nSiz ushbu bot va Moliya AI tizimidan foydalana olmaysiz. Cheklovni bekor qilish uchun ma'muriyat bilan bog'laning.`,
+        { remove_keyboard: true }
+      );
+      return res.status(200).json({ status: 'restricted' });
+    }
 
     // Handle Contact Share (Phone Number)
     if (message.contact) {
       const contact = message.contact;
       const phone = contact.phone_number?.startsWith('+') ? contact.phone_number : `+${contact.phone_number}`;
-      const tgId = String(contact.user_id || fromUser.id);
-      const fullName = [fromUser.first_name, fromUser.last_name].filter(Boolean).join(' ') || contact.first_name || 'Foydalanuvchi';
-      const username = fromUser.username ? `@${fromUser.username}` : '';
-      const userId = `moliya_user_tg_${tgId}`;
 
-      // Fetch existing user to preserve onboarding, transactions, cards, session_token
-      const { data: existingUser } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
-
-      const updatedOnboarding = {
-        ...(existingUser?.onboarding || {}),
-        completed: true,
-        language: existingUser?.language || existingUser?.onboarding?.language || 'uz',
-        name: fullName || existingUser?.name || 'Foydalanuvchi',
+      await supabase.from('users').update({
         phone,
-        telegram: username || existingUser?.telegram || '',
-        telegramId: tgId,
-      };
-
-      await supabase.from('users').upsert({
-        id: userId,
-        name: fullName || existingUser?.name || 'Foydalanuvchi',
-        phone,
-        telegram: username || existingUser?.telegram || null,
-        telegram_id: tgId,
-        language: updatedOnboarding.language,
-        is_premium: existingUser?.is_premium || false,
-        onboarding: updatedOnboarding,
         updated_at: new Date().toISOString()
-      }, { onConflict: 'id' });
+      }).eq('id', userId);
 
-      // Generate single-use exchange code so the user can open Web App / Mini App authenticated
-      const now = new Date();
-      const exchangeCode = crypto.randomBytes(24).toString('hex');
-      const codeExpiresAt = new Date(now.getTime() + 5 * 60 * 1000).toISOString();
-      await supabase.from('users').upsert({
-        id: `exchange_${exchangeCode}`,
-        telegram_id: tgId,
-        session_token: existingUser?.session_token || null,
-        login_request_status: 'VALID',
-        session_expires_at: codeExpiresAt,
-        updated_at: now.toISOString()
-      }, { onConflict: 'id' });
-
-      const successText = `✅ <b>Telefon raqamingiz saqlandi va profilingiz tasdiqlandi!</b> 🎉\n\n📞 <b>Raqam:</b> ${phone}\n\n👇 <i>Ilovaga o'tish uchun quyidagi tugmani bosing:</i>`;
-      await sendTelegramMessage(chatId, successText, getCleanInlineKeyboard(exchangeCode));
-      await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
+      await sendTelegramMessage(
+        chatId,
+        `✅ <b>Telefon raqamingiz muvaffaqiyatli saqlandi!</b> 🎉\n\n📞 <b>Raqam:</b> ${phone}\n\n👇 <i>Moliya AI imkoniyatlaridan to'liq foydalanishingiz mumkin:</i>`,
+        {
+          inline_keyboard: [
+            [{ text: "📱 Moliya Mini App", web_app: { url: appUrl } }]
+          ]
+        }
+      );
       return res.status(200).json({ status: 'ok' });
     }
 
-    // Handle /start command
-    if (text.startsWith("/start")) {
+    // Handle /start Command
+    if (text.startsWith('/start')) {
       const rawArg = text.replace('/start', '').trim();
       const requestId = rawArg.replace('req_', '').trim();
 
       if (requestId && requestId.length >= 8) {
+        // Web login exchange flow
         const verifyResult = await verifyAndMarkLoginRequest(requestId, fromUser);
-        const code = verifyResult?.exchangeCode || undefined;
-        const tgId = String(fromUser?.id);
-        const { data: userDoc } = await supabase.from('users').select('*').eq('id', `moliya_user_tg_${tgId}`).maybeSingle();
+        const code = verifyResult?.exchangeCode;
+        const targetUrl = code ? `${appUrl}?code=${code}` : appUrl;
 
-        const successText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n✅ <b>Profilingiz muvaffaqiyatli tasdiqlandi!</b> 🚀\nBrauzeringizdagi Moliya AI sahifasiga qaytsangiz, profilingiz avtomatik ochiladi.\n\n👇 <i>Ilovani to'g'ridan-to'g'ri ochish:</i>`;
-        await sendTelegramMessage(chatId, successText, getCleanInlineKeyboard(code));
-
-        if (!userDoc?.phone && !userDoc?.onboarding?.phone) {
-          const phonePromptText = `📞 <i>Profilingiz to'liq bo'lishi uchun telefon raqamingizni ham ulashing:</i>`;
-          const phoneReplyKeyboard = {
-            keyboard: [
-              [{ text: "📞 Telefon raqamini ulashish", request_contact: true }],
-              [{ text: "📱 Mini App", web_app: { url: code ? `${appUrl}?code=${code}` : appUrl } }, { text: "🌐 Web App", url: code ? `${appUrl}?code=${code}` : appUrl }]
-            ],
-            resize_keyboard: true,
-            one_time_keyboard: true
-          };
-          await sendTelegramMessage(chatId, phonePromptText, phoneReplyKeyboard);
-        } else {
-          await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
-        }
+        await sendTelegramMessage(
+          chatId,
+          `<b>Assalomu alaykum, ${fromUser.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
+          `✅ <b>Profilingiz tasdiqlandi!</b> 🚀\n` +
+          `Brauzeringizdagi Moliya AI sahifasiga qaytsangiz, profilingiz avtomatik ochiladi.\n\n` +
+          `👇 <i>Ilovaga kirish:</i>`,
+          {
+            inline_keyboard: [
+              [{ text: "📱 Moliya Mini App", web_app: { url: targetUrl } }],
+              [{ text: "🌐 Web Ilovaga o'tish", url: targetUrl }]
+            ]
+          }
+        );
         return res.status(200).json({ status: 'ok' });
       }
 
-      // Standard /start
-      const tgId = String(fromUser?.id);
-      const tgName = [fromUser.first_name, fromUser.last_name].filter(Boolean).join(' ') || 'Telegram Foydalanuvchi';
-      const tgUsername = fromUser.username ? `@${fromUser.username}` : '';
-      const userId = `moliya_user_tg_${tgId}`;
+      // Normal bot start
+      const welcomeText =
+        `<b>Assalomu alaykum, ${fromUser.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
+        `Men <b>Moliya AI</b> — shaxsiy moliyaviy yordamchingizman.\n\n` +
+        `💡 <b>Qanday ishlatish mumkin?</b>\n` +
+        `• <b>Xarajat yozish:</b> <i>"50 000 go'sht oldim"</i> yoki <i>"taksi 15000"</i>\n` +
+        `• <b>Daromad yozish:</b> <i>"Maosh oldim 5 000 000"</i>\n` +
+        `• <b>Ovozli xabar:</b> Ovoz bilan xarajatni gapirib yuboring 🎙\n` +
+        `• <b>Chek skaner:</b> Xarid cheki rasmini yuboring 📸\n\n` +
+        `📊 /stats — Oylik hisobot va balansni ko'rish\n` +
+        `❓ /help — Yordam va yo'riqnoma\n\n` +
+        `👇 <i>Ilovani ochish uchun quyidagi tugmani bosing:</i>`;
 
-      // Always get and store Telegram User ID, name, username
-      const { data: userDoc } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
-
-      const existingPhone = userDoc?.phone || userDoc?.onboarding?.phone || '';
-      const updatedOnboarding = {
-        ...(userDoc?.onboarding || {}),
-        name: tgName || userDoc?.name,
-        telegram: tgUsername || userDoc?.telegram,
-        telegramId: tgId,
-        language: userDoc?.language || userDoc?.onboarding?.language || 'uz',
-        phone: existingPhone
-      };
-
-      await supabase.from('users').upsert({
-        id: userId,
-        name: tgName,
-        telegram: tgUsername,
-        telegram_id: tgId,
-        phone: existingPhone || null,
-        language: updatedOnboarding.language,
-        onboarding: updatedOnboarding,
-        updated_at: new Date().toISOString()
-      }, { onConflict: 'id' });
-
-      // Generate single-use exchange code for buttons
-      const now = new Date();
-      const exchangeCode = crypto.randomBytes(24).toString('hex');
-      const codeExpiresAt = new Date(now.getTime() + 5 * 60 * 1000).toISOString();
-      await supabase.from('users').upsert({
-        id: `exchange_${exchangeCode}`,
-        telegram_id: tgId,
-        session_token: userDoc?.session_token || null,
-        login_request_status: 'VALID',
-        session_expires_at: codeExpiresAt,
-        updated_at: now.toISOString()
-      }, { onConflict: 'id' });
-
-      if (!existingPhone) {
-        const phonePromptText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
-          `<b>Moliya AI</b> botiga xush kelibsiz! 🚀\n\n` +
-          `📞 <i>Profilingiz to'liq bo'lishi uchun telefon raqamingizni yuboring:</i>`;
-        const phoneReplyKeyboard = {
-          keyboard: [
-            [{ text: "📞 Telefon raqamini ulashish", request_contact: true }],
-            [{ text: "📱 Mini App", web_app: { url: `${appUrl}?code=${exchangeCode}` } }, { text: "🌐 Web App", url: `${appUrl}?code=${exchangeCode}` }]
-          ],
-          resize_keyboard: true,
-          one_time_keyboard: true
-        };
-        await sendTelegramMessage(chatId, phonePromptText, phoneReplyKeyboard);
-        return res.status(200).json({ status: 'ok' });
-      }
-
-      const welcomeText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n<b>Moliya AI</b> botiga xush kelibsiz! 🚀\nPulingizni oson va aqlli boshqaring.\n\n👇 <b>Kerakli bo'limni tanlang:</b>`;
-      await sendTelegramMessage(chatId, welcomeText, getCleanInlineKeyboard(exchangeCode));
-      await sendTelegramMessage(chatId, "👇 Asosiy menyu:", getMainMenuKeyboard());
-      return res.status(200).json({ status: 'ok' });
-    }
-
-    // Balans & Hisobot
-    if (text.includes("Balans & Hisobot") || text.startsWith("/report") || text.startsWith("/balans")) {
-      const summary = await renderUserReportSummary(fromUser);
-      await sendTelegramMessage(chatId, summary.text, summary.inlineKeyboard);
-      return res.status(200).json({ status: 'ok' });
-    }
-
-    // Web App Link
-    if (text.includes("Web App") || text.startsWith("/webapp")) {
-      await sendTelegramMessage(chatId, `🌐 <b>Moliya AI Web App:</b>\n\n👇 <i>Brauzerda kirish uchun tugmani bosing:</i>`, {
+      await sendTelegramMessage(chatId, welcomeText, {
         inline_keyboard: [
-          [{ text: "🌐 Web App-ni ochish 🚀", url: appUrl }],
-          [{ text: "📱 Telegram Mini App", web_app: { url: appUrl } }]
+          [{ text: "📱 Moliya Mini App", web_app: { url: appUrl } }]
         ]
       });
       return res.status(200).json({ status: 'ok' });
     }
 
-    // Default: AI Expense/Income Parsing for text inputs
-    if (text.length > 2) {
-      const aiLimit = await checkAndIncrementAiLimitAsync(fromUser);
-      if (!aiLimit.allowed) {
-        await sendTelegramMessage(chatId, "⚠️ <b>Bepul AI limitingiz tugadi!</b> Cheksiz ishlatish uchun Premium oling.", getCleanInlineKeyboard());
-        return res.status(200).json({ status: 'ok' });
+    // Handle /help Command
+    if (text.startsWith('/help') || text.startsWith('/yordam')) {
+      const helpText =
+        `ℹ️ <b>Moliya AI Botdan foydalanish yo'riqnomasi</b>\n\n` +
+        `📝 <b>1. Oddiy matn bilan:</b>\n` +
+        `Shunchaki xarajatingizni yozing, masalan:\n` +
+        `• <i>"Bozordan 120 000 so'mga oziq-ovqat oldim"</i>\n` +
+        `• <i>"Benzin 200 000"</i>\n` +
+        `• <i>"Kofega 25 ming ketdi"</i>\n\n` +
+        `🎙 <b>2. Ovozli xabar:</b>\n` +
+        `Ovoz tugmasini bosib, qayerga qancha sarflaganingizni ayting.\n\n` +
+        `📸 <b>3. Chek rasmi:</b>\n` +
+        `Supermarket yoki to'lov chekini rasmga olib yuboring.\n\n` +
+        `📊 <b>Buyruqlar:</b>\n` +
+        `• /stats — Oylik xarajatlar tahlili\n` +
+        `• /start — Bosh sahifa`;
+
+      await sendTelegramMessage(chatId, helpText, {
+        inline_keyboard: [
+          [{ text: "📱 Moliya Mini App", web_app: { url: appUrl } }]
+        ]
+      });
+      return res.status(200).json({ status: 'ok' });
+    }
+
+    // Handle /stats or /hisobot Command
+    if (text.startsWith('/stats') || text.startsWith('/hisobot')) {
+      const { data: u } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
+      const txs = Array.isArray(u?.transactions) ? u.transactions : [];
+
+      const currentMonth = new Date().getMonth() + 1;
+      const currentYear = new Date().getFullYear();
+
+      let totalExpense = 0;
+      let totalIncome = 0;
+      const catTotals: Record<string, number> = {};
+
+      for (const t of txs) {
+        const amt = Number(t.amount || 0);
+        if (t.type === 'income') {
+          totalIncome += amt;
+        } else {
+          totalExpense += amt;
+          const cat = t.category || 'Boshqa';
+          catTotals[cat] = (catTotals[cat] || 0) + amt;
+        }
       }
 
-      const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || "";
-      if (apiKey) {
+      const balance = totalIncome - totalExpense;
+      const sortedCats = Object.entries(catTotals).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+      let breakdownText = '';
+      for (const [cat, sum] of sortedCats) {
+        const emoji = CATEGORY_EMOJIS[cat] || '📦';
+        breakdownText += `${emoji} <b>${cat}:</b> ${sum.toLocaleString()} so'm\n`;
+      }
+
+      const statsText =
+        `📊 <b>Joriy oylik hisobot (${currentMonth}/${currentYear})</b>\n\n` +
+        `🔴 <b>Jami xarajat:</b> ${totalExpense.toLocaleString()} so'm\n` +
+        `🟢 <b>Jami daromad:</b> ${totalIncome.toLocaleString()} so'm\n` +
+        `💰 <b>Balans:</b> ${balance.toLocaleString()} so'm\n\n` +
+        (breakdownText ? `<b>Top xarajat kategoriyalari:</b>\n${breakdownText}\n` : '') +
+        `👇 <i>Batafsil ko'rish uchun Mini Appni oching:</i>`;
+
+      await sendTelegramMessage(chatId, statsText, {
+        inline_keyboard: [
+          [{ text: "📱 Mini Appda to'liq ko'rish", web_app: { url: appUrl } }]
+        ]
+      });
+      return res.status(200).json({ status: 'ok' });
+    }
+
+    // Handle /clear Command
+    if (text.startsWith('/clear')) {
+      await sendTelegramMessage(
+        chatId,
+        `🧹 <b>Klaviatura tozalandi.</b>\n\nXarajat yozish uchun oddiy matn yuboring yoki quyidagi tugma orqali Mini Appni oching:`,
+        {
+          remove_keyboard: true,
+          inline_keyboard: [
+            [{ text: "📱 Moliya Mini App", web_app: { url: appUrl } }]
+          ]
+        }
+      );
+      return res.status(200).json({ status: 'ok' });
+    }
+
+    // Handle Voice Message (Audio Parsing)
+    if (message.voice) {
+      const quota = await checkAiQuota(userId);
+      if (!quota.allowed) {
+        await sendTelegramMessage(chatId, `⚠️ ${quota.message || "AI so'rovlar limitingiz tugadi."}`);
+        return res.status(200).json({ status: 'quota_exceeded' });
+      }
+
+      const fileUrl = await getTelegramFileUrl(message.voice.file_id);
+      if (fileUrl) {
         try {
-          const ai = new GoogleGenAI({ apiKey });
-          const prompt = `Parse this financial text: "${text}". Return JSON: { type: 'expense'|'income', amount: number, category: string, note: string }`;
-          const result = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-            config: { responseMimeType: "application/json" }
-          });
+          const audioRes = await fetch(fileUrl);
+          const arrayBuffer = await audioRes.arrayBuffer();
+          const base64Audio = Buffer.from(arrayBuffer).toString('base64');
 
-          if (result && result.text) {
-            const parsed = JSON.parse(result.text);
-            if (parsed.amount) {
-              const draftTx = {
-                id: Date.now().toString() + Math.random().toString(36).substring(2, 6),
-                type: parsed.type || 'expense',
-                amount: parsed.amount,
-                name: parsed.note || text,
-                category: parsed.category || 'Boshqa',
-                date: new Date().toISOString()
-              };
+          const candidateKeys = await getCandidateAiKeys();
+          const envKey = process.env.GEMINI_API_KEY;
+          const apiKey = candidateKeys[0]?.api_key || envKey || '';
 
-              await savePendingDraftTx(fromUser, draftTx);
-              const card = await renderRichTransactionCard(fromUser, draftTx, true);
-              await sendTelegramMessage(chatId, card.text, card.inlineKeyboard);
-              return res.status(200).json({ status: 'ok' });
+          if (apiKey) {
+            const ai = new GoogleGenAI({ apiKey: apiKey.trim() });
+            const prompt = `You are a financial AI assistant for Moliya AI. Listen to this voice note and extract the financial transaction in Uzbek/Russian.
+Return JSON with:
+- type: 'expense' | 'income'
+- amount: number
+- category: 'Oziq-ovqat' | 'Transport' | 'Kiyim' | 'Kommunal' | 'Sog\'liq' | 'Ta\'lim' | 'Ko\'ngil ochar' | 'Boshqa' | 'Maosh'
+- note: text description
+- title: 2-3 word title`;
+
+            const audioResult = await ai.models.generateContent({
+              model: 'gemini-2.0-flash',
+              contents: [
+                {
+                  role: 'user',
+                  parts: [
+                    {
+                      inlineData: {
+                        mimeType: 'audio/ogg',
+                        data: base64Audio
+                      }
+                    },
+                    { text: prompt }
+                  ]
+                }
+              ],
+              config: {
+                responseMimeType: "application/json"
+              }
+            });
+
+            if (audioResult.text) {
+              const parsed = JSON.parse(audioResult.text);
+              if (parsed.amount) {
+                const txId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+                const now = new Date();
+                const newTx = {
+                  id: txId,
+                  type: parsed.type || 'expense',
+                  name: parsed.title || parsed.note || 'Ovozli xarajat',
+                  category: parsed.category || 'Boshqa',
+                  amount: Number(parsed.amount),
+                  date: now.toISOString().slice(0, 10),
+                  time: now.toTimeString().slice(0, 5),
+                  note: parsed.note || 'Ovozli kiritilgan'
+                };
+
+                await saveBotTransaction(userId, newTx);
+                await recordAiUsage(userId, 'text', parsed.note || 'Voice expense', quota.isPremium);
+
+                const emoji = CATEGORY_EMOJIS[newTx.category] || '💸';
+                const successMsg =
+                  `✅ <b>Ovozli xabar saqlandi!</b>\n\n` +
+                  `${emoji} <b>Kategoriya:</b> ${newTx.category}\n` +
+                  `💰 <b>Summa:</b> ${newTx.amount.toLocaleString()} so'm\n` +
+                  `📝 <b>Izoh:</b> ${newTx.name}\n` +
+                  `📅 <b>Sana:</b> ${newTx.date} ${newTx.time}`;
+
+                await sendTelegramMessage(chatId, successMsg, {
+                  inline_keyboard: [
+                    [{ text: "🗑 O'chirish", callback_data: `del_${txId}` }],
+                    [{ text: "📱 Mini Appda ko'rish", web_app: { url: appUrl } }]
+                  ]
+                });
+                return res.status(200).json({ status: 'ok' });
+              }
             }
           }
-        } catch (aiErr) {
-          console.error('AI parse error:', aiErr);
+        } catch (voiceErr) {
+          console.error('[BOT] Voice parsing error:', voiceErr);
         }
       }
     }
 
-    // Default fallback
-    await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
+    // Handle Photo (Receipt OCR Parsing)
+    if (message.photo && message.photo.length > 0) {
+      const quota = await checkAiQuota(userId);
+      if (!quota.allowed) {
+        await sendTelegramMessage(chatId, `⚠️ ${quota.message || "AI so'rovlar limitingiz tugadi."}`);
+        return res.status(200).json({ status: 'quota_exceeded' });
+      }
+
+      const photo = message.photo[message.photo.length - 1];
+      const fileUrl = await getTelegramFileUrl(photo.file_id);
+      if (fileUrl) {
+        try {
+          const imgRes = await fetch(fileUrl);
+          const arrayBuffer = await imgRes.arrayBuffer();
+          const base64Img = Buffer.from(arrayBuffer).toString('base64');
+
+          const candidateKeys = await getCandidateAiKeys();
+          const envKey = process.env.GEMINI_API_KEY;
+          const apiKey = candidateKeys[0]?.api_key || envKey || '';
+
+          if (apiKey) {
+            const ai = new GoogleGenAI({ apiKey: apiKey.trim() });
+            const prompt = `You are an OCR receipt scanner for Moliya AI. Extract receipt info into JSON:
+- type: 'expense'
+- amount: total amount paid
+- category: choose best fit from ['Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\\'liq', 'Ko\\'ngil ochar', 'Boshqa']
+- note: store or merchant name and summary
+- title: merchant name`;
+
+            const imgResult = await ai.models.generateContent({
+              model: 'gemini-2.0-flash',
+              contents: [
+                {
+                  role: 'user',
+                  parts: [
+                    {
+                      inlineData: {
+                        mimeType: 'image/jpeg',
+                        data: base64Img
+                      }
+                    },
+                    { text: prompt }
+                  ]
+                }
+              ],
+              config: {
+                responseMimeType: "application/json"
+              }
+            });
+
+            if (imgResult.text) {
+              const parsed = JSON.parse(imgResult.text);
+              if (parsed.amount) {
+                const txId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+                const now = new Date();
+                const newTx = {
+                  id: txId,
+                  type: 'expense',
+                  name: parsed.title || parsed.note || 'Chek xarajati',
+                  category: parsed.category || 'Oziq-ovqat',
+                  amount: Number(parsed.amount),
+                  date: now.toISOString().slice(0, 10),
+                  time: now.toTimeString().slice(0, 5),
+                  note: parsed.note || 'Chek skaner qilindi'
+                };
+
+                await saveBotTransaction(userId, newTx);
+                await recordAiUsage(userId, 'receipt', parsed.note || 'Receipt scan', quota.isPremium);
+
+                const emoji = CATEGORY_EMOJIS[newTx.category] || '🧾';
+                const successMsg =
+                  `🧾 <b>Chek muvaffaqiyatli saqlandi!</b>\n\n` +
+                  `${emoji} <b>Do'kon/Joy:</b> ${newTx.name}\n` +
+                  `💰 <b>Jami summa:</b> ${newTx.amount.toLocaleString()} so'm\n` +
+                  `📁 <b>Kategoriya:</b> ${newTx.category}\n` +
+                  `📅 <b>Sana:</b> ${newTx.date} ${newTx.time}`;
+
+                await sendTelegramMessage(chatId, successMsg, {
+                  inline_keyboard: [
+                    [{ text: "🗑 O'chirish", callback_data: `del_${txId}` }],
+                    [{ text: "📱 Mini Appda ko'rish", web_app: { url: appUrl } }]
+                  ]
+                });
+                return res.status(200).json({ status: 'ok' });
+              }
+            }
+          }
+        } catch (imgErr) {
+          console.error('[BOT] Receipt parsing error:', imgErr);
+        }
+      }
+    }
+
+    // Handle Natural Language Text Expense (e.g. "50 000 go'sht oldim", "taksi 15000")
+    if (text && !text.startsWith('/')) {
+      const quota = await checkAiQuota(userId);
+      if (!quota.allowed) {
+        await sendTelegramMessage(chatId, `⚠️ ${quota.message || "AI so'rovlar limitingiz tugadi."}`);
+        return res.status(200).json({ status: 'quota_exceeded' });
+      }
+
+      const parsed = await parseTextWithAi(text);
+      if (parsed && parsed.amount) {
+        const txId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        const now = new Date();
+        const newTx = {
+          id: txId,
+          type: parsed.type || 'expense',
+          name: parsed.title || parsed.note || text,
+          category: parsed.category || 'Boshqa',
+          amount: Number(parsed.amount),
+          date: now.toISOString().slice(0, 10),
+          time: now.toTimeString().slice(0, 5),
+          note: parsed.note || text
+        };
+
+        await saveBotTransaction(userId, newTx);
+        await recordAiUsage(userId, 'text', text, quota.isPremium);
+
+        const emoji = CATEGORY_EMOJIS[newTx.category] || (newTx.type === 'income' ? '💰' : '💸');
+        const isInc = newTx.type === 'income';
+
+        const successMsg =
+          `${isInc ? '🟢' : '🔴'} <b>${isInc ? 'Daromad' : 'Xarajat'} saqlandi!</b>\n\n` +
+          `${emoji} <b>Kategoriya:</b> ${newTx.category}\n` +
+          `💰 <b>Summa:</b> ${newTx.amount.toLocaleString()} so'm\n` +
+          `📝 <b>Izoh:</b> ${newTx.name}\n` +
+          `📅 <b>Sana:</b> ${newTx.date} ${newTx.time}`;
+
+        await sendTelegramMessage(chatId, successMsg, {
+          inline_keyboard: [
+            [{ text: "🗑 O'chirish", callback_data: `del_${txId}` }],
+            [{ text: "📱 Mini Appda ko'rish", web_app: { url: appUrl } }]
+          ]
+        });
+        return res.status(200).json({ status: 'ok' });
+      } else {
+        await sendTelegramMessage(
+          chatId,
+          `🤔 <b>Summani aniqlab bo'lmadi.</b>\n\nIltimos, xarajatni summa bilan yozing, masalan:\n<i>"50 000 so'm go'sht oldim"</i> yoki <i>"taksi 15000"</i>`,
+          {
+            inline_keyboard: [
+              [{ text: "📱 Moliya Mini App", web_app: { url: appUrl } }]
+            ]
+          }
+        );
+        return res.status(200).json({ status: 'ok' });
+      }
+    }
+
     return res.status(200).json({ status: 'ok' });
   } catch (err: any) {
-    console.error('Telegram Webhook error:', err);
-    return res.status(200).json({ status: 'error_handled' });
+    console.error('[BOT] Fatal handler error:', err);
+    return res.status(200).json({ error: err.message });
   }
 }

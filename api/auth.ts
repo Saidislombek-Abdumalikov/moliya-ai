@@ -83,6 +83,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const tgId = String(tgUser.id);
       const userId = `moliya_user_tg_${tgId}`;
 
+      // Restriction & Block Guard: Deny access if Telegram ID is restricted or blocked
+      const { data: restrictionCheck } = await supabase
+        .from('users')
+        .select('id, is_blocked, is_restricted, device_info, onboarding')
+        .or(`id.eq.${userId},id.eq.restricted_tg_${tgId},telegram_id.eq.${tgId}`)
+        .maybeSingle();
+
+      const isUserRestricted = Boolean(
+        restrictionCheck?.is_restricted ||
+        restrictionCheck?.is_blocked ||
+        restrictionCheck?.id?.startsWith('restricted_') ||
+        restrictionCheck?.device_info?.restricted ||
+        restrictionCheck?.device_info?.is_blocked ||
+        restrictionCheck?.onboarding?.is_restricted ||
+        restrictionCheck?.onboarding?.is_blocked
+      );
+
+      if (isUserRestricted) {
+        return res.status(403).json({
+          error: 'ACCOUNT_RESTRICTED',
+          message: "Hisobingiz ma'muriyat tomonidan cheklangan."
+        });
+      }
+
       const now = new Date();
       const expiresAt = new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString();
       const randomHex = Array.from({ length: 32 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
@@ -310,6 +334,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .maybeSingle();
 
       if (!error && userDoc) {
+        // Restriction & Block check
+        const isBlocked = Boolean(
+          userDoc.is_blocked ||
+          userDoc.is_restricted ||
+          userDoc.id?.startsWith('restricted_') ||
+          userDoc.device_info?.is_blocked ||
+          userDoc.device_info?.restricted ||
+          userDoc.onboarding?.is_blocked ||
+          userDoc.onboarding?.is_restricted
+        );
+
+        if (isBlocked) {
+          return res.status(200).json({ valid: false, reason: 'ACCOUNT_RESTRICTED', message: "Hisobingiz cheklangan" });
+        }
+
         if (userDoc.session_expires_at && new Date(userDoc.session_expires_at).getTime() < Date.now()) {
           return res.status(200).json({ valid: false, reason: 'Session expired' });
         }

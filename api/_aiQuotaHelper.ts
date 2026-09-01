@@ -40,12 +40,21 @@ export async function checkAiQuota(
     }
 
     // Check if user is blocked by admin
-    if (suUser?.is_blocked) {
+    const isUserBlocked = Boolean(
+      suUser?.is_blocked ||
+      suUser?.onboarding?.is_blocked ||
+      suUser?.device_info?.is_blocked ||
+      suUser?.is_restricted ||
+      suUser?.onboarding?.is_restricted ||
+      suUser?.device_info?.restricted
+    );
+
+    if (isUserBlocked) {
       return {
         allowed: false,
-        isPremium: Boolean(suUser.is_premium),
+        isPremium: Boolean(suUser?.is_premium),
         limit: 0,
-        usedCount: Number(suUser.ai_query_count || 0),
+        usedCount: Number(suUser?.ai_query_count || 0),
         message: "Hisobingiz ma'muriyat tomonidan bloklangan. Yordam uchun @moliya_admin ga murojaat qiling."
       };
     }
