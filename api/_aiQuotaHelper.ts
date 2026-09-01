@@ -3,25 +3,32 @@ import { supabase } from './_supabaseClient.js';
 export interface QuotaCheckResult {
   allowed: boolean;
   isPremium: boolean;
+  isTrial: boolean;
   limit: number | null;
   usedCount: number;
+  remaining?: number;
   message?: string;
 }
 
 /**
+ * Helper to get current UTC Date string (YYYY-MM-DD)
+ */
+function getUtcDateString(date: Date = new Date()): string {
+  return date.toISOString().slice(0, 10);
+}
+
+/**
  * CHECK ONLY — Does the user have remaining AI quota?
- * Does NOT increment any counters. Safe to call before AI request.
+ * Handles 1-Day Unlimited Trial, Expiration, and Free Tier (5 AI ops/day) with Daily Reset.
  */
 export async function checkAiQuota(
   userId: string | undefined
 ): Promise<QuotaCheckResult> {
-  // Allow guest users with a small limit (they haven't connected Telegram yet)
   if (!userId) {
-    return { allowed: true, isPremium: false, limit: 10, usedCount: 0 };
+    return { allowed: true, isPremium: false, isTrial: false, limit: 5, usedCount: 0, remaining: 5 };
   }
 
   try {
-    // 1. Fetch user subscription & quota status from Supabase users table
     const { data: suUser, error: fetchError } = await supabase
       .from('users')
       .select('*')
@@ -33,13 +40,14 @@ export async function checkAiQuota(
       return {
         allowed: false,
         isPremium: false,
-        limit: 20,
+        isTrial: false,
+        limit: 5,
         usedCount: 0,
         message: "Ma'lumotlar bazasiga ulanishda xatolik. Iltimos, qayta urinib ko'ring."
       };
     }
 
-    // Check if user is blocked by admin
+    // 1. Check if user is blocked by admin
     const isUserBlocked = Boolean(
       suUser?.is_blocked ||
       suUser?.onboarding?.is_blocked ||
@@ -53,58 +61,106 @@ export async function checkAiQuota(
       return {
         allowed: false,
         isPremium: Boolean(suUser?.is_premium),
+        isTrial: false,
         limit: 0,
         usedCount: Number(suUser?.ai_query_count || 0),
-        message: "Hisobingiz ma'muriyat tomonidan bloklangan. Yordam uchun @moliya_admin ga murojaat qiling."
+        remaining: 0,
+        message: "⛔ Hisobingiz ma'muriyat tomonidan bloklangan. Yordam uchun @moliya_admin ga murojaat qiling."
       };
     }
 
+    // 2. Check 1-Day Premium Trial & Expiration
     let isPremium = false;
-    let usedCount = 0;
+    let isTrial = false;
+    const nowMs = Date.now();
 
-    if (suUser) {
-      const isExpired = suUser.premium_expires_at 
-        ? new Date(suUser.premium_expires_at).getTime() <= Date.now() 
-        : false;
-      isPremium = Boolean(suUser.is_premium && !isExpired);
-      usedCount = Number(suUser.ai_query_count || 0);
+    if (suUser?.is_premium) {
+      if (suUser.premium_expires_at) {
+        const expiresMs = new Date(suUser.premium_expires_at).getTime();
+        if (nowMs < expiresMs) {
+          isPremium = true;
+          // If trial_ends_at is set, it's the 1-day trial
+          isTrial = Boolean(suUser.trial_ends_at || suUser.onboarding?.trial_ends_at);
+        } else {
+          // Trial / VIP expired -> auto downgrade in database
+          isPremium = false;
+          isTrial = false;
+          supabase
+            .from('users')
+            .update({
+              is_premium: false,
+              ai_limit: 5,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', userId)
+            .then(() => {});
+        }
+      } else {
+        // Lifetime VIP
+        isPremium = true;
+      }
     }
 
-    // AI Limit Evaluation:
-    // null or undefined: VIP = Unlimited (null), Free = 20
-    // 0 or -1: UNLIMITED (null)
-    // > 0: Custom limit number (e.g. 50, 100)
+    // 3. Daily Usage & Daily Reset Calculation (UTC boundary)
+    const todayUtc = getUtcDateString(new Date());
+    const lastQueryUtc = suUser?.last_ai_query_at ? getUtcDateString(new Date(suUser.last_ai_query_at)) : null;
+
+    let usedCount = 0;
+    if (lastQueryUtc === todayUtc) {
+      usedCount = Number(suUser?.ai_query_count || 0);
+    } else {
+      // New day -> usage resets to 0
+      usedCount = 0;
+    }
+
+    // 4. Effective AI Limit:
+    // VIP or Active Trial -> Unlimited (null)
+    // Custom limit override -> suUser.ai_limit (if > 0)
+    // Free Tier -> 5 AI operations per day
     let effectiveLimit: number | null = null;
-    if (suUser?.ai_limit === 0 || suUser?.ai_limit === -1) {
-      effectiveLimit = null; // Unlimited!
+    if (isPremium) {
+      effectiveLimit = null; // Unlimited for VIP / 1-day Trial
+    } else if (suUser?.ai_limit === 0 || suUser?.ai_limit === -1) {
+      effectiveLimit = null; // Admin explicit unlimited
     } else if (suUser?.ai_limit !== undefined && suUser?.ai_limit !== null && suUser.ai_limit > 0) {
       effectiveLimit = suUser.ai_limit;
     } else {
-      effectiveLimit = isPremium ? null : 20;
+      effectiveLimit = 5; // Standard Free tier limit = 5 ops/day
     }
 
-    // 2. Check Quota: If effectiveLimit is null, it's UNLIMITED (always allowed)
+    // 5. Quota Evaluation
     const hasQuota = (effectiveLimit === null) || (usedCount < effectiveLimit);
+    const remaining = effectiveLimit === null ? 999 : Math.max(0, effectiveLimit - usedCount);
 
     if (!hasQuota) {
       return {
         allowed: false,
         isPremium,
+        isTrial,
         limit: effectiveLimit,
         usedCount,
-        message: isPremium 
-          ? `VIP tarifdagi kunlik AI so'rovlar limitingiz (${effectiveLimit} ta) tugadi.`
-          : `Bepul AI kunlik limitingiz (${effectiveLimit || 20} ta) tugadi. Cheksiz AI ishlatish uchun VIP Premium obunasini oling!`
+        remaining: 0,
+        message: isTrial
+          ? "1 kunlik cheksiz Premium sinov muddatingiz tugadi. Bepul tarifda kuniga 5 ta AI so'rovi mavjud."
+          : `Kunlik bepul AI limitingiz (${effectiveLimit || 5} ta) tugadi. Ertaga yangilanadi yoki cheksiz AI uchun VIP oling!`
       };
     }
 
-    return { allowed: true, isPremium, limit: effectiveLimit, usedCount };
+    return {
+      allowed: true,
+      isPremium,
+      isTrial,
+      limit: effectiveLimit,
+      usedCount,
+      remaining
+    };
   } catch (err) {
-    console.error('AI Quota check error:', err);
+    console.error('[AI_QUOTA] Exception during quota check:', err);
     return {
       allowed: false,
       isPremium: false,
-      limit: 20,
+      isTrial: false,
+      limit: 5,
       usedCount: 0,
       message: "Tizimda xatolik yuz berdi. Iltimos, qayta urinib ko'ring."
     };
@@ -112,8 +168,8 @@ export async function checkAiQuota(
 }
 
 /**
- * RECORD USAGE — Increment the user's AI query count and log the request.
- * Call this ONLY AFTER a successful AI response.
+ * RECORD USAGE — Increments user AI query count and logs to ai_logs table.
+ * Resets count if it's a new UTC day.
  */
 export async function recordAiUsage(
   userId: string | undefined,
@@ -124,25 +180,34 @@ export async function recordAiUsage(
   if (!userId) return { newCount: 0 };
 
   try {
+    const now = new Date();
+    const todayUtc = getUtcDateString(now);
+
     const { data: user } = await supabase
       .from('users')
-      .select('ai_query_count')
+      .select('ai_query_count, last_ai_query_at')
       .eq('id', userId)
       .maybeSingle();
 
-    const current = Number(user?.ai_query_count || 0);
-    const newCount = current + 1;
+    const lastQueryUtc = user?.last_ai_query_at ? getUtcDateString(new Date(user.last_ai_query_at)) : null;
+
+    let newCount = 1;
+    if (lastQueryUtc === todayUtc) {
+      newCount = Number(user?.ai_query_count || 0) + 1;
+    } else {
+      newCount = 1; // Reset to 1 for the new day
+    }
 
     await supabase
       .from('users')
       .update({
         ai_query_count: newCount,
-        last_ai_query_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        last_ai_query_at: now.toISOString(),
+        updated_at: now.toISOString()
       })
       .eq('id', userId);
 
-    // Audit log
+    // Write audit log
     await supabase
       .from('ai_logs')
       .insert([{
@@ -150,7 +215,7 @@ export async function recordAiUsage(
         query_type: queryType,
         prompt_summary: (promptSummary || '').slice(0, 300),
         is_premium: isPremium,
-        timestamp: new Date().toISOString()
+        timestamp: now.toISOString()
       }]);
 
     return { newCount };
@@ -163,8 +228,7 @@ export async function recordAiUsage(
 export const recordAiUsageBackend = recordAiUsage;
 
 /**
- * Legacy combined check and record helper for server routes and tests.
- * Maintains backward-compatible return shape including usedCount and isPremium.
+ * Combined check & record helper
  */
 export async function checkAndRecordAiUsage(
   userId: string | undefined,
@@ -180,8 +244,10 @@ export async function checkAndRecordAiUsage(
   return {
     allowed: true,
     isPremium: check.isPremium,
+    isTrial: check.isTrial,
     limit: check.limit,
     usedCount: usage.newCount,
+    remaining: check.limit === null ? 999 : Math.max(0, check.limit - usage.newCount),
     message: undefined
   };
 }

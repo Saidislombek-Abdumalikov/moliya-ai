@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { motion, AnimatePresence } from 'motion/react'
 import { useFinance } from '../FinanceContext'
 
 export interface OnboardingResult {
@@ -13,659 +14,364 @@ export interface OnboardingResult {
   telegramId?: string
   isPremium?: boolean
   notifications?: { opt1: boolean; opt2: boolean; opt3: boolean }
+  registration_status?: string
 }
 
 interface Props {
   onComplete: (result: OnboardingResult) => void
 }
 
-type Step = 'language' | 'goal' | 'ai' | 'telegram'
-
-const languages: { code: 'uz' | 'uz_cyrl' | 'ru' | 'en'; label: string; tag: string; isSubOption?: boolean; parentCode?: string }[] = [
-  { code: 'uz', label: "O'zbekcha", tag: '🇺🇿' },
-  { code: 'ru', label: 'Русский', tag: '🇷🇺' },
-  { code: 'en', label: 'English', tag: '🇺🇸' },
-]
-
-const uzbekScriptTypes: { code: 'uz' | 'uz_cyrl'; label: string; sublabel: string }[] = [
-  { code: 'uz', label: 'Lotin', sublabel: "A B C D" },
-  { code: 'uz_cyrl', label: 'Кирилл', sublabel: "А Б В Г" },
-]
-
-// Multilingual translations including Uzbek Cyrillic & English
-const translations = {
-  uz: {
-    selectLanguage: "Tilni tanlang",
-    selectLangSub: "Iltimos, dastur tilini tanlang",
-    setGoalTitle: "Moliyaviy maqsadingiz",
-    setGoalSub: "Har oy qancha mablag' tejashni rejalashtiryapsiz?",
-    starter: "Boshlang'ich",
-    recommended: "Tavsiya etiladi",
-    intensive: "Intensiv",
-    perMonth: "so'm / oyiga",
-    customGoal: "O'zim kiritaman",
-    otherAmount: "Boshqa summa",
-    enterAmount: "Summani kiriting",
-    saveGoalBtn: "Maqsadni saqlash →",
-    continueBtn: "Davom etish →",
-    askAiTitle: "Pulingiz haqida savol bering",
-    askAiSub: "Sun'iy intellekt xarajatlaringizni tahlil qilib, aqlli maslahatlar beradi.",
-    aiQuestions: [
-      "Pulim qayerga ketyapti?",
-      "Oyiga qancha tejay olaman?",
-      "Eng ko'p sarflagan kategoriyam?"
-    ],
-    demoApp: "Moliya AI Dasturi",
-    startTelegram: "Davom etish →",
-    noAiInterest: "Asosiy oynaga o'tish",
-    aiPulseBadge: "✨ AI Yordamchi",
-    listening: "Eshityapman...",
-    cancel: "Bekor qilish",
-    telegramTitle: "Telegram orqali kiring",
-    telegramSub: "Hisobingizni xavfsiz tasdiqlash va tezkor bildirishnomalarni olish uchun Telegram orqali kiring.",
-    loginTelegramBtn: "📱 Telegram orqali kiring",
-    skipTelegramBtn: "Keyinroq / O'tkazib yuborish →",
-  },
-  uz_cyrl: {
-    selectLanguage: "Тилни танланг",
-    selectLangSub: "Илтимос, дастур тилини танланг",
-    setGoalTitle: "Молиявий мақсадингиз",
-    setGoalSub: "Ҳар ой қанча маблағ тежашни режалаштиряпсиз?",
-    starter: "Бошланғич",
-    recommended: "Тавсия этилади",
-    intensive: "Интенсив",
-    perMonth: "сўм / ойига",
-    customGoal: "Ўзим киритаман",
-    otherAmount: "Бошқа сумма",
-    enterAmount: "Суммани киритинг",
-    saveGoalBtn: "Мақсадни сақлаш →",
-    continueBtn: "Давом этиш →",
-    askAiTitle: "Пулингиз ҳақида савол беринг",
-    askAiSub: "Сунъий интеллект харажатларингизни таҳлил қилиб, ақлли маслаҳатлар беради.",
-    aiQuestions: [
-      "Пулим қаерга кетяпти?",
-      "Ойига қанча тежай оламан?",
-      "Энг кўп сарфлаган категоришам?"
-    ],
-    demoApp: "Молия AI Дастури",
-    startTelegram: "Давом этиш →",
-    noAiInterest: "Асосий ойнага ўтиш",
-    aiPulseBadge: "✨ AI Ёрдамчи",
-    listening: "Эшитяпман...",
-    cancel: "Бекор қилиш",
-    telegramTitle: "Telegram орқали киринг",
-    telegramSub: "Ҳисобингизни хавфсиз тасдиқлаш ва тезкор билдиришномаларни олиш учун Telegram орқали киринг.",
-    loginTelegramBtn: "📱 Telegram орқали киринг",
-    skipTelegramBtn: "Кейинроқ / Ўтказиб юбориш →",
-  },
-  ru: {
-    selectLanguage: "Выберите язык",
-    selectLangSub: "Пожалуйста, выберите язык приложения",
-    setGoalTitle: "Установите финансовую цель",
-    setGoalSub: "Сколько вы планируете откладывать каждый месяц?",
-    starter: "Стартовый",
-    recommended: "Рекомендуется",
-    intensive: "Интенсивный",
-    perMonth: "сум / месяц",
-    customGoal: "Введу сам",
-    otherAmount: "Другая сумма",
-    enterAmount: "Введите сумму",
-    saveGoalBtn: "Сохранить цель →",
-    continueBtn: "Продолжить →",
-    askAiTitle: "Задайте вопрос о ваших деньгах",
-    askAiSub: "Искусственный интеллект проанализирует ваши расходы и даст умные советы.",
-    aiQuestions: [
-      "Куда уходят мои деньги?",
-      "Сколько я могу экономить в месяц?",
-      "Какая категория самая расходная?"
-    ],
-    demoApp: "Приложение Moliya AI",
-    startTelegram: "Продолжить →",
-    noAiInterest: "Перейти на главную",
-    aiPulseBadge: "✨ ИИ Помощник",
-    listening: "Слушаю...",
-    cancel: "Отмена",
-    telegramTitle: "Войти через Telegram",
-    telegramSub: "Войдите через Telegram для подтверждения аккаунта и получения уведомлений.",
-    loginTelegramBtn: "📱 Войти через Telegram",
-    skipTelegramBtn: "Позже / Пропустить →",
-  },
-  en: {
-    selectLanguage: "Select Language",
-    selectLangSub: "Please select your preferred language",
-    setGoalTitle: "Set Your Financial Goal",
-    setGoalSub: "How much money do you plan to save each month?",
-    starter: "Starter Plan",
-    recommended: "Recommended",
-    intensive: "Intensive",
-    perMonth: "som / month",
-    customGoal: "Enter custom goal",
-    otherAmount: "Other amount",
-    enterAmount: "Enter amount",
-    saveGoalBtn: "Save Goal →",
-    continueBtn: "Continue →",
-    askAiTitle: "Ask Questions About Your Money",
-    askAiSub: "Artificial Intelligence analyzes your expenses and provides smart financial advice.",
-    aiQuestions: [
-      "Where is my money going?",
-      "How much can I save per month?",
-      "What is my top spending category?"
-    ],
-    demoApp: "Moliya AI App",
-    startTelegram: "Continue →",
-    noAiInterest: "Go to Main Screen",
-    aiPulseBadge: "✨ AI Assistant",
-    listening: "Listening...",
-    cancel: "Cancel",
-    telegramTitle: "Log in via Telegram",
-    telegramSub: "Log in via Telegram to verify your account and receive instant updates.",
-    loginTelegramBtn: "📱 Log in via Telegram",
-    skipTelegramBtn: "Later / Skip →",
-  }
-}
-
-const goalOptions = [
-  { key: 'starter', value: 500000 },
-  { key: 'recommended', value: 1000000, recommended: true },
-  { key: 'intensive', value: 2000000 },
-]
-
-const aiQuestionsIcons = ['💰', '📊', '🏷️']
-
-function fmtMoney(n: number) {
-  return n.toLocaleString('en-US').replace(/,/g, ' ')
-}
+type StepIndex = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8
 
 export default function Onboarding({ onComplete }: Props) {
-  const { startTelegramLogin } = useFinance()
-  const [step, setStep] = useState<Step>('language')
-  const [language, setLanguage] = useState<'uz' | 'uz_cyrl' | 'ru' | 'en'>('uz')
-  const [goal, setGoal] = useState<number>(1000000)
-  const [customGoal, setCustomGoal] = useState('')
-  const [useCustomGoal, setUseCustomGoal] = useState(false)
-  const [isWaitingTelegramAuth, setIsWaitingTelegramAuth] = useState(false)
+  const { onboarding, updateOnboarding } = useFinance()
+  const [step, setStep] = useState<StepIndex>(1)
+  const [selectedLang, setSelectedLang] = useState<'uz' | 'uz_cyrl' | 'ru' | 'en'>(
+    onboarding?.language || 'uz'
+  )
 
-  const handleStartTelegramAuth = async () => {
-    setIsWaitingTelegramAuth(true);
-    try {
-      await startTelegramLogin(() => {
-        finish();
-      });
-    } catch (e) {
-      console.error('Error starting telegram auth:', e);
+  const handleNext = () => {
+    if (step < 8) {
+      setStep((prev) => (prev + 1) as StepIndex)
+    } else {
+      handleFinish()
     }
-  };
-
-  const t = translations[language] || translations.uz
-
-  const steps: Step[] = ['language', 'goal', 'ai', 'telegram']
-  const stepIndex = steps.indexOf(step)
-  const progressPct = Math.round(((stepIndex + 1) / steps.length) * 100)
-
-  const finalGoal = useCustomGoal ? Number(customGoal.replace(/\D/g, '')) || 0 : goal
-
-  const goNext = () => {
-    if (step === 'language') setStep('goal')
-    else if (step === 'goal') setStep('ai')
-    else if (step === 'ai') setStep('telegram')
   }
 
-  const goBack = () => {
-    if (step === 'goal') setStep('language')
-    else if (step === 'ai') setStep('goal')
-    else if (step === 'telegram') setStep('ai')
+  const handleBack = () => {
+    if (step > 1) {
+      setStep((prev) => (prev - 1) as StepIndex)
+    }
   }
 
-  const finish = () => {
-    onComplete({
-      language,
-      monthlyGoal: finalGoal,
+  const handleFinish = () => {
+    const result: OnboardingResult = {
+      language: selectedLang,
+      monthlyGoal: 1000000,
       firstExpense: null,
-    })
+      monthlyIncome: 0,
+      baseBalance: 0,
+      name: onboarding?.name || '',
+      phone: onboarding?.phone || '',
+      telegram: onboarding?.telegram || '',
+      telegramId: onboarding?.telegramId || '',
+      isPremium: true
+    }
+
+    localStorage.setItem('user_onboarding_completed_v1', 'true')
+    updateOnboarding(result).catch(() => {})
+    onComplete(result)
   }
 
   return (
-    <div
-      style={{
-        minHeight: '100dvh',
-        maxWidth: 430,
-        margin: '0 auto',
-        background: 'linear-gradient(180deg, #F7F5FF 0%, #EFEBFF 100%)',
-        display: 'flex',
-        flexDirection: 'column',
-        padding: '0 20px 24px',
-      }}
-    >
-      {/* Top bar */}
-      <div style={{ padding: '16px 0 8px', display: 'flex', alignItems: 'center', gap: 14 }}>
-        {step !== 'language' && (
-          <button
-            onClick={goBack}
-            style={{
-              width: 32, height: 32, borderRadius: 12, border: 'none',
-              background: 'rgba(255,255,255,0.6)', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-            }}
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <path d="M10 3L5 8L10 13" stroke="#5B21B6" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
-        )}
-        <div style={{ flex: 1, height: 6, borderRadius: 3, background: 'rgba(255,255,255,0.7)', overflow: 'hidden' }}>
-          <div
-            style={{
-              width: `${progressPct}%`, height: '100%', borderRadius: 3,
-              background: 'linear-gradient(90deg, #7C3AED, #A855F7)',
-              transition: 'width 0.3s ease',
-            }}
-          />
+    <div className="fixed inset-0 z-50 flex flex-col justify-between bg-[#0F172A] text-white select-none overflow-hidden">
+      {/* Background Decorative Gradients */}
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-96 h-96 bg-indigo-600/20 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-96 h-96 bg-emerald-600/15 rounded-full blur-3xl pointer-events-none" />
+
+      {/* Top Header & Progress Dots */}
+      <header className="relative z-10 px-6 pt-12 pb-4 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center font-bold text-sm shadow-lg shadow-indigo-500/25">
+            M
+          </div>
+          <span className="font-bold tracking-tight text-slate-100">Moliya AI</span>
         </div>
-        <span style={{ fontSize: 12, fontWeight: 600, color: '#7C3AED', width: 34, textAlign: 'right' }}>
-          {stepIndex + 1}/{steps.length}
-        </span>
-      </div>
 
-      {/* Main step content */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '12px 0' }}>
+        {/* Progress Pills */}
+        <div className="flex items-center gap-1.5">
+          {[1, 2, 3, 4, 5, 6, 7, 8].map((s) => (
+            <div
+              key={s}
+              className={`h-1.5 rounded-full transition-all duration-300 ${
+                s === step
+                  ? 'w-6 bg-indigo-500 shadow-sm shadow-indigo-500/50'
+                  : s < step
+                  ? 'w-2 bg-indigo-400/60'
+                  : 'w-2 bg-slate-700'
+              }`}
+            />
+          ))}
+        </div>
+      </header>
 
-        {/* STEP 1: Select Language */}
-        {step === 'language' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {/* Logo header */}
-            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
-              <img
-                src="/logo.png"
-                alt="Moliya AI"
-                style={{
-                  width: 76,
-                  height: 76,
-                  borderRadius: 20,
-                  objectFit: 'cover',
-                  boxShadow: '0 10px 28px rgba(124, 58, 237, 0.3)',
-                  border: '2px solid rgba(124, 58, 237, 0.2)',
-                  overflow: 'hidden',
-                  display: 'block'
-                }}
-              />
-            </div>
+      {/* Main Step Cards (Animated Transitions) */}
+      <main className="relative z-10 flex-1 flex flex-col justify-center px-6 py-4 max-w-md mx-auto w-full">
+        <AnimatePresence mode="wait">
+          {/* ── STEP 1: Welcome ── */}
+          {step === 1 && (
+            <motion.div
+              key="step1"
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -16 }}
+              className="text-center"
+            >
+              <div className="w-24 h-24 mx-auto mb-6 rounded-3xl bg-gradient-to-tr from-indigo-500/20 to-violet-500/20 border border-indigo-500/30 flex items-center justify-center text-4xl shadow-xl shadow-indigo-500/10">
+                ✨
+              </div>
+              <h1 className="text-2xl font-bold text-slate-50 mb-3">
+                Moliya AI ga xush kelibsiz!
+              </h1>
+              <p className="text-slate-400 text-sm leading-relaxed mb-6">
+                Shaxsiy moliyangizni sun'iy intellekt yordamida oson, tezkor va professional nazorat qiling.
+              </p>
+              <div className="p-4 rounded-2xl bg-slate-800/60 border border-slate-700/60 text-left text-xs text-slate-300 space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-indigo-400 font-bold">✓</span> Ovozli va matnli xarajatlarni avtomatik hisoblash
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-indigo-400 font-bold">✓</span> To'liq oylik va yillik tahlillar
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-indigo-400 font-bold">✓</span> 1 kunlik cheksiz Premium va AI imkoniyati
+                </div>
+              </div>
+            </motion.div>
+          )}
 
-            <h1 style={{ fontSize: 24, fontWeight: 800, color: '#1E1A3C', textAlign: 'center', letterSpacing: -0.4, marginBottom: 2 }}>
-              Moliya AI
-            </h1>
-            <p style={{ fontSize: 13, color: '#8B82C4', textAlign: 'center', marginBottom: 20 }}>
-              {t.selectLangSub}
-            </p>
+          {/* ── STEP 2: Language Selection ── */}
+          {step === 2 && (
+            <motion.div
+              key="step2"
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -16 }}
+            >
+              <div className="text-center mb-6">
+                <div className="text-3xl mb-2">🌐</div>
+                <h2 className="text-xl font-bold text-slate-50">Dastur tilini tanlang</h2>
+                <p className="text-slate-400 text-xs mt-1">O'zingizga qulay tilni tanlang</p>
+              </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {languages.map((l) => {
-                const isUzbek = l.code === 'uz'
-                const isUzbekSelected = language === 'uz' || language === 'uz_cyrl'
-                const active = isUzbek ? isUzbekSelected : language === l.code
-                return (
-                  <div key={l.code}>
-                    <button
-                      onClick={() => {
-                        if (isUzbek) {
-                          if (!isUzbekSelected) {
-                            setLanguage('uz')
-                            localStorage.setItem('user_selected_language_v1', 'uz')
-                          }
-                        } else {
-                          setLanguage(l.code)
-                          localStorage.setItem('user_selected_language_v1', l.code)
-                        }
-                      }}
-                      style={{
-                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                        padding: '14px 18px', borderRadius: 16, width: '100%',
-                        border: active ? '1.5px solid #7C3AED' : '1px solid #E8E3F8',
-                        background: '#FFFFFF',
-                        boxShadow: active ? '0 4px 16px rgba(124, 58, 237, 0.12)' : 'none',
-                        cursor: 'pointer', fontFamily: 'inherit',
-                        transition: 'all 0.15s ease',
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                        <span style={{ fontSize: 22 }}>{l.tag}</span>
-                        <span style={{ fontSize: 15, fontWeight: 600, color: '#1E1A3C' }}>
-                          {l.label}
-                        </span>
-                      </div>
-
-                      <div style={{
-                        width: 20, height: 20, borderRadius: '50%',
-                        border: active ? 'none' : '1.5px solid #DDD6FE',
-                        background: active ? '#7C3AED' : 'transparent',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      }}>
-                        {active && (
-                          <svg width="10" height="10" viewBox="0 0 11 11" fill="none">
-                            <path d="M2 5.5L4.5 8L9.5 3" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                          </svg>
-                        )}
-                      </div>
-                    </button>
-
-                    {/* Uzbek script type sub-options */}
-                    {isUzbek && isUzbekSelected && (
-                      <div style={{
-                        display: 'flex', gap: 8, marginTop: 8, paddingLeft: 8,
-                      }}>
-                        {uzbekScriptTypes.map((st) => {
-                          const stActive = language === st.code
-                          return (
-                            <button
-                              key={st.code}
-                              onClick={() => { setLanguage(st.code); localStorage.setItem('user_selected_language_v1', st.code); }}
-                              style={{
-                                flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
-                                gap: 4, padding: '10px 8px', borderRadius: 12,
-                                border: stActive ? '1.5px solid #7C3AED' : '1px solid #E8E3F8',
-                                background: stActive ? '#F5F3FF' : '#FFFFFF',
-                                cursor: 'pointer', fontFamily: 'inherit',
-                                transition: 'all 0.15s ease',
-                              }}
-                            >
-                              <span style={{ fontSize: 13, fontWeight: 700, color: stActive ? '#7C3AED' : '#1E1A3C' }}>
-                                {st.label}
-                              </span>
-                              <span style={{ fontSize: 10, color: '#8B82C4', letterSpacing: 1 }}>
-                                {st.sublabel}
-                              </span>
-                            </button>
-                          )
-                        })}
+              <div className="space-y-2.5">
+                {[
+                  { code: 'uz' as const, label: "O'zbekcha (Lotin)", flag: '🇺🇿' },
+                  { code: 'uz_cyrl' as const, label: 'Ўзбекча (Кирилл)', flag: '🇺🇿' },
+                  { code: 'ru' as const, label: 'Русский', flag: '🇷🇺' },
+                  { code: 'en' as const, label: 'English', flag: '🇺🇸' }
+                ].map((l) => (
+                  <button
+                    key={l.code}
+                    onClick={() => setSelectedLang(l.code)}
+                    className={`w-full p-4 rounded-2xl border transition-all flex items-center justify-between ${
+                      selectedLang === l.code
+                        ? 'bg-indigo-600/20 border-indigo-500 text-white shadow-lg shadow-indigo-500/10'
+                        : 'bg-slate-800/40 border-slate-700/60 text-slate-300 hover:bg-slate-800/70'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="text-2xl">{l.flag}</span>
+                      <span className="font-semibold text-sm">{l.label}</span>
+                    </div>
+                    {selectedLang === l.code && (
+                      <div className="w-5 h-5 rounded-full bg-indigo-500 flex items-center justify-center text-xs">
+                        ✓
                       </div>
                     )}
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* STEP 2: Financial Goal */}
-        {step === 'goal' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <h1 style={{ fontSize: 22, fontWeight: 700, color: '#1E1A3C', textAlign: 'center', letterSpacing: -0.3, marginBottom: 4, lineHeight: 1.25 }}>
-              {t.setGoalTitle}
-            </h1>
-            <p style={{ fontSize: 13, color: '#8B82C4', textAlign: 'center', marginBottom: 14 }}>
-              {t.setGoalSub}
-            </p>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {goalOptions.map((g) => {
-                const active = !useCustomGoal && goal === g.value
-                return (
-                  <button
-                    key={g.key}
-                    onClick={() => { setGoal(g.value); setUseCustomGoal(false) }}
-                    style={{
-                      textAlign: 'left', padding: '12px 16px', borderRadius: 16,
-                      border: active ? '1.5px solid #7C3AED' : '1px solid #E8E3F8',
-                      background: '#FFFFFF',
-                      boxShadow: active ? '0 4px 16px rgba(124,58,237,0.12)' : 'none',
-                      cursor: 'pointer', fontFamily: 'inherit', position: 'relative',
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{
-                        fontSize: 10, fontWeight: 600, padding: '2px 6px', borderRadius: 6,
-                        background: g.recommended ? '#EDE9FE' : '#F3F0FF',
-                        color: g.recommended ? '#7C3AED' : '#8B82C4',
-                      }}>
-                        {g.key === 'starter' ? t.starter : g.key === 'recommended' ? t.recommended : t.intensive}
-                      </span>
-                      <div style={{
-                        width: 20, height: 20, borderRadius: '50%',
-                        border: active ? 'none' : '1.5px solid #DDD6FE',
-                        background: active ? '#7C3AED' : 'transparent',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                      }}>
-                        {active && (
-                          <svg width="10" height="10" viewBox="0 0 11 11" fill="none">
-                            <path d="M2 5.5L4.5 8L9.5 3" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                          </svg>
-                        )}
-                      </div>
-                    </div>
-                    <p style={{ fontSize: 20, fontWeight: 700, color: active ? '#7C3AED' : '#1E1A3C', marginTop: 4, letterSpacing: -0.5 }}>
-                      {fmtMoney(g.value)} <span style={{ fontSize: 12, fontWeight: 500, color: '#8B82C4' }}>{t.perMonth}</span>
-                    </p>
                   </button>
-                )
-              })}
+                ))}
+              </div>
+            </motion.div>
+          )}
 
-              <button
-                onClick={() => setUseCustomGoal(true)}
-                style={{
-                  textAlign: 'left', padding: '12px 16px', borderRadius: 16,
-                  border: useCustomGoal ? '1.5px solid #7C3AED' : '1.5px dashed #C4BDE8',
-                  background: useCustomGoal ? '#FFFFFF' : 'transparent',
-                  cursor: 'pointer', fontFamily: 'inherit',
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
-                }}
-              >
-                <div style={{ flex: 1 }}>
-                  <p style={{ fontSize: 14, fontWeight: 700, color: '#1E1A3C', marginBottom: 2 }}>{t.customGoal}</p>
-                  {useCustomGoal ? (
-                    <input
-                      autoFocus
-                      type="tel"
-                      placeholder={t.enterAmount}
-                      value={customGoal ? Number(customGoal).toLocaleString('en-US').replace(/,/g, ' ') : ''}
-                      onClick={(e) => e.stopPropagation()}
-                      onChange={(e) => setCustomGoal(e.target.value.replace(/\D/g, ''))}
-                      style={{
-                        fontSize: 13, color: '#7C3AED', fontFamily: 'inherit',
-                        border: 'none', outline: 'none', background: 'transparent', width: '100%', padding: 0,
-                      }}
-                    />
-                  ) : (
-                    <p style={{ fontSize: 12, color: '#8B82C4' }}>{t.otherAmount}</p>
-                  )}
-                </div>
-                <div style={{
-                  width: 28, height: 28, borderRadius: 8, background: '#F7F5FF',
-                  border: '1px solid #E8E3F8', display: 'flex', alignItems: 'center',
-                  justifyContent: 'center', flexShrink: 0,
-                }}>
-                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
-                    <path d="M11 2L14 5L5.5 13.5L2 14L2.5 10.5L11 2Z" stroke="#7C3AED" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </div>
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* STEP 3: AI Feature Overview */}
-        {step === 'ai' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'center' }}>
-            <div style={{
-              width: 56, height: 56, borderRadius: 20,
-              background: 'linear-gradient(135deg, #7C3AED 0%, #A855F7 100%)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              boxShadow: '0 8px 24px rgba(124,58,237,0.3)', marginBottom: 8,
-            }}>
-              <span style={{ fontSize: 26 }}>✨</span>
-            </div>
-
-            <h1 style={{ fontSize: 21, fontWeight: 700, color: '#1E1A3C', textAlign: 'center', letterSpacing: -0.3, marginBottom: 2 }}>
-              {t.askAiTitle}
-            </h1>
-            <p style={{ fontSize: 12, color: '#8B82C4', textAlign: 'center', marginBottom: 14, maxWidth: 300, lineHeight: 1.35 }}>
-              {t.askAiSub}
-            </p>
-
-            <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
-              {t.aiQuestions.map((q, idx) => (
-                <div
-                  key={q}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 12,
-                    padding: '12px 14px', borderRadius: 14,
-                    background: '#FFFFFF', border: '1px solid #E8E3F8',
-                    boxShadow: '0 2px 8px rgba(0,0,0,0.02)',
-                  }}
-                >
-                  <span style={{ fontSize: 18 }}>{aiQuestionsIcons[idx]}</span>
-                  <span style={{ fontSize: 13, fontWeight: 500, color: '#1E1A3C' }}>{q}</span>
-                </div>
-              ))}
-            </div>
-
-            <button
-              onClick={goNext}
-              style={{
-                width: '100%', padding: '14px', borderRadius: 16,
-                border: 'none', background: 'linear-gradient(135deg, #7C3AED, #5B21B6)',
-                color: '#FFFFFF', fontSize: 14, fontWeight: 700,
-                cursor: 'pointer', fontFamily: 'inherit',
-                boxShadow: '0 6px 20px rgba(124, 58, 237, 0.35)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-              }}
+          {/* ── STEP 3: What Moliya Does ── */}
+          {step === 3 && (
+            <motion.div
+              key="step3"
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -16 }}
+              className="text-center"
             >
-              <span>{t.startTelegram}</span>
-            </button>
-          </div>
-        )}
-
-        {/* STEP 4: Telegram Login */}
-        {step === 'telegram' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center', textAlign: 'center' }}>
-            <div style={{
-              width: 64, height: 64, borderRadius: 22,
-              background: 'linear-gradient(135deg, #0088CC 0%, #2AABEE 100%)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              boxShadow: '0 8px 24px rgba(0, 136, 204, 0.35)', marginBottom: 6,
-            }}>
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none">
-                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69.01-.03.01-.14-.07-.2-.08-.06-.19-.04-.27-.02-.12.02-1.96 1.25-5.54 3.67-.52.36-1 .54-1.43.53-.47-.01-1.37-.27-2.04-.49-.82-.27-1.47-.42-1.42-.88.03-.24.37-.49 1.02-.74 3.99-1.74 6.66-2.89 8.01-3.46 3.81-1.6 4.6-1.88 5.12-1.89.11 0 .37.03.54.17.14.12.18.28.2.45-.02.07-.02.26-.04.42z" fill="#FFFFFF"/>
-              </svg>
-            </div>
-
-            {!isWaitingTelegramAuth ? (
-              <>
-                <h1 style={{ fontSize: 21, fontWeight: 700, color: '#1E1A3C', letterSpacing: -0.3, marginBottom: 2 }}>
-                  {t.telegramTitle}
-                </h1>
-                <p style={{ fontSize: 13, color: '#8B82C4', maxWidth: 310, lineHeight: 1.4, marginBottom: 12 }}>
-                  {t.telegramSub}
-                </p>
-
-                <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  <button
-                    type="button"
-                    onClick={handleStartTelegramAuth}
-                    style={{
-                      width: '100%', padding: '15px', borderRadius: 16, border: 'none',
-                      background: 'linear-gradient(135deg, #0088CC 0%, #0077B5 100%)',
-                      color: '#FFFFFF', fontSize: 14, fontWeight: 700,
-                      cursor: 'pointer', fontFamily: 'inherit',
-                      boxShadow: '0 6px 20px rgba(0, 136, 204, 0.35)',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                    }}
-                  >
-                    <span>{t.loginTelegramBtn}</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={finish}
-                    style={{
-                      width: '100%', padding: '12px', borderRadius: 16,
-                      border: 'none', background: 'transparent',
-                      color: '#8B82C4', fontSize: 13, fontWeight: 600,
-                      cursor: 'pointer', fontFamily: 'inherit',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    }}
-                  >
-                    <span>{t.skipTelegramBtn}</span>
-                  </button>
+              <div className="w-20 h-20 mx-auto mb-6 rounded-3xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-3xl">
+                💰
+              </div>
+              <h2 className="text-xl font-bold text-slate-50 mb-3">
+                Daromad va xarajatlar nazorati
+              </h2>
+              <p className="text-slate-400 text-sm leading-relaxed mb-6">
+                Har bir sarflangan so'm va kelgan daromadlarni bir joyda xavfsiz tartibga soling.
+              </p>
+              <div className="grid grid-cols-2 gap-3 text-left">
+                <div className="p-3.5 rounded-2xl bg-slate-800/60 border border-slate-700/60">
+                  <div className="text-emerald-400 font-bold text-xs mb-1">🟢 Daromadlar</div>
+                  <div className="text-slate-300 text-xs">Oylik, biznes, keshbek va sovg'alar</div>
                 </div>
-              </>
-            ) : (
-              <>
-                <h1 style={{ fontSize: 20, fontWeight: 700, color: '#1E1A3C', letterSpacing: -0.3, marginBottom: 2 }}>
-                  {(language === 'uz' || language === 'uz_cyrl') ? (language === 'uz_cyrl' ? "Telegram ботингиз очилди! 📱" : "Telegram botingiz ochildi! 📱") : "Telegram bot opened! 📱"}
-                </h1>
-                <p style={{ fontSize: 13, color: '#8B82C4', maxWidth: 310, lineHeight: 1.4, marginBottom: 16 }}>
-                  {(language === 'uz' || language === 'uz_cyrl')
-                    ? (language === 'uz_cyrl' ? "Telegram ботда /start босилгач, тизим сизни инстант аниқлайди ва асосий саҳифага ўтказади." : "Telegram botda /start bosilgach, tizim sizni avtomatik aniqlaydi va asosiy sahifaga o'tkazadi.")
-                    : "Press /start in the Telegram bot, the system will verify you and land on your account automatically."
-                  }
-                </p>
-
-                <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  <button
-                    type="button"
-                    onClick={() => window.location.reload()}
-                    style={{
-                      width: '100%', padding: '14px', borderRadius: 16, border: 'none',
-                      background: 'linear-gradient(135deg, #0088CC 0%, #0077B5 100%)',
-                      color: '#FFFFFF', fontSize: 14, fontWeight: 700,
-                      cursor: 'pointer', fontFamily: 'inherit',
-                      boxShadow: '0 6px 20px rgba(0, 136, 204, 0.35)',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                    }}
-                  >
-                    <span>🔄 {(language === 'uz' || language === 'uz_cyrl') ? (language === 'uz_cyrl' ? "Саҳифани янгилаш" : "Sahifani yangilash") : (language === 'ru' ? "Обновить страницу" : "Refresh Page")}</span>
-                  </button>
-
-                  <button
-                    onClick={handleStartTelegramAuth}
-                    style={{
-                      width: '100%', padding: '13px', borderRadius: 16,
-                      border: '1.5px solid #E8E3F8', background: '#FFFFFF',
-                      color: '#0088CC', fontSize: 13, fontWeight: 600,
-                      cursor: 'pointer', fontFamily: 'inherit',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                    }}
-                  >
-                    <span>🔄 {(language === 'uz' || language === 'uz_cyrl') ? (language === 'uz_cyrl' ? "Қайта уриниш" : "Qayta urinish") : (language === 'ru' ? "Попробовать снова" : "Try Again")}</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={finish}
-                    style={{
-                      width: '100%', padding: '12px', borderRadius: 16,
-                      border: 'none', background: 'transparent',
-                      color: '#8B82C4', fontSize: 13, fontWeight: 600,
-                      cursor: 'pointer', fontFamily: 'inherit',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    }}
-                  >
-                    <span>{t.skipTelegramBtn}</span>
-                  </button>
+                <div className="p-3.5 rounded-2xl bg-slate-800/60 border border-slate-700/60">
+                  <div className="text-rose-400 font-bold text-xs mb-1">🔴 Xarajatlar</div>
+                  <div className="text-slate-300 text-xs">Bozor, taksi, ovqat, ijara va kiyim</div>
                 </div>
-              </>
-            )}
-          </div>
-        )}
-      </div>
+              </div>
+            </motion.div>
+          )}
 
-      {/* Bottom action button */}
-      {step !== 'ai' && step !== 'telegram' && (
-        <div style={{ paddingTop: 8 }}>
+          {/* ── STEP 4: AI Natural Language Tracking ── */}
+          {step === 4 && (
+            <motion.div
+              key="step4"
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -16 }}
+            >
+              <div className="text-center mb-6">
+                <div className="w-16 h-16 mx-auto mb-3 rounded-2xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-2xl">
+                  🤖
+                </div>
+                <h2 className="text-xl font-bold text-slate-50">Tabiiy tilda AI tahlil</h2>
+                <p className="text-slate-400 text-xs mt-1">Oddiy so'zlar bilan yozsangiz yetarli</p>
+              </div>
+
+              <div className="space-y-3">
+                <div className="p-3 rounded-2xl bg-slate-800/70 border border-slate-700 text-xs">
+                  <div className="text-slate-400 mb-1">Siz yozasiz:</div>
+                  <div className="text-slate-100 font-medium italic">"Bugun taksiga 30 ming sarfladim"</div>
+                  <div className="mt-2 pt-2 border-t border-slate-700/80 flex items-center justify-between text-indigo-300">
+                    <span>🚕 Transport</span>
+                    <span className="font-bold text-slate-100">30 000 so'm</span>
+                  </div>
+                </div>
+
+                <div className="p-3 rounded-2xl bg-slate-800/70 border border-slate-700 text-xs">
+                  <div className="text-slate-400 mb-1">Siz yozasiz:</div>
+                  <div className="text-slate-100 font-medium italic">"14 mln maosh tushdi"</div>
+                  <div className="mt-2 pt-2 border-t border-slate-700/80 flex items-center justify-between text-emerald-400">
+                    <span>💼 Maosh</span>
+                    <span className="font-bold text-slate-100">14 000 000 so'm</span>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {/* ── STEP 5: Dashboard Overview ── */}
+          {step === 5 && (
+            <motion.div
+              key="step5"
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -16 }}
+              className="text-center"
+            >
+              <div className="w-20 h-20 mx-auto mb-6 rounded-3xl bg-violet-500/20 border border-violet-500/30 flex items-center justify-center text-3xl">
+                📊
+              </div>
+              <h2 className="text-xl font-bold text-slate-50 mb-3">
+                Qulay Dashboard va Tahlillar
+              </h2>
+              <p className="text-slate-400 text-sm leading-relaxed mb-6">
+                Barcha kartalaringiz, oylik hisobotlar va toifalar bo'yicha sarflangan mablag'lar diagrammalarda.
+              </p>
+              <div className="p-4 rounded-2xl bg-slate-800/60 border border-slate-700/60 text-left text-xs text-slate-300 space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-violet-400 font-bold">💳</span> Uzcard, Humo, Visa kartalari
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-violet-400 font-bold">📈</span> Oylik sarf-xarajat statistikasi
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-violet-400 font-bold">📄</span> PDF va Excel hisobotlarni yuklab olish
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {/* ── STEP 6: Voice Recording ── */}
+          {step === 6 && (
+            <motion.div
+              key="step6"
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -16 }}
+              className="text-center"
+            >
+              <div className="w-24 h-24 mx-auto mb-6 rounded-full bg-gradient-to-tr from-rose-500/20 to-orange-500/20 border border-rose-500/30 flex items-center justify-center text-4xl shadow-xl shadow-rose-500/10">
+                🎙
+              </div>
+              <h2 className="text-xl font-bold text-slate-50 mb-3">
+                OvozYozman — Ovoz bilan kiritish
+              </h2>
+              <p className="text-slate-400 text-sm leading-relaxed mb-6">
+                Telegram botda yoki dastur ichida ovozli xabar yuboring — AI bir necha soniyada xarajatni to'g'ri qayd qiladi.
+              </p>
+              <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-300 font-medium">
+                ⚡ Hech qanday murakkab shakllarsiz — faqat gapiring!
+              </div>
+            </motion.div>
+          )}
+
+          {/* ── STEP 7: 1-Day Unlimited Premium Trial ── */}
+          {step === 7 && (
+            <motion.div
+              key="step7"
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -16 }}
+              className="text-center"
+            >
+              <div className="w-24 h-24 mx-auto mb-6 rounded-3xl bg-gradient-to-tr from-amber-500/20 to-yellow-500/20 border border-amber-500/40 flex items-center justify-center text-4xl shadow-xl shadow-amber-500/15">
+                👑
+              </div>
+              <span className="inline-block px-3 py-1 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-bold uppercase tracking-wider mb-2">
+                Maxsus Sovg'a
+              </span>
+              <h2 className="text-xl font-bold text-slate-50 mb-3">
+                1 Kunlik Cheksiz Premium Sinovi
+              </h2>
+              <p className="text-slate-400 text-sm leading-relaxed mb-6">
+                Yangi foydalanuvchimiz bo'lganingiz uchun sizga 24 soat davomida barcha AI imkoniyatlari mutlaqo bepul va cheksiz berildi!
+              </p>
+              <div className="p-3 rounded-2xl bg-slate-800/60 border border-slate-700/60 text-xs text-slate-300 text-left space-y-1.5">
+                <div>⚡ <b>Cheksiz AI so'rovlar</b> (kunlik 5 ta cheklovisiz)</div>
+                <div>📊 <b>To'liq tahlil va chek skaner</b></div>
+                <div>⏳ Sinovdan so'ng: kuniga 5 ta bepul AI so'rovi</div>
+              </div>
+            </motion.div>
+          )}
+
+          {/* ── STEP 8: Ready to Launch! ── */}
+          {step === 8 && (
+            <motion.div
+              key="step8"
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -16 }}
+              className="text-center"
+            >
+              <div className="w-24 h-24 mx-auto mb-6 rounded-3xl bg-gradient-to-tr from-emerald-500/20 to-teal-500/20 border border-emerald-500/30 flex items-center justify-center text-4xl shadow-xl shadow-emerald-500/10">
+                🚀
+              </div>
+              <h2 className="text-2xl font-bold text-slate-50 mb-3">
+                Boshlashga tayyorsiz!
+              </h2>
+              <p className="text-slate-400 text-sm leading-relaxed mb-6">
+                Moliya AI sizning moliyaviy barqarorligingiz va oqilona tejamkorligingiz yo'lida doimo yordamchi bo'ladi.
+              </p>
+              <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-semibold">
+                ✨ Keling, birinchi xarajatingizni birgalikda kiritamiz!
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </main>
+
+      {/* Bottom Navigation Buttons */}
+      <footer className="relative z-10 p-6 flex items-center gap-3 max-w-md mx-auto w-full">
+        {step > 1 && (
           <button
-            onClick={goNext}
-            style={{
-              width: '100%', padding: '14px', borderRadius: 16, border: 'none',
-              background: 'linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%)',
-              color: '#FFFFFF', fontSize: 15, fontWeight: 700,
-              cursor: 'pointer', fontFamily: 'inherit',
-              boxShadow: '0 6px 20px rgba(124, 58, 237, 0.35)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-            }}
+            onClick={handleBack}
+            className="px-5 py-3.5 rounded-2xl bg-slate-800 border border-slate-700 text-slate-300 font-semibold text-sm hover:bg-slate-700 transition"
           >
-            <span>{step === 'goal' ? t.saveGoalBtn : t.continueBtn}</span>
+            ←
           </button>
-        </div>
-      )}
+        )}
+        <button
+          onClick={handleNext}
+          className="flex-1 py-3.5 rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600 text-white font-bold text-sm shadow-lg shadow-indigo-500/25 hover:from-indigo-500 hover:to-violet-500 transition active:scale-[0.98]"
+        >
+          {step === 8 ? "Dasturni Boshlash 🚀" : "Davom etish →"}
+        </button>
+      </footer>
     </div>
   )
 }

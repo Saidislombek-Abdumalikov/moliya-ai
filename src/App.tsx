@@ -17,7 +17,7 @@ export type Screen = 'home' | 'calendar' | 'analytics' | 'profile'
 type Stage = 'onboarding' | 'app'
 
 export default function App() {
-  const { onboarding, updateOnboarding, setHasSampleData, logout, isAuthReady, userId } = useFinance()
+  const { onboarding, updateOnboarding, setHasSampleData, logout, isAuthReady, userId, authError } = useFinance()
 
   const getInitialStage = (): Stage => {
     try {
@@ -117,6 +117,33 @@ export default function App() {
   // CONDITIONAL RENDERS — all hooks are above this line
   // ═══════════════════════════════════════════════════════════
 
+
+  if (authError) {
+    return (
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#0F172A] text-white p-6 text-center select-none">
+        <div className="w-20 h-20 mb-6 rounded-3xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-3xl shadow-xl shadow-indigo-500/10">
+          🔒
+        </div>
+        <h2 className="text-xl font-bold text-slate-100 mb-2">Kirish talab etiladi</h2>
+        <p className="text-slate-400 text-sm max-w-xs leading-relaxed mb-6">
+          {authError}
+        </p>
+        <button
+          onClick={() => {
+            const tg = (window as any).Telegram?.WebApp;
+            if (tg?.close) {
+              tg.close();
+            } else {
+              window.location.href = 'https://t.me/MoliyaAI_Bot';
+            }
+          }}
+          className="px-6 py-3.5 rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600 text-white font-bold text-sm shadow-lg shadow-indigo-500/25 active:scale-95 transition"
+        >
+          Telegram Botga Qaytish ✈️
+        </button>
+      </div>
+    );
+  }
 
   if (stage === 'onboarding') {
     return (

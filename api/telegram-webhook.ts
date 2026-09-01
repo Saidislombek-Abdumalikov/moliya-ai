@@ -4,6 +4,11 @@ import crypto from "crypto";
 import { supabase } from './_supabaseClient.js';
 import { getCandidateAiKeys } from './_aiRouter.js';
 import { checkAiQuota, recordAiUsage } from './_aiQuotaHelper.js';
+import {
+  normalizeUzbekFinancialText,
+  buildUzbekFinancialAiPrompt,
+  validateAiFinancialOutput
+} from './_uzbekFinancialNormalizer.js';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const appUrl = process.env.APP_URL || "https://moliya-ai-pi.vercel.app";
@@ -98,7 +103,30 @@ async function getTelegramFileUrl(fileId: string): Promise<string | null> {
   return null;
 }
 
-// ── Canonical User Resolution & Creation ─────────────────────
+// ── Bot Commands Registration ────────────────────────────────
+let commandsRegistered = false;
+async function registerBotCommandsOnce() {
+  if (commandsRegistered || !BOT_TOKEN) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setMyCommands`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        commands: [
+          { command: 'start', description: 'Moliya AI ni boshlash va hisob holati' },
+          { command: 'app', description: '📱 Moliya Mini Appni ochish' },
+          { command: 'stats', description: '📊 Oylik xarajatlar va balans' },
+          { command: 'help', description: '❓ Yo\'riqnoma va yordam' }
+        ]
+      })
+    });
+    commandsRegistered = true;
+  } catch (e) {
+    console.warn('[BOT] Failed to register Telegram commands:', e);
+  }
+}
+
+// ── Canonical User Resolution & Identity Model ───────────────
 async function resolveCanonicalUser(fromUser: any) {
   const tgId = String(fromUser.id);
   const userId = `moliya_user_tg_${tgId}`;
@@ -124,16 +152,23 @@ async function resolveCanonicalUser(fromUser: any) {
       existing.device_info?.restricted
     );
 
-    return { user: existing, userId, isBlocked, isNew: false };
+    // Check if registered (has verified phone)
+    const isRegistered = Boolean(
+      existing.phone &&
+      (existing.registration_status === 'completed' || existing.onboarding?.registration_status === 'completed')
+    );
+
+    return { user: existing, userId, isBlocked, isRegistered, isNew: false };
   }
 
-  // 2. Create canonical user record
+  // 2. Create unverified canonical user skeleton
   const newOnboarding = {
-    completed: true,
+    completed: false,
     language: 'uz',
     name: fullName,
     telegram: username,
     telegramId: tgId,
+    registration_status: 'pending_phone'
   };
 
   const newPayload = {
@@ -144,7 +179,7 @@ async function resolveCanonicalUser(fromUser: any) {
     phone: null,
     language: 'uz',
     is_premium: false,
-    ai_limit: 20,
+    ai_limit: 5,
     ai_query_count: 0,
     platform: 'telegram',
     cards: [],
@@ -156,7 +191,49 @@ async function resolveCanonicalUser(fromUser: any) {
 
   await supabase.from('users').upsert(newPayload, { onConflict: 'id' });
 
-  return { user: newPayload, userId, isBlocked: false, isNew: true };
+  return { user: newPayload, userId, isBlocked: false, isRegistered: false, isNew: true };
+}
+
+// ── Complete Phone Registration & Grant 1-Day Trial ─────────
+async function completePhoneRegistration(fromUser: any, phoneNumber: string) {
+  const tgId = String(fromUser.id);
+  const userId = `moliya_user_tg_${tgId}`;
+  const now = new Date();
+  const trialEndsAt = new Date(now.getTime() + 24 * 3600 * 1000).toISOString();
+  const fullName = [fromUser.first_name, fromUser.last_name].filter(Boolean).join(' ') || 'Foydalanuvchi';
+  const username = fromUser.username ? `@${fromUser.username}` : null;
+
+  const { data: existing } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
+
+  const updatedOnboarding = {
+    ...(existing?.onboarding || {}),
+    completed: existing?.onboarding?.completed || false,
+    language: existing?.language || 'uz',
+    name: fullName,
+    phone: phoneNumber,
+    telegram: username,
+    telegramId: tgId,
+    registration_status: 'completed',
+    trial_started_at: now.toISOString(),
+    trial_ends_at: trialEndsAt
+  };
+
+  const updatePayload = {
+    id: userId,
+    name: fullName,
+    telegram: username,
+    telegram_id: tgId,
+    phone: phoneNumber,
+    is_premium: true, // 1-Day Unlimited Premium Trial!
+    premium_expires_at: trialEndsAt,
+    ai_limit: null, // Unlimited for trial
+    ai_query_count: 0,
+    onboarding: updatedOnboarding,
+    updated_at: now.toISOString()
+  };
+
+  await supabase.from('users').upsert(updatePayload, { onConflict: 'id' });
+  return updatePayload;
 }
 
 // ── Authentication Handshake & Web Login ─────────────────────
@@ -170,8 +247,8 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any) {
     const randomHex = crypto.randomBytes(16).toString('hex');
     const sessionToken = 'sess_' + randomHex;
 
-    const { user, isBlocked } = await resolveCanonicalUser(fromUser);
-    if (isBlocked) return null;
+    const { isBlocked, isRegistered } = await resolveCanonicalUser(fromUser);
+    if (isBlocked || !isRegistered) return null;
 
     // Mark login request as VERIFIED
     const cleanId = requestId.replace(/^req_/, '').trim();
@@ -236,8 +313,11 @@ const CATEGORY_EMOJIS: Record<string, string> = {
   'Hamkasb': '👥'
 };
 
-// ── AI Parser Helper ─────────────────────────────────────────
+// ── AI Parser Helper with Uzbek Normalization ────────────────
 async function parseTextWithAi(text: string) {
+  // Pre-process and normalize Uzbek abbreviations & multipliers (e.g. 14 mln, 50k, 2 yarim mln)
+  const normalized = normalizeUzbekFinancialText(text);
+
   const candidateKeys = await getCandidateAiKeys();
   const envKey = process.env.GEMINI_API_KEY;
   const keysToTry = candidateKeys.length > 0
@@ -248,13 +328,7 @@ async function parseTextWithAi(text: string) {
     return null;
   }
 
-  const prompt = `You are a financial AI assistant for Moliya AI. Parse this transaction text in Uzbek, Russian, or English: "${text}".
-Return JSON object:
-- type: 'expense' (spending), 'income' (salary/earnings), 'debt' (borrowed), or 'lending' (loaned)
-- amount: total amount in numbers (e.g. "45 ming" -> 45000, "1.5 mln" -> 1500000, "100 dollar" -> 100, "ellik ming" -> 50000)
-- category: exactly one from: ['Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\\'liq', 'Ta\\'lim', 'Ko\\'ngil ochar', 'Boshqa', 'Maosh', 'Freelance', 'Biznes', 'Sovg\\'a', 'Investitsiya', 'Do\\'st', 'Bank', 'Oila', 'Hamkasb']
-- note: meaningful description of the item or expense
-- title: concise 2-3 word title`;
+  const prompt = buildUzbekFinancialAiPrompt(normalized.normalizedText);
 
   for (const key of keysToTry) {
     try {
@@ -279,11 +353,27 @@ Return JSON object:
       });
 
       if (response?.text) {
-        return JSON.parse(response.text);
+        const rawParsed = JSON.parse(response.text);
+        const validated = validateAiFinancialOutput(rawParsed, normalized);
+        if (validated.isValid) {
+          return validated;
+        }
       }
     } catch (e) {
       console.warn('[BOT] Gemini parse error with key, trying next...', e);
     }
+  }
+
+  // Fallback to purely normalized extraction if AI network fails
+  if (normalized.extractedAmount && normalized.extractedAmount > 0) {
+    return {
+      isValid: true,
+      type: normalized.inferredType || 'expense',
+      amount: normalized.extractedAmount,
+      category: normalized.inferredCategory || 'Boshqa',
+      name: normalized.originalText.slice(0, 80),
+      note: normalized.originalText
+    };
   }
 
   return null;
@@ -300,6 +390,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
+    // Register bot menu commands asynchronously on first traffic
+    registerBotCommandsOnce().catch(() => {});
+
     const update = req.body;
     if (!update) return res.status(200).json({ status: 'no_body' });
 
@@ -349,7 +442,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!fromUser || !chatId) return res.status(200).json({ status: 'invalid_chat' });
 
     // Canonical Identity Resolution & Restriction Check
-    const { user, userId, isBlocked } = await resolveCanonicalUser(fromUser);
+    const { user, userId, isBlocked, isRegistered } = await resolveCanonicalUser(fromUser);
 
     if (isBlocked) {
       await sendTelegramMessage(
@@ -360,29 +453,67 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ status: 'restricted' });
     }
 
-    // Handle Contact Share (Phone Number)
+    // ── Handle Contact Share (Phone Number Verification) ────────
     if (message.contact) {
       const contact = message.contact;
-      const phone = contact.phone_number?.startsWith('+') ? contact.phone_number : `+${contact.phone_number}`;
+      // Validate that the contact belongs to the sender or matches user ID
+      const contactUserId = contact.user_id ? String(contact.user_id) : null;
+      const senderTgId = String(fromUser.id);
 
-      await supabase.from('users').update({
-        phone,
-        updated_at: new Date().toISOString()
-      }).eq('id', userId);
+      if (contactUserId && contactUserId !== senderTgId) {
+        await sendTelegramMessage(
+          chatId,
+          `⚠️ <b>Faqat o'zingizning shaxsiy telefon raqamingizni yuboring.</b>\n\nIltimos, pastdagi tugmani bosing:`,
+          {
+            keyboard: [[{ text: "📞 Telefon raqamni yuborish", request_contact: true }]],
+            resize_keyboard: true,
+            one_time_keyboard: true
+          }
+        );
+        return res.status(200).json({ status: 'invalid_contact' });
+      }
 
-      await sendTelegramMessage(
-        chatId,
-        `✅ <b>Telefon raqamingiz muvaffaqiyatli saqlandi!</b> 🎉\n\n📞 <b>Raqam:</b> ${phone}\n\n👇 <i>Moliya AI imkoniyatlaridan to'liq foydalanishingiz mumkin:</i>`,
-        {
-          inline_keyboard: [
-            [{ text: "📱 Moliya Mini App", web_app: { url: appUrl } }]
-          ]
-        }
-      );
+      const rawPhone = contact.phone_number || '';
+      const phone = rawPhone.startsWith('+') ? rawPhone : `+${rawPhone}`;
+
+      // Complete registration & grant 1-day trial
+      await completePhoneRegistration(fromUser, phone);
+
+      const successMsg =
+        `🎉 <b>Tabriklaymiz, ${fromUser.first_name || 'foydalanuvchi'}!</b>\n\n` +
+        `✅ <b>Telefon raqamingiz tasdiqlandi:</b> <code>${phone}</code>\n` +
+        `💎 <b>Sizga 1 kunlik CHEKSIZ PREMIUM va AI sinov muddati taqdim etildi!</b>\n\n` +
+        `Endi Moliya Mini App orqali xarajatlaringizni to'liq boshqarishingiz mumkin.\n\n` +
+        `👇 <i>Ilovani ochish uchun tugmani bosing:</i>`;
+
+      // Remove contact reply keyboard and send clean inline Mini App button
+      await sendTelegramMessage(chatId, successMsg, {
+        inline_keyboard: [
+          [{ text: "📱 Moliya Mini App", web_app: { url: appUrl } }]
+        ]
+      });
       return res.status(200).json({ status: 'ok' });
     }
 
-    // Handle /start Command
+    // ── Registration Guard for Unregistered Users ───────────────
+    if (!isRegistered) {
+      const phoneRequestMsg =
+        `<b>Moliya AI ga xush kelibsiz!</b> 👋✨\n\n` +
+        `Dasturdan foydalanish va Mini Appni ochish uchun, iltimos, <b>telefon raqamingizni tasdiqlang</b>.\n\n` +
+        `🔒 <i>Telefon raqami Moliya AI hisobingizni xavfsiz yaratish va saqlash uchun talab qilinadi.</i>\n\n` +
+        `👇 <i>Pastdagi tugmani bosib raqamingizni ulashing:</i>`;
+
+      await sendTelegramMessage(chatId, phoneRequestMsg, {
+        keyboard: [
+          [{ text: "📞 Telefon raqamni yuborish", request_contact: true }]
+        ],
+        resize_keyboard: true,
+        one_time_keyboard: true
+      });
+      return res.status(200).json({ status: 'phone_required' });
+    }
+
+    // ── Command: /start (For Registered Users) ───────────────────
     if (text.startsWith('/start')) {
       const rawArg = text.replace('/start', '').trim();
       const requestId = rawArg.replace('req_', '').trim();
@@ -409,16 +540,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ status: 'ok' });
       }
 
-      // Normal bot start
+      // Normal bot start for registered user
       const welcomeText =
         `<b>Assalomu alaykum, ${fromUser.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
         `Men <b>Moliya AI</b> — shaxsiy moliyaviy yordamchingizman.\n\n` +
         `💡 <b>Qanday ishlatish mumkin?</b>\n` +
         `• <b>Xarajat yozish:</b> <i>"50 000 go'sht oldim"</i> yoki <i>"taksi 15000"</i>\n` +
-        `• <b>Daromad yozish:</b> <i>"Maosh oldim 5 000 000"</i>\n` +
+        `• <b>Daromad yozish:</b> <i>"Maosh oldim 5 000 000"</i> yoki <i>"14 mln tushdi"</i>\n` +
         `• <b>Ovozli xabar:</b> Ovoz bilan xarajatni gapirib yuboring 🎙\n` +
         `• <b>Chek skaner:</b> Xarid cheki rasmini yuboring 📸\n\n` +
         `📊 /stats — Oylik hisobot va balansni ko'rish\n` +
+        `📱 /app — Mini Appni ochish\n` +
         `❓ /help — Yordam va yo'riqnoma\n\n` +
         `👇 <i>Ilovani ochish uchun quyidagi tugmani bosing:</i>`;
 
@@ -430,21 +562,41 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ status: 'ok' });
     }
 
-    // Handle /help Command
+    // ── Command: /app (Direct Mini App Access) ───────────────────
+    if (text.startsWith('/app')) {
+      await sendTelegramMessage(
+        chatId,
+        `📱 <b>Moliya Mini App</b>\n\nBarcha hisob-kitoblar, kartalar, grafiklar va hisobotlar bir joyda! 👇`,
+        {
+          inline_keyboard: [
+            [{ text: "📱 Moliya Mini Appni ochish", web_app: { url: appUrl } }]
+          ]
+        }
+      );
+      return res.status(200).json({ status: 'ok' });
+    }
+
+    // ── Command: /help or /yordam ────────────────────────────────
     if (text.startsWith('/help') || text.startsWith('/yordam')) {
       const helpText =
         `ℹ️ <b>Moliya AI Botdan foydalanish yo'riqnomasi</b>\n\n` +
-        `📝 <b>1. Oddiy matn bilan:</b>\n` +
+        `📝 <b>1. Oddiy matn bilan kiritish:</b>\n` +
         `Shunchaki xarajatingizni yozing, masalan:\n` +
-        `• <i>"Bozordan 120 000 so'mga oziq-ovqat oldim"</i>\n` +
-        `• <i>"Benzin 200 000"</i>\n` +
-        `• <i>"Kofega 25 ming ketdi"</i>\n\n` +
+        `• <i>"14 mln so'm sarfladim"</i>\n` +
+        `• <i>"taksiga 30 ming ketdi"</i>\n` +
+        `• <i>"lunchga 50k"</i>\n` +
+        `• <i>"maosh 5 mln tushdi"</i>\n\n` +
         `🎙 <b>2. Ovozli xabar:</b>\n` +
-        `Ovoz tugmasini bosib, qayerga qancha sarflaganingizni ayting.\n\n` +
+        `Telegram ovoz tugmasini bosib, qayerga qancha sarflaganingizni ayting.\n\n` +
         `📸 <b>3. Chek rasmi:</b>\n` +
-        `Supermarket yoki to'lov chekini rasmga olib yuboring.\n\n` +
+        `Supermarket yoki do'kon xarid chekini rasmga olib yuboring.\n\n` +
+        `💎 <b>4. AI Limitlari va Premium:</b>\n` +
+        `• Yangi foydalanuvchilar: <b>1 kun cheksiz Premium</b>\n` +
+        `• Bepul tarif: <b>kuniga 5 ta AI so'rovi</b> (har kuni yangilanadi)\n` +
+        `• Cheksiz AI uchun VIP Premium oling.\n\n` +
         `📊 <b>Buyruqlar:</b>\n` +
-        `• /stats — Oylik xarajatlar tahlili\n` +
+        `• /stats — Balans va AI kvotasi\n` +
+        `• /app — Mini Appni ochish\n` +
         `• /start — Bosh sahifa`;
 
       await sendTelegramMessage(chatId, helpText, {
@@ -455,9 +607,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ status: 'ok' });
     }
 
-    // Handle /stats or /hisobot Command
+    // ── Command: /stats or /hisobot ──────────────────────────────
     if (text.startsWith('/stats') || text.startsWith('/hisobot')) {
-      const { data: u } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
+      const { data: u } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
       const txs = Array.isArray(u?.transactions) ? u.transactions : [];
 
       const currentMonth = new Date().getMonth() + 1;
@@ -487,13 +639,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         breakdownText += `${emoji} <b>${cat}:</b> ${sum.toLocaleString()} so'm\n`;
       }
 
+      // Check current quota status
+      const quota = await checkAiQuota(userId);
+      const planLabel = quota.isTrial
+        ? '💎 1-Kunlik Cheksiz Premium Sinovi'
+        : quota.isPremium
+          ? '⭐ VIP Premium (Cheksiz)'
+          : '🆓 Bepul Tarif';
+
+      const quotaStatus = quota.limit === null
+        ? '♾️ Cheksiz'
+        : `${quota.usedCount} / ${quota.limit} (${quota.remaining} ta qoldi)`;
+
       const statsText =
-        `📊 <b>Joriy oylik hisobot (${currentMonth}/${currentYear})</b>\n\n` +
+        `📊 <b>Moliyaviy hisobot (${currentMonth}/${currentYear})</b>\n\n` +
         `🔴 <b>Jami xarajat:</b> ${totalExpense.toLocaleString()} so'm\n` +
         `🟢 <b>Jami daromad:</b> ${totalIncome.toLocaleString()} so'm\n` +
-        `💰 <b>Balans:</b> ${balance.toLocaleString()} so'm\n\n` +
-        (breakdownText ? `<b>Top xarajat kategoriyalari:</b>\n${breakdownText}\n` : '') +
-        `👇 <i>Batafsil ko'rish uchun Mini Appni oching:</i>`;
+        `💰 <b>Sof balans:</b> ${balance.toLocaleString()} so'm\n\n` +
+        (breakdownText ? `<b>Top xarajatlar:</b>\n${breakdownText}\n` : '') +
+        `🏷 <b>Tarif:</b> ${planLabel}\n` +
+        `⚡ <b>Bugungi AI so'rovlar:</b> ${quotaStatus}\n\n` +
+        `👇 <i>Batafsil tahlil uchun Mini Appni oching:</i>`;
 
       await sendTelegramMessage(chatId, statsText, {
         inline_keyboard: [
@@ -503,22 +669,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ status: 'ok' });
     }
 
-    // Handle /clear Command
-    if (text.startsWith('/clear')) {
-      await sendTelegramMessage(
-        chatId,
-        `🧹 <b>Klaviatura tozalandi.</b>\n\nXarajat yozish uchun oddiy matn yuboring yoki quyidagi tugma orqali Mini Appni oching:`,
-        {
-          remove_keyboard: true,
-          inline_keyboard: [
-            [{ text: "📱 Moliya Mini App", web_app: { url: appUrl } }]
-          ]
-        }
-      );
-      return res.status(200).json({ status: 'ok' });
-    }
-
-    // Handle Voice Message (Audio Parsing)
+    // ── Voice Message (Audio Parsing) ───────────────────────────
     if (message.voice) {
       const quota = await checkAiQuota(userId);
       if (!quota.allowed) {
@@ -539,11 +690,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
           if (apiKey) {
             const ai = new GoogleGenAI({ apiKey: apiKey.trim() });
-            const prompt = `You are a financial AI assistant for Moliya AI. Listen to this voice note and extract the financial transaction in Uzbek/Russian.
+            const prompt = `You are a financial AI assistant for Moliya AI. Listen to this voice note in Uzbek/Russian and extract the transaction.
 Return JSON with:
 - type: 'expense' | 'income'
-- amount: number
-- category: 'Oziq-ovqat' | 'Transport' | 'Kiyim' | 'Kommunal' | 'Sog\'liq' | 'Ta\'lim' | 'Ko\'ngil ochar' | 'Boshqa' | 'Maosh'
+- amount: integer in UZS (e.g. "14 mln" -> 14000000, "50 ming" -> 50000)
+- category: exactly one from: ['Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\\'liq', 'Ta\\'lim', 'Ko\\'ngil ochar', 'Boshqa', 'Maosh', 'Freelance', 'Biznes']
 - note: text description
 - title: 2-3 word title`;
 
@@ -570,7 +721,7 @@ Return JSON with:
 
             if (audioResult.text) {
               const parsed = JSON.parse(audioResult.text);
-              if (parsed.amount) {
+              if (parsed.amount && Number(parsed.amount) > 0) {
                 const txId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
                 const now = new Date();
                 const newTx = {
@@ -611,7 +762,7 @@ Return JSON with:
       }
     }
 
-    // Handle Photo (Receipt OCR Parsing)
+    // ── Photo Message (Receipt OCR Scanning) ────────────────────
     if (message.photo && message.photo.length > 0) {
       const quota = await checkAiQuota(userId);
       if (!quota.allowed) {
@@ -635,7 +786,7 @@ Return JSON with:
             const ai = new GoogleGenAI({ apiKey: apiKey.trim() });
             const prompt = `You are an OCR receipt scanner for Moliya AI. Extract receipt info into JSON:
 - type: 'expense'
-- amount: total amount paid
+- amount: total integer amount paid in UZS
 - category: choose best fit from ['Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\\'liq', 'Ko\\'ngil ochar', 'Boshqa']
 - note: store or merchant name and summary
 - title: merchant name`;
@@ -663,7 +814,7 @@ Return JSON with:
 
             if (imgResult.text) {
               const parsed = JSON.parse(imgResult.text);
-              if (parsed.amount) {
+              if (parsed.amount && Number(parsed.amount) > 0) {
                 const txId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
                 const now = new Date();
                 const newTx = {
@@ -704,7 +855,7 @@ Return JSON with:
       }
     }
 
-    // Handle Natural Language Text Expense (e.g. "50 000 go'sht oldim", "taksi 15000")
+    // ── Natural Language Text Expense (with Uzbek Normalizer) ────
     if (text && !text.startsWith('/')) {
       const quota = await checkAiQuota(userId);
       if (!quota.allowed) {
@@ -713,13 +864,13 @@ Return JSON with:
       }
 
       const parsed = await parseTextWithAi(text);
-      if (parsed && parsed.amount) {
+      if (parsed && parsed.amount && Number(parsed.amount) > 0) {
         const txId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
         const now = new Date();
         const newTx = {
           id: txId,
           type: parsed.type || 'expense',
-          name: parsed.title || parsed.note || text,
+          name: parsed.name || text,
           category: parsed.category || 'Boshqa',
           amount: Number(parsed.amount),
           date: now.toISOString().slice(0, 10),
@@ -750,7 +901,7 @@ Return JSON with:
       } else {
         await sendTelegramMessage(
           chatId,
-          `🤔 <b>Summani aniqlab bo'lmadi.</b>\n\nIltimos, xarajatni summa bilan yozing, masalan:\n<i>"50 000 so'm go'sht oldim"</i> yoki <i>"taksi 15000"</i>`,
+          `🤔 <b>Summani aniqlab bo'lmadi.</b>\n\nIltimos, xarajatni summa bilan yozing, masalan:\n<i>"14 mln so'm sarfladim"</i> yoki <i>"taksiga 30 ming"</i>`,
           {
             inline_keyboard: [
               [{ text: "📱 Moliya Mini App", web_app: { url: appUrl } }]

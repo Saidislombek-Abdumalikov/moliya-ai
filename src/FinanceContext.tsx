@@ -43,6 +43,7 @@ interface FinanceContextType {
   setHasSampleData: (val: boolean) => Promise<void>
   loading: boolean
   isAuthReady: boolean
+  authError: string | null
   updateOnboarding: (newData: Partial<OnboardingResult>) => Promise<void>
   saveCards: (updated: Card[]) => Promise<void>
   updateSecurity: (updated: SecurityOpts) => Promise<void>
@@ -144,6 +145,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const [loading] = useState(false)
   const [isAuthReady, setIsAuthReady] = useState(false)
+  const [authError, setAuthError] = useState<string | null>(null)
 
   const [dateRange, setDateRange] = useState<{ start: Date; end: Date }>(() => {
     const now = new Date()
@@ -205,6 +207,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           try {
             if (typeof tg.ready === 'function') tg.ready()
             if (typeof tg.expand === 'function') tg.expand()
+            if (typeof tg.requestFullscreen === 'function') tg.requestFullscreen()
+            if (typeof tg.enableClosingConfirmation === 'function') tg.enableClosingConfirmation()
           } catch (tgErr) {
             console.error('[AUTH] Telegram WebApp error:', tgErr)
           }
@@ -246,11 +250,17 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 })
                 console.log('[AUTH] ✅ Authenticated via Telegram Mini App initData for:', data.userId)
                 setIsAuthReady(true)
+                setAuthError(null)
                 return
               }
             } else {
               const errData = await res.json().catch(() => ({}))
-              console.error('[AUTH] Telegram initData verification failed:', errData)
+              console.error('[AUTH] Telegram initData verification response:', errData)
+              if (errData.error === 'REGISTRATION_REQUIRED' || errData.error === 'ACCOUNT_RESTRICTED') {
+                setAuthError(errData.message || "Iltimos, avval Telegram botda telefon raqamingizni tasdiqlang.")
+                setIsAuthReady(true)
+                return
+              }
             }
           } catch (err) {
             console.error('[AUTH] Telegram initData auth error:', err)
@@ -792,6 +802,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         setHasSampleData,
         loading,
         isAuthReady,
+        authError,
         updateOnboarding,
         saveCards,
         updateSecurity,

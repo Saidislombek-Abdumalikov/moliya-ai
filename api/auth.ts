@@ -86,7 +86,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // Restriction & Block Guard: Deny access if Telegram ID is restricted or blocked
       const { data: restrictionCheck } = await supabase
         .from('users')
-        .select('id, is_blocked, is_restricted, device_info, onboarding')
+        .select('*')
         .or(`id.eq.${userId},id.eq.restricted_tg_${tgId},telegram_id.eq.${tgId}`)
         .maybeSingle();
 
@@ -107,6 +107,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
+      // Registration Guard: Deny access if user has not completed phone number registration
+      const isRegistered = Boolean(
+        restrictionCheck?.phone &&
+        (restrictionCheck?.registration_status === 'completed' || restrictionCheck?.onboarding?.registration_status === 'completed')
+      );
+
+      if (!isRegistered) {
+        return res.status(403).json({
+          error: 'REGISTRATION_REQUIRED',
+          message: "Iltimos, avval Telegram botda telefon raqamingizni tasdiqlang."
+        });
+      }
+
+      // Dynamic 1-Day Trial Expiration Check
+      let isPremium = Boolean(restrictionCheck?.is_premium);
+      if (isPremium && restrictionCheck?.premium_expires_at) {
+        if (new Date(restrictionCheck.premium_expires_at).getTime() < Date.now()) {
+          isPremium = false;
+          await supabase
+            .from('users')
+            .update({ is_premium: false, ai_limit: 5, updated_at: new Date().toISOString() })
+            .eq('id', userId);
+        }
+      }
+
       const now = new Date();
       const expiresAt = new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString();
       const randomHex = Array.from({ length: 32 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
@@ -115,35 +140,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const tgName = [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') || 'Telegram Foydalanuvchi';
       const tgUsername = tgUser.username ? '@' + tgUser.username : '@moliya_user';
 
-      const { data: existingUser } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', userId)
-        .maybeSingle();
-
       const updatedOnboarding = {
-        ...(existingUser?.onboarding || {}),
-        completed: true,
-        language: existingUser?.language || tgUser.language_code || 'uz',
+        ...(restrictionCheck?.onboarding || {}),
+        language: restrictionCheck?.language || tgUser.language_code || 'uz',
         name: tgName,
-        phone: existingUser?.phone || '',
+        phone: restrictionCheck?.phone || '',
         telegram: tgUsername,
         telegramId: tgId,
+        registration_status: 'completed'
       };
 
-      await supabase.from('users').upsert({
-        id: userId,
-        name: tgName,
-        telegram: tgUsername,
-        telegram_id: tgId,
-        phone: existingUser?.phone || null,
-        language: updatedOnboarding.language,
-        is_premium: existingUser?.is_premium || false,
+      await supabase.from('users').update({
         session_token: sessionToken,
         session_expires_at: expiresAt,
         onboarding: updatedOnboarding,
         updated_at: now.toISOString()
-      }, { onConflict: 'id' });
+      }).eq('id', userId);
 
       const authSession = await createSupabaseAuthSession(tgId, { name: tgName, telegram: tgUsername });
 
@@ -153,9 +165,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         access_token: authSession?.access_token || null,
         refresh_token: authSession?.refresh_token || null,
         onboarding: updatedOnboarding,
-        cards: existingUser?.cards || [],
-        transactions: existingUser?.transactions || [],
-        isPremium: existingUser?.is_premium || false
+        cards: restrictionCheck?.cards || [],
+        transactions: restrictionCheck?.transactions || [],
+        isPremium,
+        trialEndsAt: restrictionCheck?.trial_ends_at || restrictionCheck?.premium_expires_at,
+        aiLimit: isPremium ? null : (restrictionCheck?.ai_limit || 5)
       });
     } catch (error: any) {
       console.error('Error in auth telegram:', error);
