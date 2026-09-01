@@ -73,6 +73,41 @@ async function editTelegramMessage(
   }
 }
 
+async function deleteTelegramMessage(chatId: number | string, messageId: number | string) {
+  if (!BOT_TOKEN || !messageId) return null;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/deleteMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: String(chatId),
+        message_id: Number(messageId)
+      })
+    });
+    return await res.json();
+  } catch (err) {
+    console.warn('[BOT] Failed to delete message:', err);
+    return null;
+  }
+}
+
+function getMainAppKeyboard(appUrl: string) {
+  return {
+    keyboard: [
+      [
+        { text: "📱 Mini App", web_app: { url: appUrl } },
+        { text: "📊 Statistika" }
+      ],
+      [
+        { text: "❓ Yordam" },
+        { text: "👤 Hisobim" }
+      ]
+    ],
+    resize_keyboard: true,
+    is_persistent: true
+  };
+}
+
 async function answerCallbackQuery(callbackQueryId: string, text?: string) {
   if (!BOT_TOKEN) return;
   try {
@@ -455,8 +490,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // ── Handle Contact Share (Phone Number Verification) ────────
     if (message.contact) {
+      // Clean user's contact message from chat
+      deleteTelegramMessage(chatId, message.message_id).catch(() => {});
+
       const contact = message.contact;
-      // Validate that the contact belongs to the sender or matches user ID
       const contactUserId = contact.user_id ? String(contact.user_id) : null;
       const senderTgId = String(fromUser.id);
 
@@ -484,19 +521,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         `✅ <b>Telefon raqamingiz tasdiqlandi:</b> <code>${phone}</code>\n` +
         `💎 <b>Sizga 1 kunlik CHEKSIZ PREMIUM va AI sinov muddati taqdim etildi!</b>\n\n` +
         `Endi Moliya Mini App orqali xarajatlaringizni to'liq boshqarishingiz mumkin.\n\n` +
-        `👇 <i>Ilovani ochish uchun tugmani bosing:</i>`;
+        `👇 <i>Pastdagi menyu orqali Mini Appni ochishingiz yoki to'g'ridan-to'g'ri xarajatlarni yozishingiz mumkin:</i>`;
 
-      // Remove contact reply keyboard and send clean inline Mini App button
-      await sendTelegramMessage(chatId, successMsg, {
-        inline_keyboard: [
-          [{ text: "📱 Moliya Mini App", web_app: { url: appUrl } }]
-        ]
-      });
+      // Set physical keyboard with Mini App and commands
+      await sendTelegramMessage(chatId, successMsg, getMainAppKeyboard(appUrl));
       return res.status(200).json({ status: 'ok' });
     }
 
     // ── Registration Guard for Unregistered Users ───────────────
     if (!isRegistered) {
+      // Clean incoming message if it was a command
+      if (text.startsWith('/')) {
+        deleteTelegramMessage(chatId, message.message_id).catch(() => {});
+      }
+
       const phoneRequestMsg =
         `<b>Moliya AI ga xush kelibsiz!</b> 👋✨\n\n` +
         `Dasturdan foydalanish va Mini Appni ochish uchun, iltimos, <b>telefon raqamingizni tasdiqlang</b>.\n\n` +
@@ -513,8 +551,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ status: 'phone_required' });
     }
 
-    // ── Command: /start (For Registered Users) ───────────────────
-    if (text.startsWith('/start')) {
+    // ── Command: /start or 👤 Hisobim (For Registered Users) ─────
+    if (text.startsWith('/start') || text === '👤 Hisobim') {
+      deleteTelegramMessage(chatId, message.message_id).catch(() => {});
+
       const rawArg = text.replace('/start', '').trim();
       const requestId = rawArg.replace('req_', '').trim();
 
@@ -540,30 +580,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ status: 'ok' });
       }
 
-      // Normal bot start for registered user
+      // Check user plan & trial
+      const quota = await checkAiQuota(userId);
+      const planLabel = quota.isTrial
+        ? '💎 1-Kunlik Cheksiz Premium Sinovi'
+        : quota.isPremium
+          ? '⭐ VIP Premium (Cheksiz)'
+          : '🆓 Bepul Tarif';
+
+      const quotaStatus = quota.limit === null
+        ? '♾️ Cheksiz'
+        : `${quota.usedCount} / ${quota.limit} (${quota.remaining} ta qoldi)`;
+
       const welcomeText =
         `<b>Assalomu alaykum, ${fromUser.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
         `Men <b>Moliya AI</b> — shaxsiy moliyaviy yordamchingizman.\n\n` +
+        `👤 <b>Hisob:</b> <code>${user.phone || fromUser.first_name}</code>\n` +
+        `🏷 <b>Tarif:</b> ${planLabel}\n` +
+        `⚡ <b>Bugungi AI kvotasi:</b> ${quotaStatus}\n\n` +
         `💡 <b>Qanday ishlatish mumkin?</b>\n` +
-        `• <b>Xarajat yozish:</b> <i>"50 000 go'sht oldim"</i> yoki <i>"taksi 15000"</i>\n` +
-        `• <b>Daromad yozish:</b> <i>"Maosh oldim 5 000 000"</i> yoki <i>"14 mln tushdi"</i>\n` +
+        `• <b>Xarajat:</b> <i>"50 000 go'sht oldim"</i> yoki <i>"taksi 25000"</i>\n` +
+        `• <b>Daromad:</b> <i>"14 mln maosh tushdi"</i>\n` +
         `• <b>Ovozli xabar:</b> Ovoz bilan xarajatni gapirib yuboring 🎙\n` +
         `• <b>Chek skaner:</b> Xarid cheki rasmini yuboring 📸\n\n` +
-        `📊 /stats — Oylik hisobot va balansni ko'rish\n` +
-        `📱 /app — Mini Appni ochish\n` +
-        `❓ /help — Yordam va yo'riqnoma\n\n` +
-        `👇 <i>Ilovani ochish uchun quyidagi tugmani bosing:</i>`;
+        `👇 <i>Quyidagi menyu tugmalaridan foydalaning:</i>`;
 
-      await sendTelegramMessage(chatId, welcomeText, {
-        inline_keyboard: [
-          [{ text: "📱 Moliya Mini App", web_app: { url: appUrl } }]
-        ]
-      });
+      await sendTelegramMessage(chatId, welcomeText, getMainAppKeyboard(appUrl));
       return res.status(200).json({ status: 'ok' });
     }
 
-    // ── Command: /app (Direct Mini App Access) ───────────────────
-    if (text.startsWith('/app')) {
+    // ── Command: /app or 📱 Mini App ──────────────────────────────
+    if (text.startsWith('/app') || text === '📱 Mini App') {
+      deleteTelegramMessage(chatId, message.message_id).catch(() => {});
+
       await sendTelegramMessage(
         chatId,
         `📱 <b>Moliya Mini App</b>\n\nBarcha hisob-kitoblar, kartalar, grafiklar va hisobotlar bir joyda! 👇`,
@@ -576,14 +625,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ status: 'ok' });
     }
 
-    // ── Command: /help or /yordam ────────────────────────────────
-    if (text.startsWith('/help') || text.startsWith('/yordam')) {
+    // ── Command: /help or /yordam or ❓ Yordam ───────────────────
+    if (text.startsWith('/help') || text.startsWith('/yordam') || text === '❓ Yordam') {
+      deleteTelegramMessage(chatId, message.message_id).catch(() => {});
+
       const helpText =
         `ℹ️ <b>Moliya AI Botdan foydalanish yo'riqnomasi</b>\n\n` +
         `📝 <b>1. Oddiy matn bilan kiritish:</b>\n` +
         `Shunchaki xarajatingizni yozing, masalan:\n` +
         `• <i>"14 mln so'm sarfladim"</i>\n` +
-        `• <i>"taksiga 30 ming ketdi"</i>\n` +
+        `• <i>"taksiga 25000 so'm"</i>\n` +
         `• <i>"lunchga 50k"</i>\n` +
         `• <i>"maosh 5 mln tushdi"</i>\n\n` +
         `🎙 <b>2. Ovozli xabar:</b>\n` +
@@ -594,21 +645,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         `• Yangi foydalanuvchilar: <b>1 kun cheksiz Premium</b>\n` +
         `• Bepul tarif: <b>kuniga 5 ta AI so'rovi</b> (har kuni yangilanadi)\n` +
         `• Cheksiz AI uchun VIP Premium oling.\n\n` +
-        `📊 <b>Buyruqlar:</b>\n` +
-        `• /stats — Balans va AI kvotasi\n` +
-        `• /app — Mini Appni ochish\n` +
-        `• /start — Bosh sahifa`;
+        `📊 <b>Menyu Tugmalari:</b>\n` +
+        `• <b>📱 Mini App</b> — Ilovani to'liq ochish\n` +
+        `• <b>📊 Statistika</b> — Balans va hisobotlar\n` +
+        `• <b>👤 Hisobim</b> — Hisob holati va kvota`;
 
-      await sendTelegramMessage(chatId, helpText, {
-        inline_keyboard: [
-          [{ text: "📱 Moliya Mini App", web_app: { url: appUrl } }]
-        ]
-      });
+      await sendTelegramMessage(chatId, helpText, getMainAppKeyboard(appUrl));
       return res.status(200).json({ status: 'ok' });
     }
 
-    // ── Command: /stats or /hisobot ──────────────────────────────
-    if (text.startsWith('/stats') || text.startsWith('/hisobot')) {
+    // ── Command: /stats or /hisobot or 📊 Statistika ─────────────
+    if (text.startsWith('/stats') || text.startsWith('/hisobot') || text === '📊 Statistika') {
+      deleteTelegramMessage(chatId, message.message_id).catch(() => {});
+
       const { data: u } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
       const txs = Array.isArray(u?.transactions) ? u.transactions : [];
 
@@ -625,7 +674,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           totalIncome += amt;
         } else {
           totalExpense += amt;
-          const cat = t.category || 'Boshqa';
+        }
+        const cat = t.category || 'Boshqa';
+        if (t.type !== 'income') {
           catTotals[cat] = (catTotals[cat] || 0) + amt;
         }
       }
