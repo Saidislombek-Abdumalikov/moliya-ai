@@ -107,7 +107,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
 
           if (!parsed || !parsed.amount) {
             // Show error instead of silently injecting fake data
-            setStep('idle')
+            setStep('type')
             return
           }
 
