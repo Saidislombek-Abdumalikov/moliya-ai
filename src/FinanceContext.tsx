@@ -742,14 +742,25 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const clearAllData = async () => {
     if (userId) {
-      await supabase.from('users').delete().eq('id', userId);
+      try {
+        await supabase.from('users').delete().eq('id', userId);
+      } catch (e) {
+        console.warn('User delete error:', e);
+      }
     }
+    try {
+      await supabase.auth.signOut();
+    } catch {}
     localStorage.clear();
+    sessionStorage.clear();
+    setUserId(null);
     setOnboarding(null);
     setCards([]);
     setCustomTransactions([]);
     setDeletedTxIds([]);
     setHasSampleDataState(false);
+    setIsAuthReady(false);
+    window.dispatchEvent(new Event('user_logged_in_updated'));
   };
 
   const clearOnlyFinancialData = async () => {

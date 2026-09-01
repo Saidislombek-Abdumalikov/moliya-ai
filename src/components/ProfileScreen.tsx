@@ -837,6 +837,12 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
     
     setTimeout(() => {
       onClearData?.();
+      const tg = (window as any).Telegram?.WebApp;
+      if (tg?.close) {
+        tg.close();
+      } else {
+        window.location.href = 'https://t.me/MoliyaAI_Bot';
+      }
     }, 1000);
   }
 

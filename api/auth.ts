@@ -120,10 +120,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
-      // Dynamic 1-Day Trial Expiration Check
+      // Dynamic 1-Day Trial Check & Automatic Grant for new users
+      let premiumExpiresAt = restrictionCheck?.premium_expires_at || restrictionCheck?.onboarding?.premium_expires_at;
       let isPremium = Boolean(restrictionCheck?.is_premium);
-      if (isPremium && restrictionCheck?.premium_expires_at) {
-        if (new Date(restrictionCheck.premium_expires_at).getTime() < Date.now()) {
+
+      if (!premiumExpiresAt) {
+        // First time entering: automatically grant 1-Day Unlimited AI Trial
+        const trialEnd = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+        isPremium = true;
+        premiumExpiresAt = trialEnd;
+        await supabase.from('users').update({
+          is_premium: true,
+          premium_expires_at: trialEnd,
+          ai_limit: null,
+          updated_at: new Date().toISOString()
+        }).eq('id', userId);
+      } else if (isPremium) {
+        // Dynamic expiration check
+        if (new Date(premiumExpiresAt).getTime() < Date.now()) {
           isPremium = false;
           await supabase
             .from('users')

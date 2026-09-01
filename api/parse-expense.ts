@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI, Type } from "@google/genai";
 import { checkAndRecordAiUsage } from './_aiQuotaHelper.js';
 import { getCandidateAiKeys, recordKeyResult } from './_aiRouter.js';
+import { normalizeUzbekFinancialText, buildUzbekFinancialPrompt } from './_uzbekFinancialNormalizer.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -17,6 +18,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!text || typeof text !== 'string') {
       return res.status(400).json({ error: 'Missing text' });
     }
+
+    const normalized = normalizeUzbekFinancialText(text);
 
     // Run quota check AND key fetch in PARALLEL for speed
     const [quota, candidateKeys] = await Promise.all([
@@ -38,15 +41,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(500).json({ error: 'No active AI keys configured' });
     }
 
-    // Build prompt
-    const prompt = `Parse this financial transaction text in Uzbek/Russian/English: "${text}".
-Return JSON:
-- type: 'expense' | 'income' | 'debt' | 'lending'
-- amount: number in UZS (e.g. 25000, 1000000). "45 ming" = 45000, "1.5 mln" = 1500000, "ellik ming" = 50000
-- category: EXACTLY one of: 'Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\\'liq', 'Ta\\'lim', 'Ko\\'ngil ochar', 'Boshqa', 'Maosh', 'Freelance', 'Biznes', 'Sovg\\'a', 'Investitsiya', 'Do\\'st', 'Bank', 'Oila', 'Hamkasb'
-- note: description
-- title: short 2-3 word title
-- debtWho: person name if debt/lending, else empty`;
+    // Build prompt with normalized financial context
+    const prompt = buildUzbekFinancialPrompt(normalized.normalizedText || text);
 
     // Try each key with fast SDK + structured output
     for (const key of candidateKeys) {

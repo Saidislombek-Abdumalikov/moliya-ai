@@ -200,6 +200,12 @@ export default function App() {
                 logout()
                 setStage('onboarding')
                 setActiveScreen('home')
+                const tg = (window as any).Telegram?.WebApp;
+                if (tg?.close) {
+                  tg.close();
+                } else {
+                  window.location.href = 'https://t.me/MoliyaAI_Bot';
+                }
               }}
               onStartTour={() => setShowTour(true)}
             />
