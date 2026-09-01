@@ -172,9 +172,10 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       localStorage.setItem('user_session_token_v1', data.sessionToken)
     }
     localStorage.setItem('user_logged_in_v1', 'true')
-    // Always mark onboarding as completed on successful auth —
-    // the user should never see onboarding again after logging in
-    localStorage.setItem('user_onboarding_completed_v1', 'true')
+    // Only mark onboarding as completed if the user has explicitly finished it in database or locally
+    if (data.onboarding?.completed === true) {
+      localStorage.setItem('user_onboarding_completed_v1', 'true')
+    }
     if (data.onboarding) {
       setOnboarding(data.onboarding)
       localStorage.setItem('user_onboarding_v1', JSON.stringify(data.onboarding))

@@ -13,6 +13,7 @@ export interface OnboardingResult {
   telegram?: string
   telegramId?: string
   isPremium?: boolean
+  completed?: boolean
   notifications?: { opt1: boolean; opt2: boolean; opt3: boolean }
   registration_status?: string
 }
@@ -270,7 +271,8 @@ export default function Onboarding({ onComplete }: Props) {
       phone: onboarding?.phone || '',
       telegram: onboarding?.telegram || '',
       telegramId: onboarding?.telegramId || '',
-      isPremium: true
+      isPremium: true,
+      completed: true
     }
 
     localStorage.setItem('user_onboarding_completed_v1', 'true')

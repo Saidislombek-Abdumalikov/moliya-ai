@@ -22,8 +22,7 @@ export default function App() {
   const getInitialStage = (): Stage => {
     try {
       const isOnboarded = localStorage.getItem('user_onboarding_completed_v1') === 'true'
-      const isLoggedIn = localStorage.getItem('user_logged_in_v1') === 'true'
-      if (isOnboarded || isLoggedIn) {
+      if (isOnboarded) {
         return 'app'
       }
       return 'onboarding'
@@ -46,15 +45,14 @@ export default function App() {
   useEffect(() => {
     if (!isAuthReady) return
 
-    const isOnboarded = localStorage.getItem('user_onboarding_completed_v1') === 'true'
-    const isLoggedIn = Boolean(userId || localStorage.getItem('user_logged_in_v1') === 'true')
+    const isOnboarded = localStorage.getItem('user_onboarding_completed_v1') === 'true' || onboarding?.completed === true
 
-    if (isOnboarded || isLoggedIn) {
+    if (isOnboarded) {
       setStage('app')
     } else {
       setStage('onboarding')
     }
-  }, [isAuthReady, userId])
+  }, [isAuthReady, userId, onboarding])
 
   // Trigger tour on first visit to main page
   useEffect(() => {
@@ -67,9 +65,8 @@ export default function App() {
   // Auto-transition to app/onboarding when user gets authenticated or logs out
   useEffect(() => {
     const checkLoggedIn = () => {
-      const isOnboarded = localStorage.getItem('user_onboarding_completed_v1') === 'true'
-      const isLoggedIn = localStorage.getItem('user_logged_in_v1') === 'true'
-      if (isOnboarded || isLoggedIn) {
+      const isOnboarded = localStorage.getItem('user_onboarding_completed_v1') === 'true' || onboarding?.completed === true
+      if (isOnboarded) {
         setStage('app')
       } else if (isAuthReady) {
         setStage('onboarding')
@@ -81,7 +78,7 @@ export default function App() {
       window.removeEventListener('storage', checkLoggedIn)
       window.removeEventListener('user_logged_in_updated', checkLoggedIn)
     }
-  }, [isAuthReady])
+  }, [isAuthReady, onboarding])
 
   // If onboarding is null and user is authenticated, set clean defaults
   useEffect(() => {

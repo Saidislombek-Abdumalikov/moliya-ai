@@ -212,6 +212,7 @@ async function resolveCanonicalUser(fromUser: any) {
     telegram: username,
     telegram_id: tgId,
     phone: null,
+    registration_status: 'pending_phone',
     language: 'uz',
     is_premium: false,
     ai_limit: 5,
@@ -259,6 +260,7 @@ async function completePhoneRegistration(fromUser: any, phoneNumber: string) {
     telegram: username,
     telegram_id: tgId,
     phone: phoneNumber,
+    registration_status: 'completed',
     is_premium: true, // 1-Day Unlimited Premium Trial!
     premium_expires_at: trialEndsAt,
     ai_limit: null, // Unlimited for trial

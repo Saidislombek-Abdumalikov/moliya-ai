@@ -156,6 +156,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const updatedOnboarding = {
         ...(restrictionCheck?.onboarding || {}),
+        completed: restrictionCheck?.onboarding?.completed || false,
         language: restrictionCheck?.language || tgUser.language_code || 'uz',
         name: tgName,
         phone: restrictionCheck?.phone || '',
@@ -167,6 +168,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       await supabase.from('users').update({
         session_token: sessionToken,
         session_expires_at: expiresAt,
+        registration_status: 'completed',
         onboarding: updatedOnboarding,
         updated_at: now.toISOString()
       }).eq('id', userId);
