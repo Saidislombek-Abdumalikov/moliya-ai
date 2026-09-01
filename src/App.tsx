@@ -139,6 +139,8 @@ export default function App() {
         position: 'relative',
         minHeight: '100dvh',
         width: '100%',
+        maxWidth: 430,
+        margin: '0 auto',
         background: '#FAF8FE',
         paddingBottom: 95,
         boxSizing: 'border-box',
