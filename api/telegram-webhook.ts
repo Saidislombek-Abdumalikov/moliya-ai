@@ -397,14 +397,19 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any) {
 
 // ── Transaction Helper ───────────────────────────────────────
 async function saveBotTransaction(userId: string, txItem: { id: string; type: string; name: string; category: string; amount: number; date: string; time?: string; note?: string }) {
-  try {
-    const { data: user } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
-    const currentTxs = Array.isArray(user?.transactions) ? user.transactions : [];
-    const updated = [txItem, ...currentTxs.filter((t: any) => t.id !== txItem.id)];
-    await supabase.from('users').update({ transactions: updated, updated_at: new Date().toISOString() }).eq('id', userId);
-  } catch (err) {
-    console.error('[BOT] Error saving transaction:', err);
+  const { data: user, error: fetchErr } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
+  if (fetchErr) {
+    console.error('[BOT] Error fetching user transactions:', fetchErr);
+    throw fetchErr;
   }
+  const currentTxs = Array.isArray(user?.transactions) ? user.transactions : [];
+  const updated = [txItem, ...currentTxs.filter((t: any) => t.id !== txItem.id)];
+  const { error: updateErr } = await supabase.from('users').update({ transactions: updated, updated_at: new Date().toISOString() }).eq('id', userId);
+  if (updateErr) {
+    console.error('[BOT] Error updating transactions column in Supabase:', updateErr);
+    throw updateErr;
+  }
+  return true;
 }
 
 // ── Category Emoji Map ───────────────────────────────────────
@@ -790,10 +795,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (chatId && cb.message?.message_id && data) {
         if (data.startsWith('del_')) {
           const txId = data.replace('del_', '');
-          const { data: u } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
+          const { data: u, error: fetchErr } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
+          if (fetchErr) {
+            await answerCallbackQuery(cb.id, "❌ Xatolik yuz berdi");
+            return res.status(500).json({ error: 'DB_FETCH_FAILED' });
+          }
           const txs = Array.isArray(u?.transactions) ? u.transactions : [];
           const updated = txs.filter((t: any) => String(t.id) !== String(txId));
-          await supabase.from('users').update({ transactions: updated, updated_at: new Date().toISOString() }).eq('id', userId);
+          const { error: updateErr } = await supabase.from('users').update({ transactions: updated, updated_at: new Date().toISOString() }).eq('id', userId);
+          if (updateErr) {
+            await answerCallbackQuery(cb.id, "❌ O'chirishda xatolik yuz berdi");
+            return res.status(500).json({ error: 'DB_UPDATE_FAILED' });
+          }
 
           await answerCallbackQuery(cb.id, "🗑 Operatsiya o'chirildi!");
           await editTelegramMessage(chatId, cb.message.message_id, "🗑 <b>Operatsiya o'chirildi.</b> ✅");
@@ -1157,25 +1170,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 debtWho: parsed.debtWho || ''
               };
 
-              await saveBotTransaction(userId, newTx);
-              await recordAiUsage(userId, 'text', parsed.note || 'Voice expense', quota.isPremium);
+              try {
+                await saveBotTransaction(userId, newTx);
+                await recordAiUsage(userId, 'text', parsed.note || 'Voice expense', quota.isPremium);
 
-              const emoji = CATEGORY_EMOJIS[newTx.category] || '💸';
-              const isInc = newTx.type === 'income';
-              const successMsg =
-                `✅ <b>Ovozli xabar saqlandi!</b>\n\n` +
-                `${emoji} <b>Kategoriya:</b> ${newTx.category}\n` +
-                `💰 <b>Summa:</b> ${newTx.amount.toLocaleString()} so'm\n` +
-                `📝 <b>Izoh:</b> ${newTx.name}\n` +
-                `📅 <b>Sana:</b> ${newTx.date} ${newTx.time}`;
+                const emoji = CATEGORY_EMOJIS[newTx.category] || '💸';
+                const isInc = newTx.type === 'income';
+                const successMsg =
+                  `✅ <b>Ovozli xabar saqlandi!</b>\n\n` +
+                  `${emoji} <b>Kategoriya:</b> ${newTx.category}\n` +
+                  `💰 <b>Summa:</b> ${newTx.amount.toLocaleString()} so'm\n` +
+                  `📝 <b>Izoh:</b> ${newTx.name}\n` +
+                  `📅 <b>Sana:</b> ${newTx.date} ${newTx.time}`;
 
-              await sendTelegramMessage(chatId, successMsg, {
-                inline_keyboard: [
-                  [{ text: "🗑 O'chirish", callback_data: `del_${txId}` }],
-                  [{ text: "📱 Mini Appda ko'rish", web_app: { url: appUrl } }]
-                ]
-              });
-              return res.status(200).json({ status: 'ok' });
+                await sendTelegramMessage(chatId, successMsg, {
+                  inline_keyboard: [
+                    [{ text: "🗑 O'chirish", callback_data: `del_${txId}` }],
+                    [{ text: "📱 Mini Appda ko'rish", web_app: { url: appUrl } }]
+                  ]
+                });
+                return res.status(200).json({ status: 'ok' });
+              } catch (saveErr) {
+                console.error('[BOT] Error saving voice transaction to Supabase:', saveErr);
+                await sendTelegramMessage(chatId, "❌ Xatolik: Ovozli xarajatni saqlab bo'lmadi. Iltimos, qayta urinib ko'ring.");
+                return res.status(500).json({ error: 'DB_SAVE_FAILED' });
+              }
             }
           }
         } catch (voiceErr) {
@@ -1274,24 +1293,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 note: parsed.note || 'Chek skaner qilindi'
               };
 
-              await saveBotTransaction(userId, newTx);
-              await recordAiUsage(userId, 'receipt', parsed.note || 'Receipt scan', quota.isPremium);
+              try {
+                await saveBotTransaction(userId, newTx);
+                await recordAiUsage(userId, 'receipt', parsed.note || 'Receipt scan', quota.isPremium);
 
-              const emoji = CATEGORY_EMOJIS[newTx.category] || '🧾';
-              const successMsg =
-                `🧾 <b>Chek muvaffaqiyatli saqlandi!</b>\n\n` +
-                `${emoji} <b>Do'kon/Joy:</b> ${newTx.name}\n` +
-                `💰 <b>Jami summa:</b> ${newTx.amount.toLocaleString()} so'm\n` +
-                `📁 <b>Kategoriya:</b> ${newTx.category}\n` +
-                `📅 <b>Sana:</b> ${newTx.date} ${newTx.time}`;
+                const emoji = CATEGORY_EMOJIS[newTx.category] || '🧾';
+                const successMsg =
+                  `🧾 <b>Chek muvaffaqiyatli saqlandi!</b>\n\n` +
+                  `${emoji} <b>Do'kon/Joy:</b> ${newTx.name}\n` +
+                  `💰 <b>Jami summa:</b> ${newTx.amount.toLocaleString()} so'm\n` +
+                  `📁 <b>Kategoriya:</b> ${newTx.category}\n` +
+                  `📅 <b>Sana:</b> ${newTx.date} ${newTx.time}`;
 
-              await sendTelegramMessage(chatId, successMsg, {
-                inline_keyboard: [
-                  [{ text: "🗑 O'chirish", callback_data: `del_${txId}` }],
-                  [{ text: "📱 Mini Appda ko'rish", web_app: { url: appUrl } }]
-                ]
-              });
-              return res.status(200).json({ status: 'ok' });
+                await sendTelegramMessage(chatId, successMsg, {
+                  inline_keyboard: [
+                    [{ text: "🗑 O'chirish", callback_data: `del_${txId}` }],
+                    [{ text: "📱 Mini Appda ko'rish", web_app: { url: appUrl } }]
+                  ]
+                });
+                return res.status(200).json({ status: 'ok' });
+              } catch (saveErr) {
+                console.error('[BOT] Error saving receipt transaction to Supabase:', saveErr);
+                await sendTelegramMessage(chatId, "❌ Xatolik: Chek xarajatini saqlab bo'lmadi. Iltimos, qayta urinib ko'ring.");
+                return res.status(500).json({ error: 'DB_SAVE_FAILED' });
+              }
             }
           }
         } catch (imgErr) {
@@ -1327,26 +1352,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           debtWho: parsed.debtWho || ''
         };
 
-        await saveBotTransaction(userId, newTx);
-        await recordAiUsage(userId, 'text', text, quota.isPremium);
+        try {
+          await saveBotTransaction(userId, newTx);
+          await recordAiUsage(userId, 'text', text, quota.isPremium);
 
-        const emoji = CATEGORY_EMOJIS[newTx.category] || (newTx.type === 'income' ? '💰' : '💸');
-        const isInc = newTx.type === 'income';
+          const emoji = CATEGORY_EMOJIS[newTx.category] || (newTx.type === 'income' ? '💰' : '💸');
+          const isInc = newTx.type === 'income';
 
-        const successMsg =
-          `${isInc ? '🟢' : '🔴'} <b>${isInc ? 'Daromad' : 'Xarajat'} saqlandi!</b>\n\n` +
-          `${emoji} <b>Kategoriya:</b> ${newTx.category}\n` +
-          `💰 <b>Summa:</b> ${newTx.amount.toLocaleString()} so'm\n` +
-          `📝 <b>Izoh:</b> ${newTx.name}\n` +
-          `📅 <b>Sana:</b> ${newTx.date} ${newTx.time}`;
+          const successMsg =
+            `${isInc ? '🟢' : '🔴'} <b>${isInc ? 'Daromad' : 'Xarajat'} saqlandi!</b>\n\n` +
+            `${emoji} <b>Kategoriya:</b> ${newTx.category}\n` +
+            `💰 <b>Summa:</b> ${newTx.amount.toLocaleString()} so'm\n` +
+            `📝 <b>Izoh:</b> ${newTx.name}\n` +
+            `📅 <b>Sana:</b> ${newTx.date} ${newTx.time}`;
 
-        await sendTelegramMessage(chatId, successMsg, {
-          inline_keyboard: [
-            [{ text: "🗑 O'chirish", callback_data: `del_${txId}` }],
-            [{ text: "📱 Mini Appda ko'rish", web_app: { url: appUrl } }]
-          ]
-        });
-        return res.status(200).json({ status: 'ok' });
+          await sendTelegramMessage(chatId, successMsg, {
+            inline_keyboard: [
+              [{ text: "🗑 O'chirish", callback_data: `del_${txId}` }],
+              [{ text: "📱 Mini Appda ko'rish", web_app: { url: appUrl } }]
+            ]
+          });
+          return res.status(200).json({ status: 'ok' });
+        } catch (saveErr) {
+          console.error('[BOT] Error saving text transaction to Supabase:', saveErr);
+          await sendTelegramMessage(chatId, "❌ Xatolik: Operatsiyani saqlab bo'lmadi. Iltimos, qayta urinib ko'ring.");
+          return res.status(500).json({ error: 'DB_SAVE_FAILED' });
+        }
       } else {
         await sendTelegramMessage(
           chatId,

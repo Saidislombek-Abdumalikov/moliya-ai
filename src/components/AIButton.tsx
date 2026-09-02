@@ -76,6 +76,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
   const [saved, setSaved] = useState(false)
   const [aiText, setAiText] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
   const [aiError, setAiError] = useState('')
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const recognitionRef = useRef<any>(null)
@@ -426,7 +427,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
   }
 
 
-  const handleSave = () => {
+  const handleSave = async () => {
     // Save transaction to context and Firestore
     let finalDate = new Date().toISOString()
     if (entry.date) {
@@ -458,16 +459,35 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
       cardId: entry.cardId === 'cash' ? undefined : entry.cardId,
     }
     
-    addTransaction(customTx)
+    setIsSaving(true)
+    setAiError('')
+    try {
+      // 1. Authoritative backend/Supabase persistence must complete BEFORE success
+      await addTransaction(customTx)
 
-    if (hasSampleData) {
-      setHasSampleData(false)
+      if (hasSampleData) {
+        await setHasSampleData(false)
+      }
+
+      // 2. Database confirmed success: show success checkmark and close
+      setSaved(true)
+      setTimeout(() => {
+        closeModal()
+      }, 1000)
+    } catch (saveErr: any) {
+      console.error('[AIButton] Failed to save transaction to database:', saveErr)
+      setAiError(
+        (language === 'uz' || language === 'uz_cyrl')
+          ? (language === 'uz_cyrl'
+              ? "Маълумотлар базасига сақлашда хатолик юз берди. Илтимос, қайта уриниб кўринг."
+              : "Ma'lumotlar bazasiga saqlashda xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
+          : language === 'ru'
+          ? "Ошибка сохранения в базу данных. Пожалуйста, попробуйте снова."
+          : "Error saving to database. Please try again."
+      )
+    } finally {
+      setIsSaving(false)
     }
-
-    setSaved(true)
-    setTimeout(() => {
-      closeModal()
-    }, 1200)
   }
 
   const cfg = typeConfig[selectedType]
@@ -1129,20 +1149,25 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                   </button>
                   <button
                     onClick={handleSave}
-                    disabled={!entry.amount}
+                    disabled={!entry.amount || isSaving}
                     style={{
                       flex: 1, padding: '14px',
                       borderRadius: 14, border: 'none',
-                      background: entry.amount ? '#7C3AED' : '#EDE9FE',
-                      color: entry.amount ? '#fff' : '#8B82C4',
+                      background: (!entry.amount || isSaving) ? '#EDE9FE' : '#7C3AED',
+                      color: (!entry.amount || isSaving) ? '#8B82C4' : '#fff',
                       fontSize: 15, fontWeight: 600, fontFamily: 'inherit',
-                      cursor: entry.amount ? 'pointer' : 'default',
-                      boxShadow: entry.amount ? '0 4px 16px rgba(124, 58, 237, 0.3)' : 'none',
+                      cursor: (!entry.amount || isSaving) ? 'default' : 'pointer',
+                      boxShadow: (entry.amount && !isSaving) ? '0 4px 16px rgba(124, 58, 237, 0.3)' : 'none',
                     }}
                   >
-                    {language === 'uz' ? 'Saqlash' : language === 'uz_cyrl' ? 'Сақлаш' : language === 'ru' ? 'Сохранить' : 'Save'}
+                    {isSaving
+                      ? (language === 'uz' ? 'Saqlanmoqda...' : language === 'uz_cyrl' ? 'Сақланмоқда...' : language === 'ru' ? 'Сохранение...' : 'Saving...')
+                      : (language === 'uz' ? 'Saqlash' : language === 'uz_cyrl' ? 'Сақлаш' : language === 'ru' ? 'Сохранить' : 'Save')}
                   </button>
                 </div>
+                {aiError && (
+                  <p style={{ fontSize: 13, color: '#DC2626', marginTop: -14, marginBottom: 16, textAlign: 'center' }}>{aiError}</p>
+                )}
                   </motion.div>
                 </AnimatePresence>
               </>

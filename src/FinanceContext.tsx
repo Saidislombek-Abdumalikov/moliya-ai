@@ -48,11 +48,11 @@ interface FinanceContextType {
   loading: boolean
   isAuthReady: boolean
   authError: string | null
-  updateOnboarding: (newData: Partial<OnboardingResult>) => Promise<void>
-  saveCards: (updated: Card[]) => Promise<void>
-  updateSecurity: (updated: SecurityOpts) => Promise<void>
-  addTransaction: (tx: Omit<Transaction, 'id' | 'date'> & { id?: string | number; date?: string; messageId?: string | number }) => Promise<void>
-  deleteTransaction: (id: string | number) => Promise<void>
+  updateOnboarding: (newData: Partial<OnboardingResult>) => Promise<any>
+  saveCards: (updated: Card[]) => Promise<any>
+  updateSecurity: (updated: SecurityOpts) => Promise<any>
+  addTransaction: (tx: Omit<Transaction, 'id' | 'date'> & { id?: string | number; date?: string; messageId?: string | number; day?: number; month?: number; year?: number; time?: string }) => Promise<any>
+  deleteTransaction: (id: string | number) => Promise<any>
   clearAllData: () => Promise<void>
   clearOnlyFinancialData: () => Promise<void>
   logout: () => void
@@ -159,8 +159,15 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const setHasSampleData = async (val: boolean) => {
     setHasSampleDataState(val)
     localStorage.setItem('user_has_sample_v1', String(val))
-    if (userId) {
-      supabase.from('users').update({ has_sample_data: val, updated_at: new Date().toISOString() }).eq('id', userId).then(() => {});
+    const targetUserId = userId || localStorage.getItem('user_id_v1')
+    if (targetUserId) {
+      const { error } = await supabase
+        .from('users')
+        .update({ has_sample_data: val, updated_at: new Date().toISOString() })
+        .eq('id', targetUserId)
+      if (error) {
+        console.warn('[FINANCE] Failed to update has_sample_data in Supabase:', error)
+      }
     }
   }
 
@@ -681,69 +688,111 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   // ═══════════════════════════════════════════════════════════
   // Context Functions with Supabase Persistence
   // ═══════════════════════════════════════════════════════════
-  const updateOnboarding = async (newData: Partial<OnboardingResult>) => {
-    let existingPhone = onboarding?.phone || null;
-    let existingRegStatus = onboarding?.registration_status || 'completed';
-    let existingTgId = onboarding?.telegramId || null;
+  const getEffectiveUserId = (): string | null => {
+    if (userId) return userId;
+    const stored = localStorage.getItem('user_id_v1');
+    if (stored) return stored;
+    return null;
+  };
 
-    if (userId) {
-      const { data: dbUser } = await supabase
-        .from('users')
-        .select('phone, telegram_id, onboarding')
-        .eq('id', userId)
-        .maybeSingle();
-
-      if (dbUser) {
-        if (dbUser.phone) existingPhone = dbUser.phone;
-        if (dbUser.onboarding?.registration_status) existingRegStatus = dbUser.onboarding.registration_status;
-        if (dbUser.telegram_id) existingTgId = dbUser.telegram_id;
-      }
+  const updateOnboarding = async (newData: Partial<OnboardingResult>): Promise<OnboardingResult> => {
+    const targetUserId = getEffectiveUserId();
+    if (!targetUserId) {
+      console.error('[FINANCE] Cannot update onboarding: No authenticated user');
+      throw new Error('AUTH_REQUIRED');
     }
 
+    // 1. Fetch current authoritative user data from Supabase
+    const { data: dbUser, error: fetchErr } = await supabase
+      .from('users')
+      .select('phone, telegram_id, onboarding, name, language, is_premium')
+      .eq('id', targetUserId)
+      .maybeSingle();
+
+    if (fetchErr) {
+      console.error('[FINANCE] Error fetching user before onboarding update:', fetchErr);
+      throw fetchErr;
+    }
+
+    const existingPhone = dbUser?.phone || onboarding?.phone || null;
+    const existingRegStatus = dbUser?.onboarding?.registration_status || onboarding?.registration_status || 'completed';
+    const existingTgId = dbUser?.telegram_id || onboarding?.telegramId || null;
+
     const updated = {
-      ...(onboarding || {}),
+      ...(dbUser?.onboarding || onboarding || {}),
       ...newData,
       phone: newData.phone || existingPhone || '',
       registration_status: newData.registration_status || existingRegStatus || 'completed',
       telegramId: newData.telegramId || existingTgId || ''
     } as OnboardingResult;
 
+    // 2. Build targeted payload (only intended columns updated)
+    const nowIso = new Date().toISOString();
+    const payload: any = {
+      updated_at: nowIso,
+      onboarding: updated
+    };
+    if (updated.name && updated.name !== '—') payload.name = updated.name;
+    if (updated.language) payload.language = updated.language;
+    if (updated.isPremium !== undefined) payload.is_premium = updated.isPremium;
+    if (existingPhone || updated.phone) payload.phone = updated.phone || existingPhone;
+    if (existingTgId || updated.telegramId) payload.telegram_id = updated.telegramId || existingTgId;
+
+    // 3. Authoritative write to Supabase
+    const { error: updateErr } = await supabase.from('users').update(payload).eq('id', targetUserId);
+    if (updateErr) {
+      console.error('[FINANCE] Failed to update onboarding in Supabase:', updateErr);
+      throw updateErr;
+    }
+
+    // 4. Database Success Confirmed: Update local state and localStorage
     setOnboarding(updated);
     localStorage.setItem('user_onboarding_v1', JSON.stringify(updated));
+    window.dispatchEvent(new Event('user_onboarding_updated'));
 
-    if (userId) {
-      const nowIso = new Date().toISOString();
-      const payload: any = {
-        updated_at: nowIso,
-        onboarding: updated
-      };
-      if (updated.name && updated.name !== '—') payload.name = updated.name;
-      if (updated.language) payload.language = updated.language;
-      if (updated.isPremium !== undefined) payload.is_premium = updated.isPremium;
-      if (existingPhone || updated.phone) payload.phone = updated.phone || existingPhone;
-      if (existingTgId || updated.telegramId) payload.telegram_id = updated.telegramId || existingTgId;
-
-      await supabase.from('users').update(payload).eq('id', userId);
-    }
+    return updated;
   };
 
-  const saveCards = async (updatedCards: Card[]) => {
-    setCards(updatedCards);
-    localStorage.setItem('user_cards_v1', JSON.stringify(updatedCards));
+  const saveCards = async (updatedCards: Card[]): Promise<boolean> => {
+    const targetUserId = getEffectiveUserId();
+    if (!targetUserId) {
+      console.error('[FINANCE] Cannot save cards: No authenticated user');
+      throw new Error('AUTH_REQUIRED');
+    }
 
-    if (userId) {
-      await supabase.from('users').update({
+    // 1. Authoritative TARGETED UPDATE to Supabase
+    const { error: updateErr } = await supabase
+      .from('users')
+      .update({
         cards: updatedCards,
         updated_at: new Date().toISOString()
-      }).eq('id', userId);
+      })
+      .eq('id', targetUserId);
+
+    if (updateErr) {
+      console.error('[FINANCE] Failed to save cards to Supabase:', updateErr);
+      throw updateErr;
     }
+
+    // 2. Database Success Confirmed: Update local state and localStorage
+    setCards(updatedCards);
+    localStorage.setItem('user_cards_v1', JSON.stringify(updatedCards));
+    window.dispatchEvent(new Event('user_cards_updated'));
+
+    return true;
   };
 
   const updateSecurity = async (updatedSec: SecurityOpts) => {
     setSecurity(updatedSec);
   };
 
-  const addTransaction = async (tx: Omit<Transaction, 'id' | 'date'> & { id?: string | number; date?: string; messageId?: string | number; day?: number; month?: number; year?: number; time?: string }) => {
+  const addTransaction = async (tx: Omit<Transaction, 'id' | 'date'> & { id?: string | number; date?: string; messageId?: string | number; day?: number; month?: number; year?: number; time?: string }): Promise<Transaction> => {
+    const targetUserId = getEffectiveUserId();
+    if (!targetUserId) {
+      console.error('[FINANCE] Cannot add transaction: No authenticated user');
+      throw new Error('AUTH_REQUIRED');
+    }
+
     // Deterministic client date normalization: ensures real date, day, month, year, time
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, '0');
@@ -797,61 +846,85 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       time: tx.time || finalTime
     };
 
-    setCustomTransactions(prev => {
-      const updated = [newTx, ...prev.filter(t => String(t.id) !== String(newTx.id))];
-      localStorage.setItem('user_transactions_v1', JSON.stringify(updated));
-      window.dispatchEvent(new Event('user_transactions_updated'));
-      return updated;
-    });
+    // 1. Authoritative fetch of existing transactions from Supabase
+    const { data: dbUser, error: fetchErr } = await supabase
+      .from('users')
+      .select('transactions')
+      .eq('id', targetUserId)
+      .maybeSingle();
 
-    if (userId) {
-      try {
-        const { data: dbUser } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
-        const existingTxs = Array.isArray(dbUser?.transactions) ? dbUser.transactions : [];
-        const mergedTxs = [newTx, ...existingTxs.filter((t: any) => String(t.id) !== String(newTx.id))];
-        // TARGETED UPDATE: update ONLY transactions column!
-        await supabase.from('users').update({
-          transactions: mergedTxs,
-          updated_at: new Date().toISOString()
-        }).eq('id', userId);
-      } catch (err) {
-        console.error('[FINANCE] Error syncing transaction with Supabase:', err);
-      }
+    if (fetchErr) {
+      console.error('[FINANCE] Error fetching current transactions from Supabase:', fetchErr);
+      throw fetchErr;
     }
+
+    const existingTxs = Array.isArray(dbUser?.transactions) ? dbUser.transactions : [];
+    const mergedTxs = [newTx, ...existingTxs.filter((t: any) => String(t.id) !== String(newTx.id))];
+
+    // 2. TARGETED UPDATE: Authoritative persistence to Supabase
+    const { error: updateErr } = await supabase.from('users').update({
+      transactions: mergedTxs,
+      updated_at: new Date().toISOString()
+    }).eq('id', targetUserId);
+
+    if (updateErr) {
+      console.error('[FINANCE] Error persisting transaction to Supabase:', updateErr);
+      throw updateErr;
+    }
+
+    // 3. Database Success Confirmed: Update local state and localStorage
+    setCustomTransactions(mergedTxs);
+    localStorage.setItem('user_transactions_v1', JSON.stringify(mergedTxs));
+    window.dispatchEvent(new Event('user_transactions_updated'));
+
+    return newTx;
   };
 
-  const deleteTransaction = async (id: string | number) => {
+  const deleteTransaction = async (id: string | number): Promise<boolean> => {
+    const targetUserId = getEffectiveUserId();
+    if (!targetUserId) {
+      console.error('[FINANCE] Cannot delete transaction: No authenticated user');
+      throw new Error('AUTH_REQUIRED');
+    }
+
     const idStr = String(id);
+
+    // 1. Authoritative fetch from Supabase
+    const { data: dbUser, error: fetchErr } = await supabase
+      .from('users')
+      .select('transactions')
+      .eq('id', targetUserId)
+      .maybeSingle();
+
+    if (fetchErr) {
+      console.error('[FINANCE] Error fetching transactions before deletion from Supabase:', fetchErr);
+      throw fetchErr;
+    }
+
+    const authoritativeTxs = Array.isArray(dbUser?.transactions) ? dbUser.transactions : customTransactions;
+    const updatedTxs = authoritativeTxs.filter((t: any) => String(t.id) !== idStr);
+
+    // 2. Authoritative TARGETED UPDATE to Supabase
+    const { error: updateErr } = await supabase.from('users').update({
+      transactions: updatedTxs,
+      updated_at: new Date().toISOString()
+    }).eq('id', targetUserId);
+
+    if (updateErr) {
+      console.error('[FINANCE] Error deleting transaction from Supabase:', updateErr);
+      throw updateErr;
+    }
+
+    // 3. Database Success Confirmed: Update local state
     const updatedDeleted = Array.from(new Set([...deletedTxIds, idStr]));
     setDeletedTxIds(updatedDeleted);
     localStorage.setItem('user_deleted_tx_ids_v1', JSON.stringify(updatedDeleted));
 
-    // 1. Optimistic UI update
-    setCustomTransactions(prev => {
-      const updatedTxs = prev.filter(t => String(t.id) !== idStr);
-      localStorage.setItem('user_transactions_v1', JSON.stringify(updatedTxs));
-      window.dispatchEvent(new Event('user_transactions_updated'));
-      return updatedTxs;
-    });
+    setCustomTransactions(updatedTxs);
+    localStorage.setItem('user_transactions_v1', JSON.stringify(updatedTxs));
+    window.dispatchEvent(new Event('user_transactions_updated'));
 
-    // 2. Authoritative Supabase deletion with TARGETED UPDATE
-    // Fetch latest transactions from DB, remove ONLY the target ID, and write back ONLY transactions
-    if (userId) {
-      try {
-        const { data: dbUser } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
-        const authoritativeTxs = Array.isArray(dbUser?.transactions) ? dbUser.transactions : customTransactions;
-        const updatedTxs = authoritativeTxs.filter((t: any) => String(t.id) !== idStr);
-
-        // TARGETED UPDATE: ONLY touches transactions and updated_at
-        // User profile, phone, telegram, onboarding, cards, premium, ai_limit are 100% PRESERVED
-        await supabase.from('users').update({
-          transactions: updatedTxs,
-          updated_at: new Date().toISOString()
-        }).eq('id', userId);
-      } catch (err) {
-        console.error('[FINANCE] Error deleting transaction from Supabase:', err);
-      }
-    }
+    return true;
   };
 
   const clearAllData = async () => {

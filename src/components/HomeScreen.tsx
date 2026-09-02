@@ -347,7 +347,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
 
 
 
-  const handleAddCardSubmit = (e: React.FormEvent) => {
+  const handleAddCardSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!newCardNumber || !newCardBank) return
 
@@ -360,64 +360,69 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
 
     const balanceValue = Number(newCardBalance.replace(/\D/g, '') || 0)
 
-    if (editingCardId) {
-      const currentBalance = getCardBalance(editingCardId)
-      const difference = balanceValue - currentBalance
+    try {
+      if (editingCardId) {
+        const currentBalance = getCardBalance(editingCardId)
+        const difference = balanceValue - currentBalance
 
-      const updated = cards.map(c => c.id === editingCardId ? {
-        ...c,
-        bank: newCardBank,
-        number: newCardNumber,
-        name: newCardHolder.toUpperCase() || 'FOYDALANUVCHI',
-        brand: newCardBrand,
-        balance: c.balance // preserve existing initial balance
-      } : c)
-      saveCards(updated)
+        const updated = cards.map(c => c.id === editingCardId ? {
+          ...c,
+          bank: newCardBank,
+          number: newCardNumber,
+          name: newCardHolder.toUpperCase() || 'FOYDALANUVCHI',
+          brand: newCardBrand,
+          balance: c.balance // preserve existing initial balance
+        } : c)
+        await saveCards(updated)
 
-      if (difference !== 0) {
-        addTransaction({
-          id: Date.now(),
-          type: difference > 0 ? 'income' : 'expense',
-          amount: difference,
-          category: difference > 0 ? 'Daromad' : 'Boshqa',
-          note: lang === 'uz' ? "Karta balansi to'g'irlandi" : lang === 'uz_cyrl' ? "Карта баланси тўғирланди" : lang === 'ru' ? "Баланс карты скорректирован" : "Card balance adjusted",
-          date: new Date().toISOString(),
-          cardId: editingCardId
-        })
-      }
-    } else {
-      const newCardId = Date.now().toString()
-      const newCard = {
-        id: newCardId,
-        bank: newCardBank,
-        number: newCardNumber,
-        name: newCardHolder.toUpperCase() || 'FOYDALANUVCHI',
-        balance: '0',
-        brand: newCardBrand
-      }
-      const updated = [...cards, newCard]
-      saveCards(updated)
+        if (difference !== 0) {
+          await addTransaction({
+            id: Date.now(),
+            type: difference > 0 ? 'income' : 'expense',
+            amount: difference,
+            category: difference > 0 ? 'Daromad' : 'Boshqa',
+            note: lang === 'uz' ? "Karta balansi to'g'irlandi" : lang === 'uz_cyrl' ? "Карта баланси тўғирланди" : lang === 'ru' ? "Баланс карты скорректирован" : "Card balance adjusted",
+            date: new Date().toISOString(),
+            cardId: editingCardId
+          })
+        }
+      } else {
+        const newCardId = Date.now().toString()
+        const newCard = {
+          id: newCardId,
+          bank: newCardBank,
+          number: newCardNumber,
+          name: newCardHolder.toUpperCase() || 'FOYDALANUVCHI',
+          balance: '0',
+          brand: newCardBrand
+        }
+        const updated = [...cards, newCard]
+        await saveCards(updated)
 
-      if (balanceValue > 0) {
-        addTransaction({
-          id: Date.now(),
-          type: 'income',
-          amount: balanceValue,
-          category: 'Daromad',
-          note: lang === 'uz' ? 'Karta qo\'shildi (boshlang\'ich balans)' : lang === 'uz_cyrl' ? 'Карта қўшилди (бошланғич баланс)' : lang === 'ru' ? 'Карта добавлена (начальный баланс)' : 'Card added (initial balance)',
-          date: new Date().toISOString(),
-          cardId: newCardId
-        })
+        if (balanceValue > 0) {
+          await addTransaction({
+            id: Date.now(),
+            type: 'income',
+            amount: balanceValue,
+            category: 'Daromad',
+            note: lang === 'uz' ? 'Karta qo\'shildi (boshlang\'ich balans)' : lang === 'uz_cyrl' ? 'Карта қўшилди (бошланғич баланс)' : lang === 'ru' ? 'Карта добавлена (начальный баланс)' : 'Card added (initial balance)',
+            date: new Date().toISOString(),
+            cardId: newCardId
+          })
+        }
       }
+
+      setNewCardNumber('')
+      setNewCardBank('')
+      setNewCardBalance('')
+      setNewCardHolder('')
+      setNewCardBrand('uzcard')
+      setEditingCardId(null)
+      setShowAddCard(false)
+    } catch (cardErr) {
+      console.error('[HomeScreen] Failed to persist card changes:', cardErr)
+      alert(lang === 'uz' ? "Kartani saqlashda xatolik yuz berdi. Iltimos, qayta urinib ko'ring." : "Error saving card to database. Please try again.")
     }
-
-    setNewCardNumber('')
-    setNewCardBank('')
-    setNewCardBalance('')
-    setNewCardHolder('')
-    setNewCardBrand('uzcard')
-    setEditingCardId(null)
-    setShowAddCard(false)
   }
 
   const [showPremium, setShowPremium] = useState(false)
@@ -1511,13 +1516,20 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                 <button
                   onClick={async () => {
                     if (onUpdateOnboarding) {
-                      onUpdateOnboarding(
-                        isDirectLimit
-                          ? { monthlyGoal: modalGoal, monthlyIncome: undefined }
-                          : { monthlyIncome: modalIncome, monthlyGoal: modalGoal }
-                      )
+                      try {
+                        await onUpdateOnboarding(
+                          isDirectLimit
+                            ? { monthlyGoal: modalGoal, monthlyIncome: undefined }
+                            : { monthlyIncome: modalIncome, monthlyGoal: modalGoal }
+                        )
+                        setShowLimitModal(false);
+                      } catch (limitErr) {
+                        console.error('[HomeScreen] Failed to persist monthly limit:', limitErr)
+                        alert(lang === 'uz' ? "Limitni saqlashda xatolik yuz berdi. Iltimos, qayta urinib ko'ring." : "Failed to save limit to database.")
+                      }
+                    } else {
+                      setShowLimitModal(false);
                     }
-                    setShowLimitModal(false);
                   }}
                   style={{
                     flex: 1, padding: 14,
@@ -1962,9 +1974,14 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                     {lang === 'uz' ? 'Bekor qilish' : lang === 'uz_cyrl' ? 'Бекор қилиш' : lang === 'ru' ? 'Отмена' : 'Cancel'}
                   </button>
                   <button
-                    onClick={() => {
-                      setDeleteConfirmTx(null);
-                      deleteTransaction(deleteConfirmTx.id).catch(e => console.error(e));
+                    onClick={async () => {
+                      try {
+                        await deleteTransaction(deleteConfirmTx.id)
+                        setDeleteConfirmTx(null)
+                      } catch (e) {
+                        console.error('[HomeScreen] Error deleting transaction:', e)
+                        alert(lang === 'uz' ? "Operatsiyani o'chirishda xatolik yuz berdi." : "Failed to delete transaction.")
+                      }
                     }}
                     style={{
                       flex: 1, padding: 14,
@@ -2029,31 +2046,36 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                     {lang === 'uz' ? 'Bekor qilish' : lang === 'uz_cyrl' ? 'Бекор қилиш' : lang === 'ru' ? 'Отмена' : 'Cancel'}
                   </button>
                   <button
-                    onClick={() => {
-                      const c = cards.find(x => x.id === deleteConfirmCard)
-                      if (c) {
-                        const currentBal = getCardBalance(c.id)
-                        if (currentBal !== 0) {
-                          addTransaction({
-                            id: Date.now(),
-                            type: currentBal > 0 ? 'income' : 'expense',
-                            amount: Math.abs(currentBal),
-                            category: currentBal > 0 ? 'Daromad' : 'Boshqa',
-                            note: lang === 'uz'
-                              ? `Karta o'chirildi (balans saqlandi: ${c.bank})`
-                              : lang === 'uz_cyrl'
-                              ? `Карта ўчирилди (баланс сақланди: ${c.bank})`
-                              : lang === 'ru'
-                              ? `Карта удалена (баланс сохранён: ${c.bank})`
-                              : `Card removed (balance kept: ${c.bank})`,
-                            date: new Date().toISOString(),
-                            cardId: undefined,
-                          })
+                    onClick={async () => {
+                      try {
+                        const c = cards.find(x => x.id === deleteConfirmCard)
+                        if (c) {
+                          const currentBal = getCardBalance(c.id)
+                          if (currentBal !== 0) {
+                            await addTransaction({
+                              id: Date.now(),
+                              type: currentBal > 0 ? 'income' : 'expense',
+                              amount: Math.abs(currentBal),
+                              category: currentBal > 0 ? 'Daromad' : 'Boshqa',
+                              note: lang === 'uz'
+                                ? `Karta o'chirildi (balans saqlandi: ${c.bank})`
+                                : lang === 'uz_cyrl'
+                                ? `Карта ўчирилди (баланс сақланди: ${c.bank})`
+                                : lang === 'ru'
+                                ? `Карта удалена (баланс сохранён: ${c.bank})`
+                                : `Card removed (balance kept: ${c.bank})`,
+                              date: new Date().toISOString(),
+                              cardId: undefined,
+                            })
+                          }
                         }
-                      }
 
-                      saveCards(cards.filter(card => card.id !== deleteConfirmCard))
-                      setDeleteConfirmCard(null);
+                        await saveCards(cards.filter(card => card.id !== deleteConfirmCard))
+                        setDeleteConfirmCard(null);
+                      } catch (err) {
+                        console.error('[HomeScreen] Error deleting card:', err);
+                        alert(lang === 'uz' ? "Kartani o'chirishda xatolik yuz berdi." : "Failed to delete card.");
+                      }
                     }}
                     style={{
                       flex: 1, padding: 14,
@@ -2204,19 +2226,24 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                   </button>
                   <button
                     onClick={async () => {
-                      // Extract only valid Transaction fields before saving
-                      await addTransaction({
-                        id: editTx.id,
-                        type: editTx.type,
-                        amount: editTx.amount,
-                        note: editTx.note || editTx.category,
-                        category: editTx.category,
-                        date: editTx.date,
-                        cardId: editTx.cardId,
-                        title: editTx.title,
-                        debtWho: editTx.debtWho,
-                      });
-                      setEditTx(null);
+                      try {
+                        // Extract only valid Transaction fields before saving
+                        await addTransaction({
+                          id: editTx.id,
+                          type: editTx.type,
+                          amount: editTx.amount,
+                          note: editTx.note || editTx.category,
+                          category: editTx.category,
+                          date: editTx.date,
+                          cardId: editTx.cardId,
+                          title: editTx.title,
+                          debtWho: editTx.debtWho,
+                        });
+                        setEditTx(null);
+                      } catch (err) {
+                        console.error('[HomeScreen] Error updating transaction:', err);
+                        alert(lang === 'uz' ? "Operatsiyani saqlashda xatolik yuz berdi." : "Failed to update transaction.");
+                      }
                     }}
                     style={{
                       flex: 1, padding: 14,

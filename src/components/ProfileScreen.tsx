@@ -550,31 +550,45 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
   }, [toastMessage])
 
   // Handle Edit Profile save
-  const handleSaveProfile = () => {
+  const handleSaveProfile = async () => {
     if (onUpdateOnboarding) {
-      onUpdateOnboarding({
-        name: editName,
-        phone: editPhone,
-        telegram: editTelegram
-      } as any)
-      setToastMessage(lang === 'uz' ? 'Profil muvaffaqiyatli yangilandi!' : lang === 'uz_cyrl' ? 'Профил муваффақиятли янгиланди!' : lang === 'ru' ? 'Профиль успешно обновлен!' : 'Profile updated successfully!')
+      try {
+        await onUpdateOnboarding({
+          name: editName,
+          phone: editPhone,
+          telegram: editTelegram
+        } as any)
+        setToastMessage(lang === 'uz' ? 'Profil muvaffaqiyatli yangilandi!' : lang === 'uz_cyrl' ? 'Профил муваффақиятли янгиланди!' : lang === 'ru' ? 'Профиль успешно обновлен!' : 'Profile updated successfully!')
+        setActiveModal(null)
+      } catch (err) {
+        console.error('[ProfileScreen] Error saving profile:', err)
+        alert(lang === 'uz' ? "Profilni saqlashda xatolik yuz berdi." : "Failed to update profile.")
+      }
+    } else {
+      setActiveModal(null)
     }
-    setActiveModal(null)
   }
 
   // Handle Premium subscription toggle
-  const handleTogglePremium = () => {
+  const handleTogglePremium = async () => {
     if (onUpdateOnboarding) {
-      onUpdateOnboarding({
-        isPremium: !isPremium
-      } as any)
-      setToastMessage(!isPremium ? t.premiumModal.successMsg : (lang === 'uz' ? 'Premium status o\'chirildi' : lang === 'uz_cyrl' ? 'Premium статус ўчирилди' : 'Premium status off'))
+      try {
+        await onUpdateOnboarding({
+          isPremium: !isPremium
+        } as any)
+        setToastMessage(!isPremium ? t.premiumModal.successMsg : (lang === 'uz' ? 'Premium status o\'chirildi' : lang === 'uz_cyrl' ? 'Premium статус ўчирилди' : 'Premium status off'))
+        setActiveModal(null)
+      } catch (err) {
+        console.error('[ProfileScreen] Error updating premium:', err)
+        alert("Failed to update status.")
+      }
+    } else {
+      setActiveModal(null)
     }
-    setActiveModal(null)
   }
 
   // Handle new card submission
-  const handleAddCardSubmit = (e: React.FormEvent) => {
+  const handleAddCardSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!newCardNumber || !newCardBank) return
 
@@ -587,70 +601,75 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
 
     const balanceValue = Number(newCardBalance.replace(/\D/g, '') || 0)
 
-    if (editingCardId) {
-      const currentBalance = getCardBalance(editingCardId)
-      const difference = balanceValue - currentBalance
+    try {
+      if (editingCardId) {
+        const currentBalance = getCardBalance(editingCardId)
+        const difference = balanceValue - currentBalance
 
-      const updated = cards.map(c => c.id === editingCardId ? {
-        ...c,
-        bank: newCardBank,
-        number: newCardNumber,
-        name: newCardHolder.toUpperCase() || userName.toUpperCase(),
-        brand: newCardBrand,
-        balance: c.balance // preserve existing initial balance so previous history isn't lost
-      } : c)
-      saveCards(updated)
+        const updated = cards.map(c => c.id === editingCardId ? {
+          ...c,
+          bank: newCardBank,
+          number: newCardNumber,
+          name: newCardHolder.toUpperCase() || userName.toUpperCase(),
+          brand: newCardBrand,
+          balance: c.balance // preserve existing initial balance so previous history isn't lost
+        } : c)
+        await saveCards(updated)
 
-      if (difference !== 0) {
-        addTransaction({
-          id: Date.now(),
-          type: difference > 0 ? 'income' : 'expense',
-          amount: difference,
-          category: difference > 0 ? 'Daromad' : 'Boshqa',
-          note: "Karta balansi to'g'irlandi",
-          date: new Date().toISOString(),
-          cardId: editingCardId
-        })
+        if (difference !== 0) {
+          await addTransaction({
+            id: Date.now(),
+            type: difference > 0 ? 'income' : 'expense',
+            amount: difference,
+            category: difference > 0 ? 'Daromad' : 'Boshqa',
+            note: "Karta balansi to'g'irlandi",
+            date: new Date().toISOString(),
+            cardId: editingCardId
+          })
+        }
+        
+        setToastMessage(lang === 'uz' ? 'Karta saqlandi!' : lang === 'uz_cyrl' ? 'Карта сақланди!' : lang === 'ru' ? 'Карта сохранена!' : 'Card saved!')
+        setEditingCardId(null)
+      } else {
+        const newCardId = Date.now().toString()
+        const newCard: any = {
+          id: newCardId,
+          bank: newCardBank,
+          number: newCardNumber,
+          name: newCardHolder.toUpperCase() || userName.toUpperCase(),
+          brand: newCardBrand,
+          balance: '0' // force 0
+        }
+        const updated = [...cards, newCard]
+        await saveCards(updated)
+
+        if (balanceValue > 0) {
+          await addTransaction({
+            id: Date.now(),
+            type: 'income',
+            amount: balanceValue,
+            category: 'Daromad',
+            note: 'Karta qo\'shildi (boshlang\'ich balans)',
+            date: new Date().toISOString(),
+            cardId: newCardId
+          })
+        }
+
+        setToastMessage(lang === 'uz' ? 'Yangi karta qo\'shildi!' : lang === 'uz_cyrl' ? 'Янги карта қўшилди!' : lang === 'ru' ? 'Новая карта добавлена!' : 'New card successfully added!')
       }
-      
-      setToastMessage(lang === 'uz' ? 'Karta saqlandi!' : lang === 'uz_cyrl' ? 'Карта сақланди!' : lang === 'ru' ? 'Карта сохранена!' : 'Card saved!')
+
+      // Reset card form
+      setNewCardNumber('')
+      setNewCardBank('')
+      setNewCardBalance('')
+      setNewCardHolder(userName.toUpperCase())
+      setNewCardBrand('uzcard')
       setEditingCardId(null)
-    } else {
-      const newCardId = Date.now().toString()
-      const newCard: any = {
-        id: newCardId,
-        bank: newCardBank,
-        number: newCardNumber,
-        name: newCardHolder.toUpperCase() || userName.toUpperCase(),
-        brand: newCardBrand,
-        balance: '0' // force 0
-      }
-      const updated = [...cards, newCard]
-      saveCards(updated)
-
-      if (balanceValue > 0) {
-        addTransaction({
-          id: Date.now(),
-          type: 'income',
-          amount: balanceValue,
-          category: 'Daromad',
-          note: 'Karta qo\'shildi (boshlang\'ich balans)',
-          date: new Date().toISOString(),
-          cardId: newCardId
-        })
-      }
-
-      setToastMessage(lang === 'uz' ? 'Yangi karta qo\'shildi!' : lang === 'uz_cyrl' ? 'Янги карта қўшилди!' : lang === 'ru' ? 'Новая карта добавлена!' : 'New card successfully added!')
+      setShowAddCardForm(false)
+    } catch (err) {
+      console.error('[ProfileScreen] Error persisting card to database:', err)
+      alert(lang === 'uz' ? "Kartani saqlashda xatolik yuz berdi. Iltimos, qayta urinib ko'ring." : "Error saving card to database. Please try again.")
     }
-
-    // Reset card form
-    setNewCardNumber('')
-    setNewCardBank('')
-    setNewCardBalance('')
-    setNewCardHolder(userName.toUpperCase())
-    setNewCardBrand('uzcard')
-    setEditingCardId(null)
-    setShowAddCardForm(false)
   }
 
   // Handle report export with real file download
@@ -2095,25 +2114,30 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                         setNewCardBrand(c.brand as any || 'uzcard')
                         setShowAddCardForm(true)
                       }}
-                      onDelete={() => {
+                      onDelete={async () => {
                         if (window.confirm(lang === 'uz' ? "Kartani o'chirmoqchimisiz?" : lang === 'ru' ? "Удалить карту?" : "Delete card?")) {
-                          const currentBal = getCardBalance(c.id)
-                          if (currentBal !== 0) {
-                            addTransaction({
-                              id: Date.now(),
-                              type: currentBal > 0 ? 'income' : 'expense',
-                              amount: Math.abs(currentBal),
-                              category: currentBal > 0 ? 'Daromad' : 'Boshqa',
-                              note: lang === 'uz'
-                                ? `Karta o'chirildi (balans saqlandi: ${c.bank})`
-                                : lang === 'ru'
-                                ? `Карта удалена (баланс сохранён: ${c.bank})`
-                                : `Card removed (balance kept: ${c.bank})`,
-                              date: new Date().toISOString(),
-                              cardId: undefined,
-                            })
+                          try {
+                            const currentBal = getCardBalance(c.id)
+                            if (currentBal !== 0) {
+                              await addTransaction({
+                                id: Date.now(),
+                                type: currentBal > 0 ? 'income' : 'expense',
+                                amount: Math.abs(currentBal),
+                                category: currentBal > 0 ? 'Daromad' : 'Boshqa',
+                                note: lang === 'uz'
+                                  ? `Karta o'chirildi (balans saqlandi: ${c.bank})`
+                                  : lang === 'ru'
+                                  ? `Карта удалена (баланс сохранён: ${c.bank})`
+                                  : `Card removed (balance kept: ${c.bank})`,
+                                date: new Date().toISOString(),
+                                cardId: undefined,
+                              })
+                            }
+                            await saveCards(cards.filter(item => item.id !== c.id))
+                          } catch (delErr) {
+                            console.error('[ProfileScreen] Error deleting card:', delErr)
+                            alert(lang === 'uz' ? "Kartani o'chirishda xatolik yuz berdi." : "Failed to delete card.")
                           }
-                          saveCards(cards.filter(item => item.id !== c.id))
                         }
                       }}
                     />
@@ -2172,10 +2196,14 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                     <div>
                       <button
                         id="btn_lang_uz"
-                        onClick={() => {
+                        onClick={async () => {
                           if (!isUzbekSelected && onUpdateOnboarding) {
-                            onUpdateOnboarding({ language: 'uz' })
-                            setToastMessage("Muvaffaqiyatli o'rnatildi!")
+                            try {
+                              await onUpdateOnboarding({ language: 'uz' })
+                              setToastMessage("Muvaffaqiyatli o'rnatildi!")
+                            } catch (err) {
+                              console.error('[ProfileScreen] Error changing language to uz:', err)
+                            }
                           }
                         }}
                         style={{
@@ -2207,11 +2235,15 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                               <button
                                 key={st.code}
                                 id={`btn_lang_${st.code}`}
-                                onClick={() => {
+                                onClick={async () => {
                                   if (onUpdateOnboarding) {
-                                    onUpdateOnboarding({ language: st.code })
-                                    setToastMessage(st.code === 'uz' ? "Muvaffaqiyatli o'rnatildi!" : "Муваффақиятли ўрнатилди!")
-                                    setActiveModal(null)
+                                    try {
+                                      await onUpdateOnboarding({ language: st.code })
+                                      setToastMessage(st.code === 'uz' ? "Muvaffaqiyatli o'rnatildi!" : "Муваффақиятли ўрнатилди!")
+                                      setActiveModal(null)
+                                    } catch (err) {
+                                      console.error('[ProfileScreen] Error changing language sublabel:', err)
+                                    }
                                   }
                                 }}
                                 style={{
@@ -2241,12 +2273,18 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                 {/* Русский */}
                 <button
                   id="btn_lang_ru"
-                  onClick={() => {
+                  onClick={async () => {
                     if (onUpdateOnboarding) {
-                      onUpdateOnboarding({ language: 'ru' })
-                      setToastMessage('Успешно установлено!')
+                      try {
+                        await onUpdateOnboarding({ language: 'ru' })
+                        setToastMessage('Успешно установлено!')
+                        setActiveModal(null)
+                      } catch (err) {
+                        console.error('[ProfileScreen] Error changing language to ru:', err)
+                      }
+                    } else {
+                      setActiveModal(null)
                     }
-                    setActiveModal(null)
                   }}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 12, padding: '14px',
@@ -2268,12 +2306,18 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                 {/* English */}
                 <button
                   id="btn_lang_en"
-                  onClick={() => {
+                  onClick={async () => {
                     if (onUpdateOnboarding) {
-                      onUpdateOnboarding({ language: 'en' })
-                      setToastMessage('Language selected!')
+                      try {
+                        await onUpdateOnboarding({ language: 'en' })
+                        setToastMessage('Language selected!')
+                        setActiveModal(null)
+                      } catch (err) {
+                        console.error('[ProfileScreen] Error changing language to en:', err)
+                      }
+                    } else {
+                      setActiveModal(null)
                     }
-                    setActiveModal(null)
                   }}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 12, padding: '14px',
