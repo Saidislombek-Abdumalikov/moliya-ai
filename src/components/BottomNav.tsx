@@ -43,8 +43,8 @@ const tabs: { id: Screen; key: 'home' | 'calendar' | 'analytics' | 'profile'; ic
         <path
           d="M3 10.5L12 3L21 10.5V20C21 20.55 20.55 21 20 21H15V15H9V21H4C3.45 21 3 20.55 3 20V10.5Z"
           fill={a ? '#EDE9FE' : 'none'}
-          stroke={a ? '#7C3AED' : '#B8B0DC'}
-          strokeWidth="1.7"
+          stroke={a ? '#6D28D9' : '#8278A8'}
+          strokeWidth="1.75"
           strokeLinecap="round"
           strokeLinejoin="round"
         />
@@ -56,10 +56,10 @@ const tabs: { id: Screen; key: 'home' | 'calendar' | 'analytics' | 'profile'; ic
     key: 'calendar',
     icon: (a) => (
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-        <rect x="3" y="4" width="18" height="17" rx="2.5" fill={a ? '#EDE9FE' : 'none'} stroke={a ? '#7C3AED' : '#B8B0DC'} strokeWidth="1.7" />
-        <path d="M16 2V6M8 2V6M3 10H21" stroke={a ? '#7C3AED' : '#B8B0DC'} strokeWidth="1.7" strokeLinecap="round" />
+        <rect x="3" y="4" width="18" height="17" rx="2.5" fill={a ? '#EDE9FE' : 'none'} stroke={a ? '#6D28D9' : '#8278A8'} strokeWidth="1.75" />
+        <path d="M16 2V6M8 2V6M3 10H21" stroke={a ? '#6D28D9' : '#8278A8'} strokeWidth="1.75" strokeLinecap="round" />
         {a && (
-          <circle cx="12" cy="15" r="1.5" fill="#7C3AED" />
+          <circle cx="12" cy="15" r="1.5" fill="#6D28D9" />
         )}
       </svg>
     ),
@@ -69,9 +69,9 @@ const tabs: { id: Screen; key: 'home' | 'calendar' | 'analytics' | 'profile'; ic
     key: 'analytics',
     icon: (a) => (
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-        <rect x="3" y="14" width="4" height="7" rx="1.5" fill={a ? '#EDE9FE' : 'none'} stroke={a ? '#7C3AED' : '#B8B0DC'} strokeWidth="1.7" />
-        <rect x="10" y="9" width="4" height="12" rx="1.5" fill={a ? '#EDE9FE' : 'none'} stroke={a ? '#7C3AED' : '#B8B0DC'} strokeWidth="1.7" />
-        <rect x="17" y="4" width="4" height="17" rx="1.5" fill={a ? '#EDE9FE' : 'none'} stroke={a ? '#7C3AED' : '#B8B0DC'} strokeWidth="1.7" />
+        <rect x="3" y="14" width="4" height="7" rx="1.5" fill={a ? '#EDE9FE' : 'none'} stroke={a ? '#6D28D9' : '#8278A8'} strokeWidth="1.75" />
+        <rect x="10" y="9" width="4" height="12" rx="1.5" fill={a ? '#EDE9FE' : 'none'} stroke={a ? '#6D28D9' : '#8278A8'} strokeWidth="1.75" />
+        <rect x="17" y="4" width="4" height="17" rx="1.5" fill={a ? '#EDE9FE' : 'none'} stroke={a ? '#6D28D9' : '#8278A8'} strokeWidth="1.75" />
       </svg>
     ),
   },
@@ -80,8 +80,8 @@ const tabs: { id: Screen; key: 'home' | 'calendar' | 'analytics' | 'profile'; ic
     key: 'profile',
     icon: (a) => (
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-        <circle cx="12" cy="8" r="4" fill={a ? '#EDE9FE' : 'none'} stroke={a ? '#7C3AED' : '#B8B0DC'} strokeWidth="1.7" />
-        <path d="M4 20C4 17.8 7.6 16 12 16C16.4 16 20 17.8 20 20" stroke={a ? '#7C3AED' : '#B8B0DC'} strokeWidth="1.7" strokeLinecap="round" />
+        <circle cx="12" cy="8" r="4" fill={a ? '#EDE9FE' : 'none'} stroke={a ? '#6D28D9' : '#8278A8'} strokeWidth="1.75" />
+        <path d="M4 20C4 17.8 7.6 16 12 16C16.4 16 20 17.8 20 20" stroke={a ? '#6D28D9' : '#8278A8'} strokeWidth="1.75" strokeLinecap="round" />
       </svg>
     ),
   },
@@ -100,10 +100,10 @@ export default function BottomNav({ active, onChange, language = 'uz' }: Props) 
         transform: 'translateX(-50%)',
         width: '100%',
         maxWidth: 430,
-        background: 'rgba(255,255,255,0.96)',
-        WebkitBackdropFilter: 'blur(12px)',
-        backdropFilter: 'blur(12px)',
-        borderTop: '1px solid #E8E3F8',
+        background: 'rgba(255,255,255,0.97)',
+        WebkitBackdropFilter: 'blur(16px)',
+        backdropFilter: 'blur(16px)',
+        borderTop: '1px solid #DBD4F0',
         paddingBottom: 'env(safe-area-inset-bottom, 12px)',
         zIndex: 100,
       }}
@@ -124,9 +124,10 @@ export default function BottomNav({ active, onChange, language = 'uz' }: Props) 
             >
               {tab.icon(isActive)}
               <span style={{
-                fontSize: 10, fontWeight: isActive ? 600 : 400,
-                color: isActive ? '#7C3AED' : '#B8B0DC',
+                fontSize: 10, fontWeight: isActive ? 600 : 500,
+                color: isActive ? '#6D28D9' : '#8278A8',
                 fontFamily: 'inherit',
+                letterSpacing: '0.01em',
               }}>
                 {t[tab.key]}
               </span>
