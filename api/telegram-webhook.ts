@@ -299,6 +299,7 @@ async function completePhoneRegistration(fromUser: any, phoneNumber: string) {
     ai_limit: null, // Unlimited for trial
     ai_query_count: 0,
     onboarding: updatedOnboarding,
+    created_at: existing?.created_at || now.toISOString(),
     updated_at: now.toISOString()
   };
 
