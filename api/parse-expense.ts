@@ -69,6 +69,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   note: { type: Type.STRING },
                   title: { type: Type.STRING },
                   debtWho: { type: Type.STRING },
+                  date: { type: Type.STRING },
                 },
                 required: ["type", "amount", "category", "note"],
               }
@@ -88,6 +89,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 note: parsed.note || text,
                 title: parsed.title || parsed.note || text,
                 debtWho: parsed.debtWho || '',
+                date: parsed.date || new Date().toISOString().slice(0, 10)
               });
             }
           }

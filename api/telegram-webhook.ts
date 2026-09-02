@@ -2,12 +2,13 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI, Type } from "@google/genai";
 import crypto from "crypto";
 import { supabase } from './_supabaseClient.js';
-import { getCandidateAiKeys } from './_aiRouter.js';
+import { getCandidateAiKeys, recordKeyResult } from './_aiRouter.js';
 import { checkAiQuota, recordAiUsage } from './_aiQuotaHelper.js';
 import {
   normalizeUzbekFinancialText,
   buildUzbekFinancialAiPrompt,
-  validateAiFinancialOutput
+  validateAiFinancialOutput,
+  getServerDateTimeContext
 } from './_uzbekFinancialNormalizer.js';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
@@ -111,12 +112,19 @@ function getMainAppKeyboard(appUrl: string) {
   return {
     keyboard: [
       [
-        { text: "📱 Mini App", web_app: { url: appUrl } },
-        { text: "📊 Statistika" }
+        { text: "🚀 Moliya", web_app: { url: appUrl } },
+        { text: "👤 Profil" }
       ],
       [
-        { text: "❓ Yordam" },
-        { text: "👤 Hisobim" }
+        { text: "💳 Kartalar" },
+        { text: "📊 Oylik Limit" }
+      ],
+      [
+        { text: "⭐ Premium" },
+        { text: "📈 Statistika" }
+      ],
+      [
+        { text: "❓ Yordam" }
       ]
     ],
     resize_keyboard: true,
@@ -164,9 +172,13 @@ async function registerBotCommandsOnce() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         commands: [
-          { command: 'start', description: 'Moliya AI ni boshlash va hisob holati' },
-          { command: 'app', description: '📱 Moliya Mini Appni ochish' },
-          { command: 'stats', description: '📊 Oylik xarajatlar va balans' },
+          { command: 'start', description: '🚀 Moliya AI ni boshlash' },
+          { command: 'app', description: '📱 Mini Appni ochish' },
+          { command: 'profile', description: '👤 Profil va hisob ma\'lumotlari' },
+          { command: 'cards', description: '💳 Ulangan bank kartalari' },
+          { command: 'limit', description: '📊 Oylik limitni ko\'rish/o\'zgartirish' },
+          { command: 'premium', description: '⭐ VIP Premium imkoniyatlari' },
+          { command: 'stats', description: '📈 Oylik statistika va balans' },
           { command: 'help', description: '❓ Yo\'riqnoma va yordam' }
         ]
       })
@@ -410,7 +422,9 @@ async function parseTextWithAi(text: string) {
                 amount: { type: Type.NUMBER },
                 category: { type: Type.STRING },
                 note: { type: Type.STRING },
-                title: { type: Type.STRING }
+                title: { type: Type.STRING },
+                date: { type: Type.STRING },
+                debtWho: { type: Type.STRING }
               },
               required: ["type", "amount", "category", "note"]
             }
@@ -440,11 +454,258 @@ async function parseTextWithAi(text: string) {
       amount: normalized.extractedAmount,
       category: normalized.inferredCategory || 'Boshqa',
       name: normalized.originalText.slice(0, 80),
-      note: normalized.originalText
+      note: normalized.originalText,
+      date: getServerDateTimeContext().currentDate,
+      debtWho: ''
     };
   }
 
   return null;
+}
+
+// ── Unified Interface Renderers ──────────────────────────────
+async function renderProfileMessage(fromUser: any, user: any, userId: string) {
+  const { data: u } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
+  const dbUser = u || user;
+  const quota = await checkAiQuota(userId);
+  const planLabel = quota.isTrial
+    ? '💎 1-Kunlik Cheksiz Premium Sinovi'
+    : quota.isPremium
+      ? '⭐ VIP Premium (Cheksiz)'
+      : '🆓 Bepul Tarif';
+
+  const quotaStatus = quota.limit === null
+    ? '♾️ Cheksiz'
+    : `${quota.usedCount} / ${quota.limit} (${quota.remaining} ta qoldi)`;
+
+  const cardsCount = Array.isArray(dbUser?.cards) ? dbUser.cards.length : 0;
+  const txsCount = Array.isArray(dbUser?.transactions) ? dbUser.transactions.length : 0;
+  const monthlyGoal = Number(dbUser?.onboarding?.monthlyGoal || 3000000);
+
+  const fullName = [fromUser?.first_name, fromUser?.last_name].filter(Boolean).join(' ') || dbUser?.name || 'Moliya Foydalanuvchisi';
+  const username = fromUser?.username ? `@${fromUser.username}` : (dbUser?.telegram || '—');
+  const tgId = fromUser?.id ? String(fromUser.id) : (dbUser?.telegram_id || '—');
+  const phone = dbUser?.phone || '—';
+
+  const text =
+    `👤 <b>Moliya Foydalanuvchi Profili</b>\n\n` +
+    `• <b>Ism:</b> ${fullName}\n` +
+    `• <b>Telegram:</b> ${username}\n` +
+    `• <b>Telegram ID:</b> <code>${tgId}</code>\n` +
+    `• <b>Telefon:</b> <code>${phone}</code> ${phone !== '—' ? '✅ Tasdiqlangan' : ''}\n\n` +
+    `🏷 <b>Tarif:</b> ${planLabel}\n` +
+    `⚡ <b>Bugungi AI so'rovi:</b> ${quotaStatus}\n` +
+    `📊 <b>Oylik Limit:</b> ${monthlyGoal.toLocaleString()} so'm\n` +
+    `💳 <b>Ulangan kartalar:</b> ${cardsCount} ta\n` +
+    `📝 <b>Jami operatsiyalar:</b> ${txsCount} ta\n\n` +
+    `👇 <i>Bo'limni tanlang yoki Mini Appni oching:</i>`;
+
+  const keyboard = {
+    inline_keyboard: [
+      [
+        { text: "💳 Kartalar", callback_data: "view_cards" },
+        { text: "📊 Oylik Limit", callback_data: "view_limit" }
+      ],
+      [
+        { text: "⭐ Premium", callback_data: "view_premium" },
+        { text: "📈 Statistika", callback_data: "view_stats" }
+      ],
+      [
+        { text: "🚀 Moliya Mini Appni ochish", web_app: { url: appUrl } }
+      ]
+    ]
+  };
+
+  return { text, keyboard };
+}
+
+async function renderCardsMessage(userId: string) {
+  const { data: u } = await supabase.from('users').select('cards').eq('id', userId).maybeSingle();
+  const cards = Array.isArray(u?.cards) ? u.cards : [];
+
+  let text = `💳 <b>Sizning Bank Kartalaringiz</b>\n\n`;
+
+  if (cards.length === 0) {
+    text += `Sizda hali birorta karta ulanmagan.\n\n` +
+      `Kartalaringizni Moliya Mini App orqali qo'shishingiz va ularning balanslarini kuzatib borishingiz mumkin. 👇`;
+  } else {
+    for (let i = 0; i < cards.length; i++) {
+      const c = cards[i];
+      const brandEmoji = c.brand === 'humo' ? '🟧' : (c.brand === 'visa' || c.brand === 'mastercard' ? '🌐' : '🟩');
+      const num = c.number || '•••• ••••';
+      const balNum = c.balance ? Number(String(c.balance).replace(/\s/g, '').replace(/,/g, '')) : 0;
+      text += `${brandEmoji} <b>${c.bank || 'Bank'} (${(c.brand || 'uzcard').toUpperCase()})</b>\n` +
+              `• Raqam: <code>${num}</code>\n` +
+              `• Balans: <b>${balNum.toLocaleString()} so'm</b>\n\n`;
+    }
+    text += `👇 <i>Kartalarni qo'shish yoki boshqarish uchun Mini Appga o'ting:</i>`;
+  }
+
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: "➕ Kartalarni boshqarish (Mini App)", web_app: { url: appUrl } }],
+      [{ text: "🔙 Profilga qaytish", callback_data: "view_profile" }]
+    ]
+  };
+
+  return { text, keyboard };
+}
+
+async function renderLimitMessage(userId: string, newGoalStr?: string) {
+  const { data: u } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
+  const onboarding = u?.onboarding || {};
+  let monthlyGoal = Number(onboarding.monthlyGoal || 3000000);
+  let updateNotice = '';
+
+  if (newGoalStr) {
+    const norm = normalizeUzbekFinancialText(newGoalStr);
+    const parsedAmt = norm.extractedAmount || parseInt(newGoalStr.replace(/\D/g, ''), 10);
+    if (parsedAmt && parsedAmt >= 100000) {
+      monthlyGoal = parsedAmt;
+      const updatedOb = { ...onboarding, monthlyGoal };
+      await supabase.from('users').update({ onboarding: updatedOb, updated_at: new Date().toISOString() }).eq('id', userId);
+      updateNotice = `✅ <b>Oylik xarajat limitingiz muvaffaqiyatli yangilandi!</b>\n\n`;
+    }
+  }
+
+  const txs = Array.isArray(u?.transactions) ? u.transactions : [];
+  const currentMonth = new Date().getMonth() + 1;
+  const currentYear = new Date().getFullYear();
+
+  const monthExpenses = txs.filter((t: any) => {
+    if (t.type === 'income') return false;
+    const tD = new Date(t.date);
+    return !isNaN(tD.getTime()) ? (tD.getMonth() + 1 === currentMonth && tD.getFullYear() === currentYear) : true;
+  }).reduce((acc: number, t: any) => acc + (Number(t.amount) || 0), 0);
+
+  const percent = Math.min(Math.round((monthExpenses / monthlyGoal) * 100), 100);
+  const filledBars = Math.round(percent / 10);
+  const emptyBars = 10 - filledBars;
+  const progressBar = '█'.repeat(filledBars) + '░'.repeat(emptyBars);
+
+  const remaining = Math.max(monthlyGoal - monthExpenses, 0);
+  const isExceeded = monthExpenses > monthlyGoal;
+
+  const text =
+    updateNotice +
+    `📊 <b>Oylik Xarajat Limiti (${currentMonth}/${currentYear})</b>\n\n` +
+    `🎯 <b>Belgilangan limit:</b> ${monthlyGoal.toLocaleString()} so'm\n` +
+    `🔴 <b>Shu oy sarflandi:</b> ${monthExpenses.toLocaleString()} so'm (${percent}%)\n` +
+    `[${progressBar}] ${percent}%\n\n` +
+    (isExceeded
+      ? `⚠️ <b>Diqqat: Oylik limitdan ${(monthExpenses - monthlyGoal).toLocaleString()} so'm ortiqcha sarflandi!</b>\n\n`
+      : `🟢 <b>Qolgan byudjet:</b> ${remaining.toLocaleString()} so'm\n\n`) +
+    `💡 <i>Limitni o'zgartirish uchun:</i>\n<code>/limit 6000000</code> yoki <code>/limit 5 mln</code> deb yozing.\n` +
+    `Yoki Mini App orqali sozlang:`;
+
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: "⚙️ Limitni Mini Appda sozlash", web_app: { url: appUrl } }],
+      [{ text: "🔙 Profilga qaytish", callback_data: "view_profile" }]
+    ]
+  };
+
+  return { text, keyboard };
+}
+
+async function renderPremiumMessage(userId: string) {
+  const { data: u } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
+  const quota = await checkAiQuota(userId);
+
+  const planLabel = quota.isTrial
+    ? '💎 1-Kunlik Cheksiz Premium Sinovi'
+    : quota.isPremium
+      ? '⭐ VIP Premium (Faol)'
+      : '🆓 Bepul Tarif';
+
+  const expiresText = u?.premium_expires_at
+    ? `\n⏳ <b>Amal qilish muddati:</b> ${new Date(u.premium_expires_at).toLocaleDateString('uz-UZ')}`
+    : '';
+
+  const text =
+    `⭐ <b>Moliya AI — VIP Premium</b>\n\n` +
+    `• <b>Hozirgi tarif:</b> ${planLabel}${expiresText}\n\n` +
+    `✨ <b>VIP Premium imkoniyatlari:</b>\n` +
+    `• ♾️ <b>Cheksiz AI so'rovlar</b> (kunlik limitsiz)\n` +
+    `• 🎙 <b>Ovozli xabarlarni cheksiz tahlil qilish</b>\n` +
+    `• 📸 <b>Chek skaneri (OCR) cheksiz foydalanish</b>\n` +
+    `• 📊 <b>Chuqur moliyaviy tahlil va maslahatlar</b>\n` +
+    `• ⚡ <b>Tezkor Gemini 3.5 Flash AI serverlari</b>\n` +
+    `• 🚫 <b>Hech qanday cheklov va kutishlarsiz</b>\n\n` +
+    `👇 <i>VIP Premium obunasini faollashtirish uchun:</i>`;
+
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: "💎 Premium Obuna (Mini App)", web_app: { url: appUrl } }],
+      [{ text: "🔙 Profilga qaytish", callback_data: "view_profile" }]
+    ]
+  };
+
+  return { text, keyboard };
+}
+
+async function renderStatsMessage(userId: string) {
+  const { data: u } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
+  const txs = Array.isArray(u?.transactions) ? u.transactions : [];
+
+  const currentMonth = new Date().getMonth() + 1;
+  const currentYear = new Date().getFullYear();
+
+  let totalExpense = 0;
+  let totalIncome = 0;
+  const catTotals: Record<string, number> = {};
+
+  for (const t of txs) {
+    const amt = Number(t.amount || 0);
+    if (t.type === 'income') {
+      totalIncome += amt;
+    } else {
+      totalExpense += amt;
+    }
+    const cat = t.category || 'Boshqa';
+    if (t.type !== 'income') {
+      catTotals[cat] = (catTotals[cat] || 0) + amt;
+    }
+  }
+
+  const balance = totalIncome - totalExpense;
+  const sortedCats = Object.entries(catTotals).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+  let breakdownText = '';
+  for (const [cat, sum] of sortedCats) {
+    const emoji = CATEGORY_EMOJIS[cat] || '📦';
+    breakdownText += `${emoji} <b>${cat}:</b> ${sum.toLocaleString()} so'm\n`;
+  }
+
+  const quota = await checkAiQuota(userId);
+  const planLabel = quota.isTrial
+    ? '💎 1-Kunlik Cheksiz Premium Sinovi'
+    : quota.isPremium
+      ? '⭐ VIP Premium (Cheksiz)'
+      : '🆓 Bepul Tarif';
+
+  const quotaStatus = quota.limit === null
+    ? '♾️ Cheksiz'
+    : `${quota.usedCount} / ${quota.limit} (${quota.remaining} ta qoldi)`;
+
+  const statsText =
+    `📊 <b>Moliyaviy hisobot (${currentMonth}/${currentYear})</b>\n\n` +
+    `🔴 <b>Jami xarajat:</b> ${totalExpense.toLocaleString()} so'm\n` +
+    `🟢 <b>Jami daromad:</b> ${totalIncome.toLocaleString()} so'm\n` +
+    `💰 <b>Sof balans:</b> ${balance.toLocaleString()} so'm\n\n` +
+    (breakdownText ? `<b>Top xarajatlar:</b>\n${breakdownText}\n` : '') +
+    `🏷 <b>Tarif:</b> ${planLabel}\n` +
+    `⚡ <b>Bugungi AI so'rovlar:</b> ${quotaStatus}\n\n` +
+    `👇 <i>Batafsil tahlil uchun Mini Appni oching:</i>`;
+
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: "📱 Mini Appda to'liq ko'rish", web_app: { url: appUrl } }],
+      [{ text: "🔙 Profilga qaytish", callback_data: "view_profile" }]
+    ]
+  };
+
+  return { text: statsText, keyboard };
 }
 
 // ── Main Webhook Handler ─────────────────────────────────────
@@ -477,23 +738,59 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const userId = `moliya_user_tg_${tgId}`;
 
       // Restriction check
-      const { data: userRow } = await supabase.from('users').select('is_blocked, onboarding, device_info').eq('id', userId).maybeSingle();
+      const { data: userRow } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
       const isBlocked = Boolean(userRow?.is_blocked || userRow?.onboarding?.is_blocked || userRow?.device_info?.is_blocked);
       if (isBlocked) {
         await answerCallbackQuery(cb.id, "⛔ Hisobingiz cheklangan");
         return res.status(200).json({ status: 'blocked' });
       }
 
-      if (chatId && data && data.startsWith('del_')) {
-        const txId = data.replace('del_', '');
-        const { data: u } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
-        const txs = Array.isArray(u?.transactions) ? u.transactions : [];
-        const updated = txs.filter((t: any) => String(t.id) !== String(txId));
-        await supabase.from('users').update({ transactions: updated, updated_at: new Date().toISOString() }).eq('id', userId);
+      if (chatId && cb.message?.message_id && data) {
+        if (data.startsWith('del_')) {
+          const txId = data.replace('del_', '');
+          const { data: u } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
+          const txs = Array.isArray(u?.transactions) ? u.transactions : [];
+          const updated = txs.filter((t: any) => String(t.id) !== String(txId));
+          await supabase.from('users').update({ transactions: updated, updated_at: new Date().toISOString() }).eq('id', userId);
 
-        await answerCallbackQuery(cb.id, "🗑 Operatsiya o'chirildi!");
-        if (cb.message?.message_id) {
+          await answerCallbackQuery(cb.id, "🗑 Operatsiya o'chirildi!");
           await editTelegramMessage(chatId, cb.message.message_id, "🗑 <b>Operatsiya o'chirildi.</b> ✅");
+          return res.status(200).json({ status: 'ok' });
+        }
+
+        if (data === 'view_cards') {
+          const { text, keyboard } = await renderCardsMessage(userId);
+          await editTelegramMessage(chatId, cb.message.message_id, text, keyboard);
+          await answerCallbackQuery(cb.id);
+          return res.status(200).json({ status: 'ok' });
+        }
+
+        if (data === 'view_limit') {
+          const { text, keyboard } = await renderLimitMessage(userId);
+          await editTelegramMessage(chatId, cb.message.message_id, text, keyboard);
+          await answerCallbackQuery(cb.id);
+          return res.status(200).json({ status: 'ok' });
+        }
+
+        if (data === 'view_premium') {
+          const { text, keyboard } = await renderPremiumMessage(userId);
+          await editTelegramMessage(chatId, cb.message.message_id, text, keyboard);
+          await answerCallbackQuery(cb.id);
+          return res.status(200).json({ status: 'ok' });
+        }
+
+        if (data === 'view_profile') {
+          const { text, keyboard } = await renderProfileMessage(fromUser, userRow, userId);
+          await editTelegramMessage(chatId, cb.message.message_id, text, keyboard);
+          await answerCallbackQuery(cb.id);
+          return res.status(200).json({ status: 'ok' });
+        }
+
+        if (data === 'view_stats') {
+          const { text, keyboard } = await renderStatsMessage(userId);
+          await editTelegramMessage(chatId, cb.message.message_id, text, keyboard);
+          await answerCallbackQuery(cb.id);
+          return res.status(200).json({ status: 'ok' });
         }
       }
       return res.status(200).json({ status: 'ok' });
@@ -584,8 +881,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ status: 'phone_required' });
     }
 
-    // ── Command: /start or 👤 Hisobim (For Registered Users) ─────
-    if (text.startsWith('/start') || text === '👤 Hisobim') {
+    // ── Command: /start or 👤 Profil / 👤 Profile / 👤 Hisobim / /profile ──
+    if (text.startsWith('/start') || text === '👤 Profil' || text === '👤 Profile' || text === '👤 Hisobim' || text.startsWith('/profile')) {
       deleteTelegramMessage(chatId, message.message_id).catch(() => {});
       await cleanTemporaryBotMessages(chatId, user);
 
@@ -617,7 +914,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
       }
 
-      // Check user plan & trial
+      // If user tapped 👤 Profil, 👤 Profile, 👤 Hisobim or /profile
+      if (text === '👤 Profil' || text === '👤 Profile' || text === '👤 Hisobim' || text.startsWith('/profile')) {
+        const { text: profText, keyboard: profKeyboard } = await renderProfileMessage(fromUser, user, userId);
+        const sent = await sendTelegramMessage(chatId, profText, profKeyboard);
+        if (sent?.result?.message_id) await setLastTempMsgId(userId, sent.result.message_id);
+        return res.status(200).json({ status: 'ok' });
+      }
+
+      // Check user plan & trial for plain /start
       const quota = await checkAiQuota(userId);
       const planLabel = quota.isTrial
         ? '💎 1-Kunlik Cheksiz Premium Sinovi'
@@ -636,7 +941,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         `🏷 <b>Tarif:</b> ${planLabel}\n` +
         `⚡ <b>Bugungi AI kvotasi:</b> ${quotaStatus}\n\n` +
         `💡 <b>Qanday ishlatish mumkin?</b>\n` +
-        `• <b>Xarajat:</b> <i>"50 000 go'sht oldim"</i> yoki <i>"taksi 25000"</i>\n` +
+        `• <b>Xarajat:</b> <i>"50 000 go'sht oldim"</i> yoki <i>"kecha taksiga 25000"</i>\n` +
         `• <b>Daromad:</b> <i>"14 mln maosh tushdi"</i>\n` +
         `• <b>Ovozli xabar:</b> Ovoz bilan xarajatni gapirib yuboring 🎙\n` +
         `• <b>Chek skaner:</b> Xarid cheki rasmini yuboring 📸\n\n` +
@@ -647,17 +952,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ status: 'ok' });
     }
 
-    // ── Command: /app or 📱 Mini App ──────────────────────────────
-    if (text.startsWith('/app') || text === '📱 Mini App') {
+    // ── Command: 💳 Kartalar / 💳 Cards / /cards / /kartalar ──────
+    if (text === '💳 Kartalar' || text === '💳 Cards' || text.startsWith('/cards') || text.startsWith('/kartalar')) {
+      deleteTelegramMessage(chatId, message.message_id).catch(() => {});
+      await cleanTemporaryBotMessages(chatId, user);
+      const { text: cardsText, keyboard: cardsKeyboard } = await renderCardsMessage(userId);
+      const sent = await sendTelegramMessage(chatId, cardsText, cardsKeyboard);
+      if (sent?.result?.message_id) await setLastTempMsgId(userId, sent.result.message_id);
+      return res.status(200).json({ status: 'ok' });
+    }
+
+    // ── Command: 📊 Oylik Limit / 📊 Monthly Limit / /limit ───────
+    if (text === '📊 Oylik Limit' || text === '📊 Monthly Limit' || text.startsWith('/limit')) {
+      deleteTelegramMessage(chatId, message.message_id).catch(() => {});
+      await cleanTemporaryBotMessages(chatId, user);
+      const arg = text.replace('/limit', '').trim();
+      const { text: limitText, keyboard: limitKeyboard } = await renderLimitMessage(userId, arg || undefined);
+      const sent = await sendTelegramMessage(chatId, limitText, limitKeyboard);
+      if (sent?.result?.message_id) await setLastTempMsgId(userId, sent.result.message_id);
+      return res.status(200).json({ status: 'ok' });
+    }
+
+    // ── Command: ⭐ Premium / /premium / /vip ─────────────────────
+    if (text === '⭐ Premium' || text.startsWith('/premium') || text.startsWith('/vip')) {
+      deleteTelegramMessage(chatId, message.message_id).catch(() => {});
+      await cleanTemporaryBotMessages(chatId, user);
+      const { text: premText, keyboard: premKeyboard } = await renderPremiumMessage(userId);
+      const sent = await sendTelegramMessage(chatId, premText, premKeyboard);
+      if (sent?.result?.message_id) await setLastTempMsgId(userId, sent.result.message_id);
+      return res.status(200).json({ status: 'ok' });
+    }
+
+    // ── Command: /app or 🚀 Moliya or 📱 Mini App ─────────────────
+    if (text.startsWith('/app') || text === '🚀 Moliya' || text === '📱 Mini App') {
       deleteTelegramMessage(chatId, message.message_id).catch(() => {});
       await cleanTemporaryBotMessages(chatId, user);
 
       const sent = await sendTelegramMessage(
         chatId,
-        `📱 <b>Moliya Mini App</b>\n\nBarcha hisob-kitoblar, kartalar, grafiklar va hisobotlar bir joyda! 👇`,
+        `🚀 <b>Moliya Telegram Mini App</b>\n\nBarcha hisob-kitoblar, kartalar, oylik limit, grafiklar va tahlillar bir joyda! 👇`,
         {
           inline_keyboard: [
-            [{ text: "📱 Moliya Mini Appni ochish", web_app: { url: appUrl } }]
+            [{ text: "🚀 Moliya Mini Appni ochish", web_app: { url: appUrl } }]
           ]
         }
       );
@@ -665,101 +1001,46 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ status: 'ok' });
     }
 
-    // ── Command: /help or /yordam or ❓ Yordam ───────────────────
-    if (text.startsWith('/help') || text.startsWith('/yordam') || text === '❓ Yordam') {
+    // ── Command: /help or /yordam or ❓ Yordam / ❓ Help ───────────
+    if (text.startsWith('/help') || text.startsWith('/yordam') || text === '❓ Yordam' || text === '❓ Help') {
       deleteTelegramMessage(chatId, message.message_id).catch(() => {});
       await cleanTemporaryBotMessages(chatId, user);
 
       const helpText =
         `ℹ️ <b>Moliya AI Botdan foydalanish yo'riqnomasi</b>\n\n` +
         `📝 <b>1. Oddiy matn bilan kiritish:</b>\n` +
-        `Shunchaki xarajatingizni yozing, masalan:\n` +
-        `• <i>"14 mln so'm sarfladim"</i>\n` +
+        `Xarajatingiz yoki daromadingizni tabiiy tilda yozing:\n` +
+        `• <i>"14 mln maosh tushdi"</i>\n` +
         `• <i>"taksiga 25000 so'm"</i>\n` +
-        `• <i>"lunchga 50k"</i>\n` +
-        `• <i>"maosh 5 mln tushdi"</i>\n\n` +
+        `• <i>"kecha obedga 45 ming sarfladim"</i>\n` +
+        `• <i>"3 kun oldin 120 000 ga dori oldim"</i>\n` +
+        `• <i>"25 avgust kuni 2.5 mln qarz qaytardim"</i>\n\n` +
         `🎙 <b>2. Ovozli xabar:</b>\n` +
-        `Telegram ovoz tugmasini bosib, qayerga qancha sarflaganingizni ayting.\n\n` +
+        `Ovozli xabar yuboring — AI uni matnga o'giradi, sanasini aniqlaydi va bazaga saqlaydi.\n\n` +
         `📸 <b>3. Chek rasmi:</b>\n` +
-        `Supermarket yoki do'kon xarid chekini rasmga olib yuboring.\n\n` +
+        `Xarid chekini rasmga olib yuborsangiz, AI do'kon nomi, jami summa va sanani avtomatik o'qiydi.\n\n` +
         `💎 <b>4. AI Limitlari va Premium:</b>\n` +
-        `• Yangi foydalanuvchilar: <b>1 kun cheksiz Premium</b>\n` +
-        `• Bepul tarif: <b>kuniga 5 ta AI so'rovi</b> (har kuni yangilanadi)\n` +
-        `• Cheksiz AI uchun VIP Premium oling.\n\n` +
+        `• Bepul tarif: <b>kuniga 5 ta AI so'rovi</b>\n` +
+        `• Cheksiz AI so'rovlar uchun <b>VIP Premium</b> oling.\n\n` +
         `📊 <b>Menyu Tugmalari:</b>\n` +
-        `• <b>📱 Mini App</b> — Ilovani to'liq ochish\n` +
-        `• <b>📊 Statistika</b> — Balans va hisobotlar\n` +
-        `• <b>👤 Hisobim</b> — Hisob holati va kvota`;
+        `• <b>🚀 Moliya</b> — Mini Appni to'liq ochish\n` +
+        `• <b>👤 Profil</b> — Hisob ma'lumotlari va tarif\n` +
+        `• <b>💳 Kartalar</b> — Bank kartalari balansi\n` +
+        `• <b>📊 Oylik Limit</b> — Byudjet sarfi va nazorat\n` +
+        `• <b>⭐ Premium</b> — VIP status va imkoniyatlar\n` +
+        `• <b>📈 Statistika</b> — Oylik balans va xarajatlar`;
 
       const sent = await sendTelegramMessage(chatId, helpText, getMainAppKeyboard(appUrl));
       if (sent?.result?.message_id) await setLastTempMsgId(userId, sent.result.message_id);
       return res.status(200).json({ status: 'ok' });
     }
 
-    // ── Command: /stats or /hisobot or 📊 Statistika ─────────────
-    if (text.startsWith('/stats') || text.startsWith('/hisobot') || text === '📊 Statistika') {
+    // ── Command: /stats or /hisobot or 📈 Statistika / 📈 Stats ────
+    if (text.startsWith('/stats') || text.startsWith('/hisobot') || text === '📈 Statistika' || text === '📈 Stats') {
       deleteTelegramMessage(chatId, message.message_id).catch(() => {});
       await cleanTemporaryBotMessages(chatId, user);
-
-      const { data: u } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
-      const txs = Array.isArray(u?.transactions) ? u.transactions : [];
-
-      const currentMonth = new Date().getMonth() + 1;
-      const currentYear = new Date().getFullYear();
-
-      let totalExpense = 0;
-      let totalIncome = 0;
-      const catTotals: Record<string, number> = {};
-
-      for (const t of txs) {
-        const amt = Number(t.amount || 0);
-        if (t.type === 'income') {
-          totalIncome += amt;
-        } else {
-          totalExpense += amt;
-        }
-        const cat = t.category || 'Boshqa';
-        if (t.type !== 'income') {
-          catTotals[cat] = (catTotals[cat] || 0) + amt;
-        }
-      }
-
-      const balance = totalIncome - totalExpense;
-      const sortedCats = Object.entries(catTotals).sort((a, b) => b[1] - a[1]).slice(0, 5);
-
-      let breakdownText = '';
-      for (const [cat, sum] of sortedCats) {
-        const emoji = CATEGORY_EMOJIS[cat] || '📦';
-        breakdownText += `${emoji} <b>${cat}:</b> ${sum.toLocaleString()} so'm\n`;
-      }
-
-      // Check current quota status
-      const quota = await checkAiQuota(userId);
-      const planLabel = quota.isTrial
-        ? '💎 1-Kunlik Cheksiz Premium Sinovi'
-        : quota.isPremium
-          ? '⭐ VIP Premium (Cheksiz)'
-          : '🆓 Bepul Tarif';
-
-      const quotaStatus = quota.limit === null
-        ? '♾️ Cheksiz'
-        : `${quota.usedCount} / ${quota.limit} (${quota.remaining} ta qoldi)`;
-
-      const statsText =
-        `📊 <b>Moliyaviy hisobot (${currentMonth}/${currentYear})</b>\n\n` +
-        `🔴 <b>Jami xarajat:</b> ${totalExpense.toLocaleString()} so'm\n` +
-        `🟢 <b>Jami daromad:</b> ${totalIncome.toLocaleString()} so'm\n` +
-        `💰 <b>Sof balans:</b> ${balance.toLocaleString()} so'm\n\n` +
-        (breakdownText ? `<b>Top xarajatlar:</b>\n${breakdownText}\n` : '') +
-        `🏷 <b>Tarif:</b> ${planLabel}\n` +
-        `⚡ <b>Bugungi AI so'rovlar:</b> ${quotaStatus}\n\n` +
-        `👇 <i>Batafsil tahlil uchun Mini Appni oching:</i>`;
-
-      const sent = await sendTelegramMessage(chatId, statsText, {
-        inline_keyboard: [
-          [{ text: "📱 Mini Appda to'liq ko'rish", web_app: { url: appUrl } }]
-        ]
-      });
+      const { text: statsText, keyboard: statsKeyboard } = await renderStatsMessage(userId);
+      const sent = await sendTelegramMessage(chatId, statsText, statsKeyboard);
       if (sent?.result?.message_id) await setLastTempMsgId(userId, sent.result.message_id);
       return res.status(200).json({ status: 'ok' });
     }
@@ -792,16 +1073,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (!rawApiKey) continue;
 
             let parsed: any = null;
-            for (const modelToUse of activeModels) {
-              try {
-                const ai = new GoogleGenAI({ apiKey: rawApiKey });
-                const prompt = `You are a financial AI assistant for Moliya AI. Listen to this voice note in Uzbek/Russian and extract the transaction.
+          const srvCtx = getServerDateTimeContext();
+          for (const modelToUse of activeModels) {
+            try {
+              const ai = new GoogleGenAI({ apiKey: rawApiKey });
+              const prompt = `You are a financial AI assistant for Moliya AI. Listen to this voice note in Uzbek/Russian and extract the transaction.
+AUTHORITATIVE CURRENT DATE: ${srvCtx.currentDate} (${srvCtx.currentDayOfWeek}), TIME: ${srvCtx.currentTime}, TIMEZONE: ${srvCtx.timezone}
+
 Return JSON with:
-- type: 'expense' | 'income'
+- type: 'expense' | 'income' | 'debt' | 'lending'
 - amount: integer in UZS (e.g. "14 mln" -> 14000000, "50 ming" -> 50000)
-- category: exactly one from: ['Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\\'liq', 'Ta\\'lim', 'Ko\\'ngil ochar', 'Boshqa', 'Maosh', 'Freelance', 'Biznes']
+- category: exactly one from: ['Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\\'liq', 'Ta\\'lim', 'Ko\\'ngil ochar', 'Boshqa', 'Maosh', 'Freelance', 'Biznes', 'Sovg\\'a', 'Investitsiya']
 - note: text description
-- title: 2-3 word title`;
+- title: 2-3 word title
+- date: "YYYY-MM-DD" (if speaker mentions "kecha", "o'tgan juma", "2 kun oldin", calculate relative to ${srvCtx.currentDate}; default to ${srvCtx.currentDate} if not mentioned)
+- debtWho: person name if debt or lending`;
 
                 const audioResult = await ai.models.generateContent({
                   model: modelToUse,
@@ -840,21 +1126,28 @@ Return JSON with:
             if (parsed) {
               const txId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
               const now = new Date();
+              const txDate = (parsed.date && /^\d{4}-\d{2}-\d{2}$/.test(parsed.date)) ? parsed.date : srvCtx.currentDate;
+              const d = new Date(txDate);
               const newTx = {
                 id: txId,
                 type: parsed.type || 'expense',
                 name: parsed.title || parsed.note || 'Ovozli xarajat',
                 category: parsed.category || 'Boshqa',
                 amount: Number(parsed.amount),
-                date: now.toISOString().slice(0, 10),
+                date: txDate,
+                day: d.getDate(),
+                month: d.getMonth() + 1,
+                year: d.getFullYear(),
                 time: now.toTimeString().slice(0, 5),
-                note: parsed.note || 'Ovozli kiritilgan'
+                note: parsed.note || 'Ovozli kiritilgan',
+                debtWho: parsed.debtWho || ''
               };
 
               await saveBotTransaction(userId, newTx);
               await recordAiUsage(userId, 'text', parsed.note || 'Voice expense', quota.isPremium);
 
               const emoji = CATEGORY_EMOJIS[newTx.category] || '💸';
+              const isInc = newTx.type === 'income';
               const successMsg =
                 `✅ <b>Ovozli xabar saqlandi!</b>\n\n` +
                 `${emoji} <b>Kategoriya:</b> ${newTx.category}\n` +
@@ -1002,15 +1295,21 @@ Return JSON with:
       if (parsed && parsed.amount && Number(parsed.amount) > 0) {
         const txId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
         const now = new Date();
+        const txDate = (parsed.date && /^\d{4}-\d{2}-\d{2}$/.test(parsed.date)) ? parsed.date : getServerDateTimeContext().currentDate;
+        const d = new Date(txDate);
         const newTx = {
           id: txId,
           type: parsed.type || 'expense',
           name: parsed.name || text,
           category: parsed.category || 'Boshqa',
           amount: Number(parsed.amount),
-          date: now.toISOString().slice(0, 10),
+          date: txDate,
+          day: d.getDate(),
+          month: d.getMonth() + 1,
+          year: d.getFullYear(),
           time: now.toTimeString().slice(0, 5),
-          note: parsed.note || text
+          note: parsed.note || text,
+          debtWho: parsed.debtWho || ''
         };
 
         await saveBotTransaction(userId, newTx);

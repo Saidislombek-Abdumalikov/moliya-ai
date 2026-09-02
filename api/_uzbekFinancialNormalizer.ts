@@ -122,19 +122,19 @@ export function normalizeUzbekFinancialText(rawText: string): NormalizedFinancia
   if (/\b(maosh|oylik|zarplata|avans|ish haqi|daromad|stipendiya|tushdi|keldi|berishdi)\b/i.test(text)) {
     inferredType = 'income';
     inferredCategory = 'Maosh';
-  } else if (/\b(taxi|taksi|yandex|benzin|metan|propan|zapravka|avtobus|metro|yo'lkira)\b/i.test(text)) {
+  } else if (/\b(taxi\w*|taksi\w*|yandex\w*|benzin\w*|metan\w*|propan\w*|zapravka\w*|avtobus\w*|metro\w*|yo'?lkira\w*)/i.test(text)) {
     inferredCategory = 'Transport';
     inferredType = 'expense';
-  } else if (/\b(ovqat|non|go'sht|gosht|bozor|korzinka|makro|havas|supermarket|osh|choyxona|lunch|obed|kechki ovqat|kafe|restoran|kofe|lavash|shashlik)\b/i.test(text)) {
+  } else if (/\b(ovqat\w*|non\w*|go'?sht\w*|bozor\w*|korzinka\w*|makro\w*|havas\w*|supermarket\w*|osh\w*|choyxona\w*|lunch\w*|obed\w*|kechki ovqat|kafe\w*|restoran\w*|kofe\w*|lavash\w*|shashlik\w*)/i.test(text)) {
     inferredCategory = 'Oziq-ovqat';
     inferredType = 'expense';
-  } else if (/\b(svet|gaz|suv|musor|kommunal|kvartira|arenda|wifi|internet|beeline|ucell|uztelecom|mobiuz)\b/i.test(text)) {
+  } else if (/\b(svet\w*|gaz\w*|suv\w*|musor\w*|kommunal\w*|kvartira\w*|arenda\w*|wifi\w*|internet\w*|beeline\w*|ucell\w*|uztelecom\w*|mobiuz\w*)/i.test(text)) {
     inferredCategory = 'Kommunal';
     inferredType = 'expense';
-  } else if (/\b(dori|dorixona|apteka|shifokor|doktor|klinika|analiz|tish|stomatolog)\b/i.test(text)) {
+  } else if (/\b(dori\w*|dorixona\w*|apteka\w*|shifokor\w*|doktor\w*|klinika\w*|analiz\w*|tish\w*|stomatolog\w*)/i.test(text)) {
     inferredCategory = 'Sog\'liq';
     inferredType = 'expense';
-  } else if (/\b(kiyim|poyafzal|kurtka|shim|ko'ylak|oyoq kiyim|futbolka|shim)\b/i.test(text)) {
+  } else if (/\b(kiyim\w*|poyafzal\w*|kurtka\w*|shim\w*|ko'ylak\w*|oyoq kiyim|futbolka\w*)/i.test(text)) {
     inferredCategory = 'Kiyim';
     inferredType = 'expense';
   } else if (/\b(qarz berdim|qarzga berdim|berdim)\b/i.test(text)) {
@@ -160,65 +160,130 @@ export function normalizeUzbekFinancialText(rawText: string): NormalizedFinancia
 }
 
 /**
- * Builds the robust, Uzbek-specialized system prompt for Gemini
+ * Server DateTime Context helper for authoritative date interpretation
  */
-export const buildUzbekFinancialPrompt = (normalizedText: string): string => buildUzbekFinancialAiPrompt(normalizedText);
+export interface ServerDateTimeContext {
+  currentDate: string; // YYYY-MM-DD
+  currentTime: string; // HH:mm
+  currentDayOfWeek: string; // Monday, Tuesday, ...
+  timezone: string; // "Asia/Tashkent (UTC+5)"
+}
 
-export function buildUzbekFinancialAiPrompt(normalizedText: string): string {
-  return `You are an expert financial AI assistant for Moliya AI (Uzbekistan).
-Your job is to parse financial transactions from natural language inputs (Uzbek, Russian, English, or mixed slang).
+export function getServerDateTimeContext(): ServerDateTimeContext {
+  const now = new Date();
+  const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+  const tashkentTime = new Date(utc + (3600000 * 5)); // Asia/Tashkent UTC+5
 
-User Input: "${normalizedText}"
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const dayName = days[tashkentTime.getDay()];
+  const yyyy = tashkentTime.getFullYear();
+  const mm = String(tashkentTime.getMonth() + 1).padStart(2, '0');
+  const dd = String(tashkentTime.getDate()).padStart(2, '0');
+  const hh = String(tashkentTime.getHours()).padStart(2, '0');
+  const min = String(tashkentTime.getMinutes()).padStart(2, '0');
+
+  return {
+    currentDate: `${yyyy}-${mm}-${dd}`,
+    currentTime: `${hh}:${min}`,
+    currentDayOfWeek: dayName,
+    timezone: 'Asia/Tashkent (UTC+5)'
+  };
+}
+
+/**
+ * Builds the robust, Uzbek-specialized system prompt for Gemini with first-class date support
+ */
+export const buildUzbekFinancialPrompt = (normalizedText: string, ctx?: ServerDateTimeContext): string => buildUzbekFinancialAiPrompt(normalizedText, ctx);
+
+export function buildUzbekFinancialAiPrompt(normalizedText: string, ctx: ServerDateTimeContext = getServerDateTimeContext()): string {
+  return `You are Moliya AI's expert financial-language interpretation engine.
+Understand natural human financial messages in Uzbek, Russian, English, or mixed colloquial language.
+Extract the structured financial transaction data.
+
+AUTHORITATIVE SERVER DATE & TIME:
+- Current Date: ${ctx.currentDate} (${ctx.currentDayOfWeek})
+- Current Time: ${ctx.currentTime}
+- Timezone: ${ctx.timezone}
+
+USER INPUT: "${normalizedText}"
 
 STRICT INSTRUCTIONS:
-1. Detect transaction TYPE:
-   - 'expense' (spent money, bought item, paid bill: "oldim", "sarfladim", "ketdi", "to'ladim", "lunchga", "taxiga")
-   - 'income' (received salary, income, profit, gift: "maosh", "oylik", "tushdi", "ishladim", "keldi")
-   - 'debt' (borrowed money from someone: "qarz oldim")
-   - 'lending' (loaned money to someone: "qarz berdim")
+1. Transaction TYPE:
+   - 'expense' (spent money, bought items, paid fees/bills/taxi: "oldim", "sarfladim", "berdim", "to'ladim", "lunchga", "taxiga", "купил", "потратил", "заплатил")
+   - 'income' (salary, earnings, received payment, profit, gift: "maosh", "oylik", "tushdi", "ishladim", "keldi", "зарплата", "получил", "пришло")
+   - 'debt' (borrowed money: "qarz oldim", "взял в долг")
+   - 'lending' (loaned money to someone: "qarz berdim", "дал в долг")
 
-2. Extract total AMOUNT as an INTEGER in UZS:
-   - "14 mln" / "14 million" / "14000000" -> 14000000
-   - "2 yarim mln" / "2.5 mln" -> 2500000
-   - "500 ming" / "500k" / "500000" -> 500000
-   - "30 mingga" / "30k" -> 30000
-   - "100 dollar" -> 100
-   - If no currency is mentioned, assume Uzbek So'm (UZS).
+2. Transaction AMOUNT (integer in UZS):
+   - Normalize multipliers and words:
+     * "14 mln" / "14 million" / "14 млн" / "14m" -> 14000000
+     * "2 yarim mln" / "2.5 mln" / "2,5 миллиона" -> 2500000
+     * "500 ming" / "500k" / "500 тысяч" -> 500000
+     * "30 ming" / "30k" -> 30000
+     * "ellik ming" -> 50000
+     * "bir yuz yigirma ming" -> 120000
+   - If currency is not explicitly specified, assume Uzbek So'm (UZS).
 
-3. Categorize into EXACTLY ONE of these categories:
-   - 'Oziq-ovqat' (food, groceries, restaurants, lunch, coffee, bread, meat: "non", "go'sht", "bozor", "korzinka", "osh", "obed")
-   - 'Transport' (taxi, bus, fuel, metro: "taxi", "yandex", "benzin", "yo'lkira")
-   - 'Kiyim' (clothes, shoes)
-   - 'Kommunal' (utilities, rent, internet, phone bill: "svet", "gaz", "suv", "arenda", "wifi")
-   - 'Sog\\'liq' (medicine, doctors, clinic: "dori", "apteka", "shifoxona")
-   - 'Ta\\'lim' (courses, books, university tuition: "kurs", "kitob", "kontrakt")
-   - 'Ko\\'ngil ochar' (entertainment, movies, games, park)
-   - 'Maosh' (salary, earnings, wages: "oylik", "maosh", "avans")
-   - 'Freelance' (freelance work, projects)
-   - 'Biznes' (business income or expense)
-   - 'Sovg\\'a' (gifts, donations)
-   - 'Investitsiya' (savings, investment)
+3. Transaction DATE (YYYY-MM-DD):
+   - Use the Authoritative Server Date (${ctx.currentDate}, ${ctx.currentDayOfWeek}) to calculate the exact calendar date:
+     * "bugun" / "today" / "сегодня" -> ${ctx.currentDate}
+     * "kecha" / "yesterday" / "вчера" -> calculate 1 day before ${ctx.currentDate}
+     * "o'tgan kun" / "oldingi kun" / "позавчера" -> calculate 2 days before ${ctx.currentDate}
+     * "X kun oldin" / "X дней назад" / "X days ago" -> calculate exactly X days before ${ctx.currentDate}
+     * Days of week: "dushanba", "seshanba", "chorshanba", "payshanba", "juma", "shanba", "yakshanba", "o'tgan juma", "в прошлую пятницу" -> the closest matching past day of week.
+     * Calendar dates: "25 avgust" / "25-avgust kuni" / "25.08" / "25 августа" -> ${ctx.currentDate.slice(0, 4)}-08-25
+     * Month phrases: "oy boshida" -> first day of the current month
+     * If NO date or relative phrase is mentioned, use ${ctx.currentDate}.
+   - Never invent a random date; return the date strictly in "YYYY-MM-DD" format.
+
+4. CATEGORY (Must be exactly one of these):
+   - 'Oziq-ovqat' (food, groceries, restaurant, cafe, lunch, meat, bread: "non", "go'sht", "bozor", "korzinka", "makro", "havas", "osh", "obed", "kafe", "choyxona")
+   - 'Transport' (taxi, bus, fuel, petrol, metro, fare: "taxi", "taksi", "yandex", "benzin", "metan", "yo'lkira")
+   - 'Kiyim' (clothes, shoes, apparel: "kiyim", "poyafzal", "kurtka", "shim", "ko'ylak")
+   - 'Kommunal' (utilities, rent, internet, mobile: "svet", "gaz", "suv", "arenda", "kvartira", "wifi", "internet", "beeline", "ucell")
+   - 'Sog\\'liq' (medicine, pharmacy, clinic, doctor, dentist: "dori", "apteka", "doktor", "klinika", "stomatolog")
+   - 'Ta\\'lim' (courses, books, tuition, university: "kurs", "kitob", "kontrakt", "maktab")
+   - 'Ko\\'ngil ochar' (entertainment, movies, games, park: "kino", "konsert", "o'yin")
+   - 'Maosh' (salary, wages, advance: "oylik", "maosh", "avans", "ish haqi")
+   - 'Freelance' (freelance work, client gigs)
+   - 'Biznes' (business profit or expense)
+   - 'Sovg\\'a' (gifts, presents, donations)
+   - 'Investitsiya' (investments, gold, shares)
    - 'Boshqa' (other/general)
 
-4. Title and Note:
-   - 'title': concise 2-3 word title (e.g. "Taksi xarajati", "Bozor xaridi", "Oylik maosh")
-   - 'note': meaningful description of the transaction
+5. Title, Note, and Debt:
+   - 'title': concise 2-3 word title (e.g. "Taksi xarajati", "Bozorlik", "Oylik maosh")
+   - 'note': clean description preserving user context.
+   - 'debtWho': person name if debt or lending (otherwise empty string).
 
-Return ONLY a valid JSON object matching the requested schema.`;
+Return ONLY valid JSON matching this schema:
+{
+  "type": "expense" | "income" | "debt" | "lending",
+  "amount": number,
+  "category": string,
+  "title": string,
+  "note": string,
+  "date": "YYYY-MM-DD",
+  "debtWho": string
+}`;
 }
 
 /**
  * Validates structured AI output before writing to database
  */
-export function validateAiFinancialOutput(rawJson: any, normalizedInput: NormalizedFinancialInput): {
+export function validateAiFinancialOutput(rawJson: any, normalizedInput: NormalizedFinancialInput, fallbackDate?: string): {
   isValid: boolean;
   type: string;
   amount: number;
   category: string;
   name: string;
   note: string;
+  date: string;
+  debtWho?: string;
   error?: string;
 } {
+  const defaultDate = fallbackDate || getServerDateTimeContext().currentDate;
+
   if (!rawJson || typeof rawJson !== 'object') {
     return {
       isValid: false,
@@ -227,6 +292,7 @@ export function validateAiFinancialOutput(rawJson: any, normalizedInput: Normali
       category: 'Boshqa',
       name: '',
       note: '',
+      date: defaultDate,
       error: 'Invalid JSON response from AI'
     };
   }
@@ -243,6 +309,7 @@ export function validateAiFinancialOutput(rawJson: any, normalizedInput: Normali
         category: 'Boshqa',
         name: '',
         note: '',
+        date: defaultDate,
         error: 'Could not determine valid transaction amount'
       };
     }
@@ -264,12 +331,23 @@ export function validateAiFinancialOutput(rawJson: any, normalizedInput: Normali
   const name = (rawJson.title || rawJson.note || normalizedInput.originalText).slice(0, 80);
   const note = (rawJson.note || normalizedInput.originalText).slice(0, 200);
 
+  // Validate or assign date
+  let date = defaultDate;
+  if (typeof rawJson.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(rawJson.date)) {
+    const parsedD = new Date(rawJson.date);
+    if (!isNaN(parsedD.getTime())) {
+      date = rawJson.date;
+    }
+  }
+
   return {
     isValid: true,
     type,
     amount,
     category,
     name,
-    note
+    note,
+    date,
+    debtWho: typeof rawJson.debtWho === 'string' ? rawJson.debtWho : ''
   };
 }
