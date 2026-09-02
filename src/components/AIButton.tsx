@@ -79,6 +79,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
   const [aiError, setAiError] = useState('')
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const recognitionRef = useRef<any>(null)
+  const isStartingVoiceRef = useRef(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -151,6 +152,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
   }
 
   const closeModal = () => {
+    stopVoice()
     setOpen(false)
     setRecording(false)
     if (timerRef.current) clearTimeout(timerRef.current)
@@ -218,37 +220,124 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
     }
   }
 
-  const stopVoice = () => {
-    if (recognitionRef.current) {
-      recognitionRef.current.stop()
-    }
-    setRecording(false)
-  }
-
-  const startVoice = async () => {
-    if (!checkAndDeductAIQuery()) {
-      setStep('type')
-      return
-    }
-
-    setStep('voice')
-    setRecording(true)
-
-    // Request audio stream upfront so browser remembers microphone permission persistently
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+  const getMicPermissionStatus = async (): Promise<'granted' | 'denied' | 'prompt'> => {
+    // 1. Query browser permission API if supported
+    if (typeof navigator !== 'undefined' && navigator.permissions?.query) {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-        stream.getTracks().forEach(t => t.stop())
-        localStorage.setItem('mic_perm_granted', 'true')
-      } catch (micErr) {
-        console.warn('Microphone permission stream warning:', micErr)
+        const result = await navigator.permissions.query({ name: 'microphone' as PermissionName })
+        if (result.state === 'granted') {
+          localStorage.setItem('mic_perm_granted', 'true')
+          return 'granted'
+        }
+        if (result.state === 'denied') {
+          localStorage.removeItem('mic_perm_granted')
+          return 'denied'
+        }
+        return result.state
+      } catch {
+        // Some environments (iOS Safari, older WebViews) throw on microphone query
       }
     }
 
+    // 2. Check cached permission flag
+    if (localStorage.getItem('mic_perm_granted') === 'true') {
+      return 'granted'
+    }
+
+    return 'prompt'
+  }
+
+  const stopVoice = () => {
+    if (recognitionRef.current) {
+      try {
+        if (typeof recognitionRef.current.abort === 'function') {
+          recognitionRef.current.abort()
+        } else if (typeof recognitionRef.current.stop === 'function') {
+          recognitionRef.current.stop()
+        }
+      } catch {}
+      recognitionRef.current = null
+    }
+    setRecording(false)
+    isStartingVoiceRef.current = false
+  }
+
+  const startVoice = async () => {
+    // Prevent duplicate calls, rapid clicking, and race conditions
+    if (isStartingVoiceRef.current || recording) {
+      return
+    }
+    isStartingVoiceRef.current = true
+
     try {
+      if (!checkAndDeductAIQuery()) {
+        setStep('type')
+        return
+      }
+
+      // Check if Web Speech API is supported before any permissions
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-      if (!SpeechRecognition) throw new Error("No speech API")
-      
+      if (!SpeechRecognition) {
+        throw new Error("SPEECH_NOT_SUPPORTED")
+      }
+
+      // Step 1: Check if permission is already granted or denied
+      const permStatus = await getMicPermissionStatus()
+
+      if (permStatus === 'denied') {
+        setRecording(false)
+        setStep('type')
+        setAiError(
+          (language === 'uz' || language === 'uz_cyrl')
+            ? (language === 'uz_cyrl'
+                ? "Микрофон рухсати берилмаган. Илтимос, браузер ёки Telegram созламаларидан микрофонга рухсат беринг 🎙️"
+                : "Mikrofon ruxsati berilmagan. Iltimos, brauzer yoki Telegram sozlamalaridan mikrofonga ruxsat bering 🎙️")
+            : language === 'ru'
+            ? 'Доступ к микрофону запрещен. Пожалуйста, разрешите доступ к микрофону в настройках 🎙️'
+            : 'Microphone permission denied. Please allow microphone access in your settings 🎙️'
+        )
+        return
+      }
+
+      // Step 2: If permission has NOT yet been granted ('prompt'), request ONCE via native getUserMedia.
+      // If already 'granted', SKIP getUserMedia completely to prevent double prompts!
+      if (permStatus !== 'granted') {
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+            stream.getTracks().forEach(t => t.stop())
+            localStorage.setItem('mic_perm_granted', 'true')
+          } catch (micErr: any) {
+            console.warn('Microphone permission denied by user/browser:', micErr)
+            localStorage.removeItem('mic_perm_granted')
+            setRecording(false)
+            setStep('type')
+            setAiError(
+              (language === 'uz' || language === 'uz_cyrl')
+                ? (language === 'uz_cyrl'
+                    ? "Микрофон рухсати берилмаган. Илтимос, браузер ёки Telegram созламаларидан микрофонга рухсат беринг 🎙️"
+                    : "Mikrofon ruxsati berilmagan. Iltimos, brauzer yoki Telegram sozlamalaridan mikrofonga ruxsat bering 🎙️")
+                : language === 'ru'
+                ? 'Доступ к микрофону запрещен. Пожалуйста, разрешите доступ к микрофону в настройках 🎙️'
+                : 'Microphone permission denied. Please allow microphone access in your settings 🎙️'
+            )
+            return
+          }
+        }
+      }
+
+      // Step 3: Clean up any previous speech recognition instance
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.abort ? recognitionRef.current.abort() : recognitionRef.current.stop()
+        } catch {}
+        recognitionRef.current = null
+      }
+
+      // Step 4: Start recording immediately
+      setStep('voice')
+      setRecording(true)
+
       const rec = new SpeechRecognition()
       rec.lang = (language === 'uz' || language === 'uz_cyrl') ? 'uz-UZ' : language === 'ru' ? 'ru-RU' : 'en-US'
       rec.interimResults = false
@@ -285,36 +374,54 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
         console.error("Speech recognition error:", e)
         stopVoice()
         setStep('type')
-        setAiError(
-          (language === 'uz' || language === 'uz_cyrl')
-            ? (language === 'uz_cyrl'
-                ? "Овозни таниш бу браузерда ишламади. Илтимос, матн билан ёзинг ёки Telegram Bot-ga овозли хабар юборинг 🎙️"
-                : "Ovozni tanish bu brauzerda ishlamadi. Iltimos, matn bilan yozing yoki Telegram Bot-ga ovozli xabar yuboring 🎙️")
-            : language === 'ru'
-            ? 'Распознавание речи не сработало. Введите текст или отправьте голосовое боту 🎙️'
-            : 'Speech recognition did not work. Please type or send a voice message to Telegram Bot 🎙️'
-        )
+        if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+          localStorage.removeItem('mic_perm_granted')
+          setAiError(
+            (language === 'uz' || language === 'uz_cyrl')
+              ? (language === 'uz_cyrl'
+                  ? "Микрофон рухсати берилмаган. Илтимос, браузер ёки Telegram созламаларидан микрофонга рухсат беринг 🎙️"
+                  : "Mikrofon ruxsati berilmagan. Iltimos, brauzer yoki Telegram sozlamalaridan mikrofonga ruxsat bering 🎙️")
+              : language === 'ru'
+              ? 'Доступ к микрофону запрещен. Пожалуйста, разрешите доступ к микрофону в настройках 🎙️'
+              : 'Microphone permission denied. Please allow microphone access in your settings 🎙️'
+          )
+        } else {
+          setAiError(
+            (language === 'uz' || language === 'uz_cyrl')
+              ? (language === 'uz_cyrl'
+                  ? "Овозни таниш бу браузерда ишламади. Илтимос, матн билан ёзинг ёки Telegram Bot-ga овозли хабар юборинг 🎙️"
+                  : "Ovozni tanish bu brauzerda ishlamadi. Iltimos, matn bilan yozing yoki Telegram Bot-ga ovozli xabar yuboring 🎙️")
+              : language === 'ru'
+              ? 'Распознавание речи не сработало. Введите текст или отправьте голосовое боту 🎙️'
+              : 'Speech recognition did not work. Please type or send a voice message to Telegram Bot 🎙️'
+          )
+        }
       }
 
       rec.onend = () => {
         setRecording(false)
+        isStartingVoiceRef.current = false
       }
 
       recognitionRef.current = rec
       rec.start()
-    } catch (e) {
-      console.error(e)
+    } catch (e: any) {
+      console.error("Voice start error:", e)
       setRecording(false)
       setStep('type')
-      setAiError(
-        (language === 'uz' || language === 'uz_cyrl')
-          ? (language === 'uz_cyrl'
-              ? "Овозни таниш бу браузерда қўллаб-қувватланмайди. Илтимос, матн билан ёзинг ёки Telegram Bot-ga овозли хабар юборинг 🎙️"
-              : "Ovozni tanish bu brauzerda qo'llab-quvvatlanmaydi. Iltimos, matn bilan yozing yoki Telegram Bot-ga ovozli xabar yuboring 🎙️")
-          : language === 'ru'
-          ? 'Распознавание речи не поддерживается. Введите текст или отправьте голосовое боту 🎙️'
-          : 'Speech recognition is not supported. Please type text or send a voice message to Telegram Bot 🎙️'
-      )
+      if (e?.message === 'SPEECH_NOT_SUPPORTED') {
+        setAiError(
+          (language === 'uz' || language === 'uz_cyrl')
+            ? (language === 'uz_cyrl'
+                ? "Овозни таниш бу браузерда қўллаб-қувватланмайди. Илтимос, матн билан ёзинг ёки Telegram Bot-ga овозли хабар юборинг 🎙️"
+                : "Ovozni tanish bu brauzerda qo'llab-quvvatlanmaydi. Iltimos, matn bilan yozing yoki Telegram Bot-ga ovozli xabar yuboring 🎙️")
+            : language === 'ru'
+            ? 'Распознавание речи не поддерживается. Введите текст или отправьте голосовое боту 🎙️'
+            : 'Speech recognition is not supported. Please type text or send a voice message to Telegram Bot 🎙️'
+        )
+      }
+    } finally {
+      isStartingVoiceRef.current = false
     }
   }
 
@@ -683,7 +790,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
 
                 {/* Voice shortcut */}
                 <button
-                  onClick={() => { setSelectedType('expense'); setStep('voice'); startVoice() }}
+                  onClick={() => { setSelectedType('expense'); startVoice() }}
                   style={{
                     width: '100%',
                     padding: '14px',
@@ -766,7 +873,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                   ))}
                 </div>
 
-                <button onClick={() => { setRecording(false); setStep('type') }} style={{
+                <button onClick={() => { stopVoice(); setStep('type') }} style={{
                   marginTop: 28, padding: '10px 24px', borderRadius: 12,
                   border: '1px solid #E8E3F8', background: 'transparent',
                   color: '#8B82C4', fontSize: 14, fontFamily: 'inherit', cursor: 'pointer',
