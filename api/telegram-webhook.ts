@@ -228,7 +228,18 @@ async function resolveCanonicalUser(fromUser: any) {
   const fullName = [fromUser.first_name, fromUser.last_name].filter(Boolean).join(' ') || 'Foydalanuvchi';
   const username = fromUser.username ? `@${fromUser.username}` : null;
 
-  // 1. Fetch existing user
+  // 1. Identity-based block check (survives account deletion)
+  const { data: blockedIdentity } = await supabase
+    .from('users')
+    .select('*')
+    .eq('id', `restricted_tg_${tgId}`)
+    .maybeSingle();
+
+  if (blockedIdentity && blockedIdentity.onboarding?.is_blocked !== false) {
+    return { user: blockedIdentity, userId, isBlocked: true, isRegistered: false, isNew: false };
+  }
+
+  // 2. Fetch existing active canonical user
   const { data: existing } = await supabase
     .from('users')
     .select('*')
@@ -236,27 +247,28 @@ async function resolveCanonicalUser(fromUser: any) {
     .maybeSingle();
 
   if (existing) {
-    // Check if blocked
+    // Check if user is blocked by admin
     const isBlocked = Boolean(
-      existing.is_blocked ||
       existing.onboarding?.is_blocked ||
       existing.device_info?.is_blocked ||
-      existing.is_restricted ||
       existing.onboarding?.is_restricted ||
       existing.device_info?.restricted
     );
 
-    // Check if registered (has verified phone or completed registration)
+    if (isBlocked) {
+      return { user: existing, userId, isBlocked: true, isRegistered: false, isNew: false };
+    }
+
+    // Check if registered (has verified phone AND completed registration)
     const isRegistered = Boolean(
-      (existing.phone && String(existing.phone).trim() !== '' && existing.phone !== '—') ||
-      existing.registration_status === 'completed' ||
-      existing.onboarding?.registration_status === 'completed'
+      (existing.phone && String(existing.phone).trim() !== '' && existing.phone !== '—') &&
+      (existing.registration_status === 'completed' || existing.onboarding?.registration_status === 'completed')
     );
 
-    return { user: existing, userId, isBlocked, isRegistered, isNew: false };
+    return { user: existing, userId, isBlocked: false, isRegistered, isNew: false };
   }
 
-  // 2. Create unverified canonical user skeleton
+  // 3. User was deleted or is first-time visitor -> Create clean unverified skeleton
   const newOnboarding = {
     completed: false,
     language: 'uz',
@@ -301,15 +313,10 @@ async function completePhoneRegistration(fromUser: any, phoneNumber: string) {
   const fullName = [fromUser.first_name, fromUser.last_name].filter(Boolean).join(' ') || 'Foydalanuvchi';
   const username = fromUser.username ? `@${fromUser.username}` : null;
 
-  const { data: existing, error: fetchErr } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
-  if (fetchErr) {
-    console.error('[BOT] Error fetching existing user on registration:', fetchErr.message);
-  }
-
+  // Clean registration starting completely fresh from zero (no old transactions/cards restored)
   const updatedOnboarding = {
-    ...(existing?.onboarding || {}),
-    completed: existing?.onboarding?.completed || false,
-    language: existing?.language || 'uz',
+    completed: false,
+    language: 'uz',
     name: fullName,
     phone: phoneNumber,
     telegram: username,
@@ -325,12 +332,15 @@ async function completePhoneRegistration(fromUser: any, phoneNumber: string) {
     telegram: username,
     telegram_id: tgId,
     phone: phoneNumber,
-    is_premium: true, // 1-Day Unlimited Premium Trial!
+    is_premium: true, // Fresh 1-Day Unlimited Premium Trial!
     premium_expires_at: trialEndsAt,
     ai_limit: null, // Unlimited for trial
     ai_query_count: 0,
+    platform: 'telegram',
+    cards: [], // Fresh account: zero cards
+    transactions: [], // Fresh account: zero transactions
     onboarding: updatedOnboarding,
-    created_at: existing?.created_at || now.toISOString(),
+    created_at: now.toISOString(),
     updated_at: now.toISOString()
   };
 

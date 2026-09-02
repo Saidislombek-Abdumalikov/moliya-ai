@@ -47,12 +47,24 @@ export async function checkAiQuota(
       };
     }
 
-    // 1. Check if user is blocked by admin
+    // 1. Check if user or Telegram identity is blocked by admin
+    const tgId = userId.startsWith('moliya_user_tg_') ? userId.replace('moliya_user_tg_', '') : null;
+    let isIdentityBlocked = false;
+    if (tgId) {
+      const { data: blockedDoc } = await supabase
+        .from('users')
+        .select('id, onboarding')
+        .eq('id', `restricted_tg_${tgId}`)
+        .maybeSingle();
+      if (blockedDoc && blockedDoc.onboarding?.is_blocked !== false) {
+        isIdentityBlocked = true;
+      }
+    }
+
     const isUserBlocked = Boolean(
-      suUser?.is_blocked ||
+      isIdentityBlocked ||
       suUser?.onboarding?.is_blocked ||
       suUser?.device_info?.is_blocked ||
-      suUser?.is_restricted ||
       suUser?.onboarding?.is_restricted ||
       suUser?.device_info?.restricted
     );

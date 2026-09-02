@@ -83,37 +83,52 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const tgId = String(tgUser.id);
       const userId = `moliya_user_tg_${tgId}`;
 
-      // Restriction & Block Guard: Deny access if Telegram ID is restricted or blocked
-      const { data: restrictionCheck } = await supabase
+      // 1. Identity Block Guard: Check if Telegram identity is blocked by Admin
+      const { data: blockedDoc } = await supabase
         .from('users')
-        .select('*')
-        .or(`id.eq.${userId},id.eq.restricted_tg_${tgId},telegram_id.eq.${tgId}`)
+        .select('id, onboarding, device_info')
+        .eq('id', `restricted_tg_${tgId}`)
         .maybeSingle();
 
-      const isUserRestricted = Boolean(
-        restrictionCheck?.is_restricted ||
-        restrictionCheck?.is_blocked ||
-        restrictionCheck?.id?.startsWith('restricted_') ||
-        restrictionCheck?.device_info?.restricted ||
-        restrictionCheck?.device_info?.is_blocked ||
-        restrictionCheck?.onboarding?.is_restricted ||
-        restrictionCheck?.onboarding?.is_blocked
-      );
-
-      if (isUserRestricted) {
+      if (blockedDoc && blockedDoc.onboarding?.is_blocked !== false) {
         return res.status(403).json({
           error: 'ACCOUNT_RESTRICTED',
-          message: "Hisobingiz ma'muriyat tomonidan cheklangan."
+          message: "Hisobingiz ma'muriyat tomonidan bloklangan."
         });
       }
 
-      // Registration Guard: Deny access if user has not completed phone number registration
+      // 2. Canonical User Check
+      const { data: userDoc } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (userDoc) {
+        const isUserBlocked = Boolean(
+          userDoc.onboarding?.is_blocked ||
+          userDoc.device_info?.is_blocked ||
+          userDoc.onboarding?.is_restricted ||
+          userDoc.device_info?.restricted
+        );
+
+        if (isUserBlocked) {
+          return res.status(403).json({
+            error: 'ACCOUNT_RESTRICTED',
+            message: "Hisobingiz ma'muriyat tomonidan bloklangan."
+          });
+        }
+      }
+
+      // 3. Registration Guard: User must exist and have completed phone registration
       const isRegistered = Boolean(
-        restrictionCheck?.phone &&
-        (restrictionCheck?.registration_status === 'completed' || restrictionCheck?.onboarding?.registration_status === 'completed')
+        userDoc?.phone &&
+        userDoc.phone !== '—' &&
+        String(userDoc.phone).trim() !== '' &&
+        (userDoc.registration_status === 'completed' || userDoc.onboarding?.registration_status === 'completed')
       );
 
-      if (!isRegistered) {
+      if (!isRegistered || !userDoc) {
         return res.status(403).json({
           error: 'REGISTRATION_REQUIRED',
           message: "Iltimos, avval Telegram botda telefon raqamingizni tasdiqlang."
@@ -121,8 +136,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // Dynamic 1-Day Trial Check & Automatic Grant for new users
-      let premiumExpiresAt = restrictionCheck?.premium_expires_at || restrictionCheck?.onboarding?.premium_expires_at;
-      let isPremium = Boolean(restrictionCheck?.is_premium);
+      let premiumExpiresAt = userDoc?.premium_expires_at || userDoc?.onboarding?.premium_expires_at;
+      let isPremium = Boolean(userDoc?.is_premium);
 
       if (!premiumExpiresAt) {
         // First time entering: automatically grant 1-Day Unlimited AI Trial
@@ -155,11 +170,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const tgUsername = tgUser.username ? '@' + tgUser.username : '@moliya_user';
 
       const updatedOnboarding = {
-        ...(restrictionCheck?.onboarding || {}),
-        completed: restrictionCheck?.onboarding?.completed || false,
-        language: restrictionCheck?.language || tgUser.language_code || 'uz',
+        ...(userDoc?.onboarding || {}),
+        completed: userDoc?.onboarding?.completed || false,
+        language: userDoc?.language || tgUser.language_code || 'uz',
         name: tgName,
-        phone: restrictionCheck?.phone || '',
+        phone: userDoc?.phone || '',
         telegram: tgUsername,
         telegramId: tgId,
         session_token: sessionToken,
@@ -180,11 +195,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         access_token: authSession?.access_token || null,
         refresh_token: authSession?.refresh_token || null,
         onboarding: updatedOnboarding,
-        cards: restrictionCheck?.cards || [],
-        transactions: restrictionCheck?.transactions || [],
+        cards: userDoc?.cards || [],
+        transactions: userDoc?.transactions || [],
         isPremium,
-        trialEndsAt: restrictionCheck?.trial_ends_at || restrictionCheck?.premium_expires_at,
-        aiLimit: isPremium ? null : (restrictionCheck?.ai_limit || 5)
+        trialEndsAt: userDoc?.trial_ends_at || userDoc?.premium_expires_at,
+        aiLimit: isPremium ? null : (userDoc?.ai_limit || 5)
       });
     } catch (error: any) {
       console.error('Error in auth telegram:', error);

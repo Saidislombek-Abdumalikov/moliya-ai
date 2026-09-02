@@ -236,7 +236,7 @@ export default function App() {
                 if (tg?.close) {
                   tg.close();
                 } else {
-                  window.location.href = 'https://t.me/MoliyaAI_Bot';
+                  window.location.href = 'https://t.me/moliya_v2bot';
                 }
               }}
               onStartTour={() => setShowTour(true)}
