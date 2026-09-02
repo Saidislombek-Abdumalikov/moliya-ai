@@ -8,7 +8,8 @@ import {
   normalizeUzbekFinancialText,
   buildUzbekFinancialAiPrompt,
   validateAiFinancialOutput,
-  getServerDateTimeContext
+  getServerDateTimeContext,
+  parseSafeDate
 } from './_uzbekFinancialNormalizer.js';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
@@ -1130,20 +1131,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             if (parsed) {
               const txId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-              const now = new Date();
-              const txDate = (parsed.date && /^\d{4}-\d{2}-\d{2}$/.test(parsed.date)) ? parsed.date : srvCtx.currentDate;
-              const d = new Date(txDate);
+              const safeD = parseSafeDate(parsed.date);
               const newTx = {
                 id: txId,
                 type: parsed.type || 'expense',
                 name: parsed.title || parsed.note || 'Ovozli xarajat',
                 category: parsed.category || 'Boshqa',
                 amount: Number(parsed.amount),
-                date: txDate,
-                day: d.getDate(),
-                month: d.getMonth() + 1,
-                year: d.getFullYear(),
-                time: now.toTimeString().slice(0, 5),
+                date: safeD.date,
+                day: safeD.day,
+                month: safeD.month,
+                year: safeD.year,
+                time: safeD.time,
                 note: parsed.note || 'Ovozli kiritilgan',
                 debtWho: parsed.debtWho || ''
               };
@@ -1250,15 +1249,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             if (parsed) {
               const txId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-              const now = new Date();
+              const safeD = parseSafeDate(parsed.date);
               const newTx = {
                 id: txId,
                 type: 'expense',
                 name: parsed.title || parsed.note || 'Chek xarajati',
                 category: parsed.category || 'Oziq-ovqat',
                 amount: Number(parsed.amount),
-                date: now.toISOString().slice(0, 10),
-                time: now.toTimeString().slice(0, 5),
+                date: safeD.date,
+                day: safeD.day,
+                month: safeD.month,
+                year: safeD.year,
+                time: safeD.time,
                 note: parsed.note || 'Chek skaner qilindi'
               };
 
@@ -1299,20 +1301,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const parsed = await parseTextWithAi(text);
       if (parsed && parsed.amount && Number(parsed.amount) > 0) {
         const txId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-        const now = new Date();
-        const txDate = (parsed.date && /^\d{4}-\d{2}-\d{2}$/.test(parsed.date)) ? parsed.date : getServerDateTimeContext().currentDate;
-        const d = new Date(txDate);
+        const safeD = parseSafeDate(parsed.date);
         const newTx = {
           id: txId,
           type: parsed.type || 'expense',
           name: parsed.name || text,
           category: parsed.category || 'Boshqa',
           amount: Number(parsed.amount),
-          date: txDate,
-          day: d.getDate(),
-          month: d.getMonth() + 1,
-          year: d.getFullYear(),
-          time: now.toTimeString().slice(0, 5),
+          date: safeD.date,
+          day: safeD.day,
+          month: safeD.month,
+          year: safeD.year,
+          time: safeD.time,
           note: parsed.note || text,
           debtWho: parsed.debtWho || ''
         };

@@ -285,6 +285,121 @@ Return ONLY valid JSON matching this schema:
 }`;
 }
 
+export interface SafeParsedDate {
+  date: string; // YYYY-MM-DD
+  day: number;
+  month: number;
+  year: number;
+  time: string;
+}
+
+/**
+ * Universal date parser that ALWAYS returns valid YYYY-MM-DD, day, month, year, time
+ * Never produces NaN, undefined, or empty placeholders.
+ */
+export function parseSafeDate(dateVal: any, fallbackDate?: string): SafeParsedDate {
+  const srv = getServerDateTimeContext();
+  const fallback = fallbackDate || srv.currentDate;
+  const nowTime = srv.currentTime;
+
+  if (!dateVal || typeof dateVal !== 'string') {
+    const [yStr, mStr, dStr] = fallback.split('-');
+    return {
+      date: fallback,
+      day: parseInt(dStr, 10),
+      month: parseInt(mStr, 10),
+      year: parseInt(yStr, 10),
+      time: nowTime
+    };
+  }
+
+  const str = dateVal.trim();
+
+  // 1. Direct YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+    const [yStr, mStr, dStr] = str.split('-');
+    const y = parseInt(yStr, 10);
+    const m = parseInt(mStr, 10);
+    const d = parseInt(dStr, 10);
+    if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
+      return { date: str, day: d, month: m, year: y, time: nowTime };
+    }
+  }
+
+  // 2. ISO format YYYY-MM-DDTHH:mm...
+  if (/^\d{4}-\d{2}-\d{2}T/.test(str)) {
+    const datePart = str.slice(0, 10);
+    const timePart = str.slice(11, 16);
+    const [yStr, mStr, dStr] = datePart.split('-');
+    return {
+      date: datePart,
+      day: parseInt(dStr, 10),
+      month: parseInt(mStr, 10),
+      year: parseInt(yStr, 10),
+      time: timePart || nowTime
+    };
+  }
+
+  // 3. DD.MM.YYYY or DD/MM/YYYY or DD-MM-YYYY
+  const dmy = str.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})/);
+  if (dmy) {
+    const d = parseInt(dmy[1], 10);
+    const m = parseInt(dmy[2], 10);
+    const y = parseInt(dmy[3], 10);
+    const dateFormatted = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    return {
+      date: dateFormatted,
+      day: d,
+      month: m,
+      year: y,
+      time: nowTime
+    };
+  }
+
+  // 4. DD.MM or DD/MM (current year)
+  const dm = str.match(/^(\d{1,2})[./-](\d{1,2})$/);
+  if (dm) {
+    const d = parseInt(dm[1], 10);
+    const m = parseInt(dm[2], 10);
+    const y = parseInt(fallback.slice(0, 4), 10);
+    const dateFormatted = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    return {
+      date: dateFormatted,
+      day: d,
+      month: m,
+      year: y,
+      time: nowTime
+    };
+  }
+
+  // 5. JavaScript Date parsing fallback
+  const parsed = new Date(str);
+  if (!isNaN(parsed.getTime())) {
+    const y = parsed.getFullYear();
+    const m = parsed.getMonth() + 1;
+    const d = parsed.getDate();
+    const dateFormatted = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const timeFormatted = `${String(parsed.getHours()).padStart(2, '0')}:${String(parsed.getMinutes()).padStart(2, '0')}`;
+    return {
+      date: dateFormatted,
+      day: d,
+      month: m,
+      year: y,
+      time: timeFormatted
+    };
+  }
+
+  // Fallback to trusted current date
+  const [yStr, mStr, dStr] = fallback.split('-');
+  return {
+    date: fallback,
+    day: parseInt(dStr, 10),
+    month: parseInt(mStr, 10),
+    year: parseInt(yStr, 10),
+    time: nowTime
+  };
+}
+
 /**
  * Validates structured AI output before writing to database
  */
@@ -296,10 +411,15 @@ export function validateAiFinancialOutput(rawJson: any, normalizedInput: Normali
   name: string;
   note: string;
   date: string;
+  day: number;
+  month: number;
+  year: number;
+  time: string;
   debtWho?: string;
   error?: string;
 } {
   const defaultDate = fallbackDate || getServerDateTimeContext().currentDate;
+  const defaultParsed = parseSafeDate(defaultDate);
 
   if (!rawJson || typeof rawJson !== 'object') {
     return {
@@ -309,7 +429,11 @@ export function validateAiFinancialOutput(rawJson: any, normalizedInput: Normali
       category: 'Boshqa',
       name: '',
       note: '',
-      date: defaultDate,
+      date: defaultParsed.date,
+      day: defaultParsed.day,
+      month: defaultParsed.month,
+      year: defaultParsed.year,
+      time: defaultParsed.time,
       error: 'Invalid JSON response from AI'
     };
   }
@@ -326,7 +450,11 @@ export function validateAiFinancialOutput(rawJson: any, normalizedInput: Normali
         category: 'Boshqa',
         name: '',
         note: '',
-        date: defaultDate,
+        date: defaultParsed.date,
+        day: defaultParsed.day,
+        month: defaultParsed.month,
+        year: defaultParsed.year,
+        time: defaultParsed.time,
         error: 'Could not determine valid transaction amount'
       };
     }
@@ -348,14 +476,8 @@ export function validateAiFinancialOutput(rawJson: any, normalizedInput: Normali
   const name = (rawJson.title || rawJson.note || normalizedInput.originalText).slice(0, 80);
   const note = (rawJson.note || normalizedInput.originalText).slice(0, 200);
 
-  // Validate or assign date
-  let date = defaultDate;
-  if (typeof rawJson.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(rawJson.date)) {
-    const parsedD = new Date(rawJson.date);
-    if (!isNaN(parsedD.getTime())) {
-      date = rawJson.date;
-    }
-  }
+  // Validate or assign date deterministically
+  const parsedDate = parseSafeDate(rawJson.date, defaultDate);
 
   return {
     isValid: true,
@@ -364,7 +486,12 @@ export function validateAiFinancialOutput(rawJson: any, normalizedInput: Normali
     category,
     name,
     note,
-    date,
+    date: parsedDate.date,
+    day: parsedDate.day,
+    month: parsedDate.month,
+    year: parsedDate.year,
+    time: parsedDate.time,
     debtWho: typeof rawJson.debtWho === 'string' ? rawJson.debtWho : ''
   };
 }
+

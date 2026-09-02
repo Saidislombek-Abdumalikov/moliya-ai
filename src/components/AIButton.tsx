@@ -932,7 +932,20 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                   <label style={{ fontSize: 12, color: '#8B82C4', fontWeight: 500, display: 'block', marginBottom: 6 }}>SANA VA VAQT</label>
                   <input
                     type="datetime-local"
-                    value={entry.date || ''}
+                    value={(() => {
+                      const now = new Date();
+                      const pad = (n: number) => String(n).padStart(2, '0');
+                      const fallback = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+                      if (!entry.date) return fallback;
+                      const str = String(entry.date).trim();
+                      if (str.includes('T') && str.length >= 16) return str.slice(0, 16);
+                      if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return `${str}T12:00`;
+                      const d = new Date(str);
+                      if (!isNaN(d.getTime())) {
+                        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+                      }
+                      return fallback;
+                    })()}
                     onChange={(e) => setEntry((prev) => ({ ...prev, date: e.target.value }))}
                     style={{
                       width: '100%',

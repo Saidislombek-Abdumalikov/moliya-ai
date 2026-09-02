@@ -205,15 +205,38 @@ export default function CalendarScreen({ onboarding }: Props) {
     customTransactions.forEach((t: any, idx: number) => {
       const cleanAmt = Number(String(t.amount).replace(/\s/g, '').replace(/,/g, '')) || 0
       const isNegative = cleanAmt < 0
-      const txDate = new Date(t.date || Date.now())
+      let d = t.day
+      let m = t.month
+      let y = t.year
+      if (!d || !m || !y) {
+        const now = new Date()
+        const str = String(t.date || '').trim()
+        if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+          const [yStr, mStr, dStr] = str.slice(0, 10).split('-')
+          y = parseInt(yStr, 10)
+          m = parseInt(mStr, 10)
+          d = parseInt(dStr, 10)
+        } else {
+          const parsed = new Date(str || Date.now())
+          if (!isNaN(parsed.getTime())) {
+            y = parsed.getFullYear()
+            m = parsed.getMonth() + 1
+            d = parsed.getDate()
+          } else {
+            y = now.getFullYear()
+            m = now.getMonth() + 1
+            d = now.getDate()
+          }
+        }
+      }
       list.push({
         id: t.id || `custom-${idx}`,
         name: t.note || t.category,
         category: t.category,
         amount: cleanAmt,
-        day: txDate.getDate(),
-        month: txDate.getMonth() + 1,
-        year: txDate.getFullYear(),
+        day: d,
+        month: m,
+        year: y,
         emoji: t.type === 'expense' ? '🛒' : t.type === 'income' ? '💼' : t.type === 'debt' ? '⟳' : '⟲',
         color: isNegative ? '#FEF2F2' : '#F0FDF4',
         dot: isNegative ? '#DC2626' : '#16A34A'

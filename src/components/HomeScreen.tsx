@@ -510,17 +510,34 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
   }
 
   const getGroupDate = (tx: typeof transactions[0]) => {
-    const bugunStr = lang === 'uz' ? 'Bugun' : lang === 'uz_cyrl' ? 'Бугун' : lang === 'ru' ? 'Сегодня' : 'Today';
-    if (tx.date) {
-      const d = new Date(tx.date)
-      const monthsUz = ['yanvar', 'fevral', 'mart', 'aprel', 'may', 'iyun', 'iyul', 'avgust', 'sentabr', 'oktabr', 'noyabr', 'dekabr']
-      const monthsUzCyrl = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь']
-      const monthsRu = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря']
-      const monthsEn = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-      const months = lang === 'uz_cyrl' ? monthsUzCyrl : lang === 'ru' ? monthsRu : lang === 'en' ? monthsEn : monthsUz;
-      return `${d.getDate()}-${months[d.getMonth()]}`
+    const monthsUz = ['yanvar', 'fevral', 'mart', 'aprel', 'may', 'iyun', 'iyul', 'avgust', 'sentabr', 'oktabr', 'noyabr', 'dekabr'];
+    const monthsUzCyrl = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
+    const monthsRu = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+    const monthsEn = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const months = lang === 'uz_cyrl' ? monthsUzCyrl : lang === 'ru' ? monthsRu : lang === 'en' ? monthsEn : monthsUz;
+
+    const txAny = tx as any;
+    if (txAny.day && txAny.month && txAny.month >= 1 && txAny.month <= 12) {
+      return `${txAny.day}-${months[txAny.month - 1]}`;
     }
-    return bugunStr
+
+    if (tx.date) {
+      const str = String(tx.date).trim();
+      if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+        const [_, mStr, dStr] = str.slice(0, 10).split('-');
+        const m = parseInt(mStr, 10);
+        const d = parseInt(dStr, 10);
+        if (!isNaN(d) && !isNaN(m) && m >= 1 && m <= 12) {
+          return `${d}-${months[m - 1]}`;
+        }
+      }
+      const d = new Date(str);
+      if (!isNaN(d.getTime())) {
+        return `${d.getDate()}-${months[d.getMonth()]}`;
+      }
+    }
+    const now = new Date();
+    return `${now.getDate()}-${months[now.getMonth()]}`;
   }
 
   const sortedPastTransactions = [...pastTransactions].sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())
@@ -2149,7 +2166,20 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                     </label>
                     <input
                       type="datetime-local"
-                      value={editTx.date ? new Date(new Date(editTx.date).getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''}
+                      value={(() => {
+                        const now = new Date();
+                        const pad = (n: number) => String(n).padStart(2, '0');
+                        const fallback = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+                        if (!editTx.date) return fallback;
+                        const str = String(editTx.date).trim();
+                        if (str.includes('T') && str.length >= 16) return str.slice(0, 16);
+                        if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return `${str}T12:00`;
+                        const d = new Date(str);
+                        if (!isNaN(d.getTime())) {
+                          return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+                        }
+                        return fallback;
+                      })()}
                       onChange={(e) => setEditTx({...editTx, date: e.target.value ? new Date(e.target.value).toISOString() : editTx.date})}
                       style={{
                         width: '100%', padding: '14px 16px',

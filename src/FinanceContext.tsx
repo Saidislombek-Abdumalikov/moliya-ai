@@ -24,6 +24,10 @@ export interface Transaction {
   note: string
   category: string
   date: string
+  day?: number
+  month?: number
+  year?: number
+  time?: string
   title?: string
   debtWho?: string
   messageId?: string | number
@@ -739,8 +743,43 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setSecurity(updatedSec);
   };
 
-  const addTransaction = async (tx: Omit<Transaction, 'id' | 'date'> & { id?: string | number; date?: string; messageId?: string | number }) => {
-    const localISOTime = (new Date(Date.now() - new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 16);
+  const addTransaction = async (tx: Omit<Transaction, 'id' | 'date'> & { id?: string | number; date?: string; messageId?: string | number; day?: number; month?: number; year?: number; time?: string }) => {
+    // Deterministic client date normalization: ensures real date, day, month, year, time
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    let finalDate = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    let finalDay = now.getDate();
+    let finalMonth = now.getMonth() + 1;
+    let finalYear = now.getFullYear();
+    let finalTime = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+
+    if (tx.date && typeof tx.date === 'string' && tx.date.trim()) {
+      const str = tx.date.trim();
+      if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+        const [yStr, mStr, dStr] = str.slice(0, 10).split('-');
+        const y = parseInt(yStr, 10);
+        const m = parseInt(mStr, 10);
+        const d = parseInt(dStr, 10);
+        if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
+          finalDate = `${y}-${pad(m)}-${pad(d)}`;
+          finalDay = d;
+          finalMonth = m;
+          finalYear = y;
+          const timeMatch = str.match(/T(\d{2}:\d{2})/);
+          if (timeMatch) finalTime = timeMatch[1];
+        }
+      } else {
+        const parsed = new Date(str);
+        if (!isNaN(parsed.getTime())) {
+          finalDate = `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`;
+          finalDay = parsed.getDate();
+          finalMonth = parsed.getMonth() + 1;
+          finalYear = parsed.getFullYear();
+          finalTime = `${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
+        }
+      }
+    }
+
     const newTx: Transaction = {
       id: tx.id ? String(tx.id) : (Date.now().toString() + Math.random().toString(36).substring(2, 6)),
       type: tx.type,
@@ -751,22 +790,34 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       debtWho: tx.debtWho,
       messageId: tx.messageId,
       cardId: tx.cardId || 'cash',
-      date: tx.date || localISOTime
+      date: finalDate,
+      day: tx.day || finalDay,
+      month: tx.month || finalMonth,
+      year: tx.year || finalYear,
+      time: tx.time || finalTime
     };
 
     setCustomTransactions(prev => {
-      const updated = [newTx, ...prev];
+      const updated = [newTx, ...prev.filter(t => String(t.id) !== String(newTx.id))];
       localStorage.setItem('user_transactions_v1', JSON.stringify(updated));
       window.dispatchEvent(new Event('user_transactions_updated'));
-  
-      if (userId) {
-        supabase.from('users').update({
-          transactions: updated,
-          updated_at: new Date().toISOString()
-        }).eq('id', userId);
-      }
       return updated;
     });
+
+    if (userId) {
+      try {
+        const { data: dbUser } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
+        const existingTxs = Array.isArray(dbUser?.transactions) ? dbUser.transactions : [];
+        const mergedTxs = [newTx, ...existingTxs.filter((t: any) => String(t.id) !== String(newTx.id))];
+        // TARGETED UPDATE: update ONLY transactions column!
+        await supabase.from('users').update({
+          transactions: mergedTxs,
+          updated_at: new Date().toISOString()
+        }).eq('id', userId);
+      } catch (err) {
+        console.error('[FINANCE] Error syncing transaction with Supabase:', err);
+      }
+    }
   };
 
   const deleteTransaction = async (id: string | number) => {
@@ -775,19 +826,32 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setDeletedTxIds(updatedDeleted);
     localStorage.setItem('user_deleted_tx_ids_v1', JSON.stringify(updatedDeleted));
 
+    // 1. Optimistic UI update
     setCustomTransactions(prev => {
       const updatedTxs = prev.filter(t => String(t.id) !== idStr);
       localStorage.setItem('user_transactions_v1', JSON.stringify(updatedTxs));
       window.dispatchEvent(new Event('user_transactions_updated'));
-  
-      if (userId) {
-        supabase.from('users').update({
+      return updatedTxs;
+    });
+
+    // 2. Authoritative Supabase deletion with TARGETED UPDATE
+    // Fetch latest transactions from DB, remove ONLY the target ID, and write back ONLY transactions
+    if (userId) {
+      try {
+        const { data: dbUser } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
+        const authoritativeTxs = Array.isArray(dbUser?.transactions) ? dbUser.transactions : customTransactions;
+        const updatedTxs = authoritativeTxs.filter((t: any) => String(t.id) !== idStr);
+
+        // TARGETED UPDATE: ONLY touches transactions and updated_at
+        // User profile, phone, telegram, onboarding, cards, premium, ai_limit are 100% PRESERVED
+        await supabase.from('users').update({
           transactions: updatedTxs,
           updated_at: new Date().toISOString()
         }).eq('id', userId);
+      } catch (err) {
+        console.error('[FINANCE] Error deleting transaction from Supabase:', err);
       }
-      return updatedTxs;
-    });
+    }
   };
 
   const clearAllData = async () => {
