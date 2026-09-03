@@ -43,7 +43,7 @@ const translations = {
         lang: 'Til',
         langSub: "O'zbek",
         export: 'Hisobot eksport',
-        exportSub: 'PDF, Excel',
+        exportSub: 'Excel',
         help: 'Yordam',
         helpSub: '24/7 tezkor xizmat',
         clearData: 'Ma\'lumotlarimni tozalash',
@@ -155,7 +155,7 @@ const translations = {
         lang: 'Тил',
         langSub: "Ўзбек",
         export: 'Ҳисобот экспорт',
-        exportSub: 'PDF, Excel',
+        exportSub: 'Excel',
         help: 'Ёрдам',
         helpSub: '24/7 тезкор хизмат',
         clearData: 'Маълумотларимни тозалаш',
@@ -267,7 +267,7 @@ const translations = {
         lang: 'Язык',
         langSub: 'Русский',
         export: 'Экспорт отчетов',
-        exportSub: 'PDF, Excel',
+        exportSub: 'Excel',
         help: 'Помощь',
         helpSub: 'Поддержка 24/7',
         clearData: 'Очистить мои данные',
@@ -379,7 +379,7 @@ const translations = {
         lang: 'Language',
         langSub: 'English',
         export: 'Export report',
-        exportSub: 'PDF, Excel',
+        exportSub: 'Excel',
         help: 'Help',
         helpSub: '24/7 live support',
         clearData: 'Clear My Data',
@@ -497,6 +497,12 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
   const [editPhone, setEditPhone] = useState(userPhone)
   const [editTelegram, setEditTelegram] = useState(userTelegram)
 
+  useEffect(() => {
+    if (userName && userName !== 'Moliya Foydalanuvchisi') setEditName(userName)
+    if (userPhone) setEditPhone(userPhone)
+    if (userTelegram) setEditTelegram(userTelegram)
+  }, [userName, userPhone, userTelegram])
+
   const { cards: rawCards, saveCards, clearAllData, clearOnlyFinancialData, customTransactions, addTransaction } = useFinance()
   const cards = Array.isArray(rawCards) ? rawCards : []
 
@@ -529,8 +535,8 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
   // Notifications states
   const [notifOpts, setNotifOpts] = useState<any>(() => onboarding?.notifications || { opt1: true, opt2: true, opt3: false })
 
-  // Export states
-  const [exportFormat, setExportFormat] = useState<'PDF' | 'Excel' | 'CSV'>('PDF')
+  // Export states (PDF disabled for now, Excel active)
+  const [_exportFormat, setExportFormat] = useState<'Excel'>('Excel')
   const [exportPeriod, setExportPeriod] = useState<'current' | 'last' | 'quarter'>('current')
   const [exportProgress, setExportProgress] = useState<number | null>(null)
 
@@ -672,7 +678,18 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
     }
   }
 
-  // Handle report export with real file download
+  // Helper to escape CSV values safely for Excel
+  const formatCsvField = (val: any): string => {
+    if (val === null || val === undefined) return ''
+    const str = String(val)
+    if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+      return `"${str.replace(/"/g, '""')}"`
+    }
+    return str
+  }
+
+  // Handle report export with real file download in exact required Excel column order:
+  // 1. Sana | 2. Turi | 3. Kategoriya | 4. Summa | 5. Tavsif | 6. Karta
   const handleExportStart = () => {
     setExportProgress(10)
     const interval = setInterval(() => {
@@ -701,90 +718,74 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                 filteredTxs = filteredTxs.filter(t => new Date(t.date || Date.now()) >= threeM)
               }
 
-              if (exportFormat === 'PDF') {
-                const printWin = window.open('', '_blank')
-                if (printWin) {
-                  printWin.document.write(`
-                    <!DOCTYPE html>
-                    <html>
-                    <head>
-                      <meta charset="utf-8">
-                      <title>Moliya Financial Report - ${userName}</title>
-                      <style>
-                        body { font-family: system-ui, -apple-system, sans-serif; padding: 30px; color: #1E1A3C; max-width: 800px; margin: 0 auto; }
-                        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #7C3AED; padding-bottom: 16px; margin-bottom: 24px; }
-                        h1 { color: #7C3AED; margin: 0; font-size: 24px; }
-                        .meta { font-size: 13px; color: #5C548A; margin-bottom: 20px; line-height: 1.6; }
-                        table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 14px; }
-                        th, td { border: 1px solid #E4E2F0; padding: 12px; text-align: left; }
-                        th { background: #F5F3FF; color: #7C3AED; font-weight: 700; }
-                        tr:nth-child(even) { background: #FAF9FD; }
-                        .type-income { color: #16A34A; font-weight: 600; }
-                        .type-expense { color: #DC2626; font-weight: 600; }
-                      </style>
-                    </head>
-                    <body>
-                      <div class="header">
-                        <h1>Moliya Financial Report</h1>
-                        <span>${now.toLocaleDateString()}</span>
-                      </div>
-                      <div class="meta">
-                        <strong>Foydalanuvchi:</strong> ${userName} (${userPhone})<br>
-                        <strong>Hisobot davri:</strong> ${exportPeriod === 'current' ? 'Shu oy' : exportPeriod === 'last' ? 'O\'tgan oy' : '3 oy'}<br>
-                        <strong>Jami tranzaksiyalar:</strong> ${filteredTxs.length} ta
-                      </div>
-                      <table>
-                        <thead>
-                          <tr>
-                            <th>Sana</th>
-                            <th>Turi</th>
-                            <th>Kategoriya</th>
-                            <th>Summa</th>
-                            <th>Izoh</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          ${filteredTxs.map(t => {
-                            const numAmt = Number(String(t.amount).replace(/\s/g, '').replace(/,/g, '')) || 0
-                            const isInc = numAmt > 0
-                            return `
-                              <tr>
-                                <td>${new Date(t.date || Date.now()).toLocaleDateString()}</td>
-                                <td class="${isInc ? 'type-income' : 'type-expense'}">${isInc ? 'Daromad' : 'Xarajat'}</td>
-                                <td>${t.category}</td>
-                                <td class="${isInc ? 'type-income' : 'type-expense'}">${Math.abs(numAmt).toLocaleString('uz-UZ')} so'm</td>
-                                <td>${(t.note || '').replace(/</g, '&lt;')}</td>
-                              </tr>
-                            `
-                          }).join('')}
-                        </tbody>
-                      </table>
-                      <script>
-                        window.onload = function() { window.print(); }
-                      </script>
-                    </body>
-                    </html>
-                  `)
-                  printWin.document.close()
+              // Sort newest first
+              filteredTxs.sort((a, b) => new Date(b.date || Date.now()).getTime() - new Date(a.date || Date.now()).getTime())
+
+              // UTF-8 BOM for seamless Excel compatibility
+              const BOM = '\uFEFF'
+              const headers = "Sana,Turi,Kategoriya,Summa,Tavsif,Karta\n"
+
+              const rows = filteredTxs.map(t => {
+                // 1. Sana (Date) -> YYYY-MM-DD
+                let dateStr = ''
+                if (t.date) {
+                  const d = new Date(t.date)
+                  if (!isNaN(d.getTime())) {
+                    dateStr = d.toISOString().slice(0, 10)
+                  }
                 }
-              } else {
-                // UTF-8 BOM for Excel compatibility
-                const BOM = '\uFEFF'
-                const headers = "ID;Sana (Date);Turi (Type);Kategoriya (Category);Summa (Amount);Izoh (Note)\n"
-                const rows = filteredTxs.map(t => 
-                  `"${t.id}";"${t.date ? new Date(t.date).toLocaleDateString() : ''}";"${t.type}";"${t.category}";"${t.amount}";"${(t.note || '').replace(/"/g, '""')}"`
-                ).join("\n")
-                const content = BOM + headers + rows
-                const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' })
-                const url = URL.createObjectURL(blob)
-                const link = document.createElement("a")
-                link.href = url
-                link.download = `Moliya_Report_${exportPeriod}_${now.toISOString().slice(0, 10)}.csv`
-                document.body.appendChild(link)
-                link.click()
-                document.body.removeChild(link)
-                URL.revokeObjectURL(url)
-              }
+                if (!dateStr && t.year && t.month && t.day) {
+                  dateStr = `${t.year}-${String(t.month).padStart(2, '0')}-${String(t.day).padStart(2, '0')}`
+                }
+                if (!dateStr) {
+                  dateStr = now.toISOString().slice(0, 10)
+                }
+
+                // 2. Turi (Type) -> Kirim / Chiqim
+                const rawAmount = Number(String(t.amount).replace(/\s/g, '').replace(/,/g, '')) || 0
+                const isIncome = t.type === 'income' || (t.type !== 'expense' && rawAmount > 0)
+                const typeStr = isIncome ? 'Kirim' : 'Chiqim'
+
+                // 3. Kategoriya (Category)
+                const categoryStr = t.category || (isIncome ? 'Daromad' : 'Boshqa')
+
+                // 4. Summa (Amount) -> Pure numeric format for Excel
+                const amountVal = Math.abs(rawAmount)
+
+                // 5. Tavsif (Description / Note)
+                const noteStr = t.note || (t as any).description || ''
+
+                // 6. Karta (Card / Payment Source)
+                let cardStr = 'Asosiy'
+                if (t.cardId && Array.isArray(cards)) {
+                  const matchedCard = cards.find(c => String(c.id) === String(t.cardId))
+                  if (matchedCard) {
+                    cardStr = matchedCard.name || matchedCard.bank || 'Karta'
+                  }
+                } else if ((t as any).card) {
+                  cardStr = (t as any).card
+                }
+
+                return [
+                  formatCsvField(dateStr),
+                  formatCsvField(typeStr),
+                  formatCsvField(categoryStr),
+                  amountVal,
+                  formatCsvField(noteStr),
+                  formatCsvField(cardStr)
+                ].join(',')
+              }).join('\n')
+
+              const content = BOM + headers + rows
+              const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' })
+              const url = URL.createObjectURL(blob)
+              const link = document.createElement("a")
+              link.href = url
+              link.download = `Moliya_Tranzaksiyalar_${exportPeriod}_${now.toISOString().slice(0, 10)}.csv`
+              document.body.appendChild(link)
+              link.click()
+              document.body.removeChild(link)
+              URL.revokeObjectURL(url)
             } catch (err) {
               console.error('Export error:', err)
             }
@@ -2400,23 +2401,19 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                       {t.exportModal.formatLabel}
                     </label>
                     <div style={{ display: 'flex', gap: 8 }}>
-                      {['PDF', 'Excel', 'CSV'].map((f) => (
-                        <button
-                          id={`btn_export_format_${f}`}
-                          key={f}
-                          type="button"
-                          onClick={() => setExportFormat(f as any)}
-                          style={{
-                            flex: 1, padding: '10px', borderRadius: 10, border: '1.5px solid',
-                            borderColor: exportFormat === f ? '#7C3AED' : '#E4E1F4',
-                            background: exportFormat === f ? '#F5F3FF' : '#FFFFFF',
-                            color: exportFormat === f ? '#7C3AED' : '#5C548A',
-                            fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit'
-                          }}
-                        >
-                          {f}
-                        </button>
-                      ))}
+                      <button
+                        id="btn_export_format_Excel"
+                        type="button"
+                        onClick={() => setExportFormat('Excel')}
+                        style={{
+                          flex: 1, padding: '10px 14px', borderRadius: 10, border: '1.5px solid #7C3AED',
+                          background: '#F5F3FF', color: '#7C3AED',
+                          fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
+                        }}
+                      >
+                        <span>📊</span> Excel (.csv)
+                      </button>
                     </div>
                   </div>
 

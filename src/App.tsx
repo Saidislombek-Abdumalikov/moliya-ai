@@ -125,7 +125,7 @@ export default function App() {
   }
 
   // 2. Block normal browsers outside Telegram — require entering through Telegram
-  if (!isTelegramMiniApp() && !userId) {
+  if (!isTelegramMiniApp()) {
     return (
       <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#FAF8FE] text-[#1E1A3C] p-6 text-center select-none font-sans">
         <div className="w-20 h-20 mb-6 rounded-3xl bg-[#EDE9FE] border border-[#DDD6FE] flex items-center justify-center text-4xl shadow-xl shadow-purple-500/10">

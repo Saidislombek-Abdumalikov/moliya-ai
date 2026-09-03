@@ -25,7 +25,15 @@ export async function checkAiQuota(
   userId: string | undefined
 ): Promise<QuotaCheckResult> {
   if (!userId) {
-    return { allowed: true, isPremium: false, isTrial: false, limit: 5, usedCount: 0, remaining: 5 };
+    return {
+      allowed: false,
+      isPremium: false,
+      isTrial: false,
+      limit: 20,
+      usedCount: 0,
+      remaining: 0,
+      message: "Foydalanuvchi hisobi aniqlanmadi. Iltimos, tizimga qayta kiring."
+    };
   }
 
   try {
@@ -41,7 +49,7 @@ export async function checkAiQuota(
         allowed: false,
         isPremium: false,
         isTrial: false,
-        limit: 5,
+        limit: 20,
         usedCount: 0,
         message: "Ma'lumotlar bazasiga ulanishda xatolik. Iltimos, qayta urinib ko'ring."
       };
@@ -101,7 +109,7 @@ export async function checkAiQuota(
             .from('users')
             .update({
               is_premium: false,
-              ai_limit: 5,
+              ai_limit: 20,
               updated_at: new Date().toISOString()
             })
             .eq('id', userId)
@@ -128,7 +136,7 @@ export async function checkAiQuota(
     // 4. Effective AI Limit:
     // VIP or Active Trial -> Unlimited (null)
     // Custom limit override -> suUser.ai_limit (if > 0)
-    // Free Tier -> 5 AI operations per day
+    // Free Tier -> 20 AI operations per day
     let effectiveLimit: number | null = null;
     if (isPremium) {
       effectiveLimit = null; // Unlimited for VIP / 1-day Trial
@@ -137,7 +145,7 @@ export async function checkAiQuota(
     } else if (suUser?.ai_limit !== undefined && suUser?.ai_limit !== null && suUser.ai_limit > 0) {
       effectiveLimit = suUser.ai_limit;
     } else {
-      effectiveLimit = 5; // Standard Free tier limit = 5 ops/day
+      effectiveLimit = 20; // Standard Free tier limit = 20 ops/day
     }
 
     // 5. Quota Evaluation
@@ -153,8 +161,8 @@ export async function checkAiQuota(
         usedCount,
         remaining: 0,
         message: isTrial
-          ? "1 kunlik cheksiz Premium sinov muddatingiz tugadi. Bepul tarifda kuniga 5 ta AI so'rovi mavjud."
-          : `Kunlik bepul AI limitingiz (${effectiveLimit || 5} ta) tugadi. Ertaga yangilanadi yoki cheksiz AI uchun VIP oling!`
+          ? "1 kunlik cheksiz Premium sinov muddatingiz tugadi. Xarajatlarni qo'lda kiritish mutlaqo bepul va cheksiz!"
+          : `Kunlik bepul AI limitingiz (${effectiveLimit || 20} ta) tugadi. Xarajatlarni ilovada qo'lda kiritish mutlaqo bepul va cheksiz! Cheksiz AI tahlil uchun VIP oling.`
       };
     }
 
@@ -172,7 +180,7 @@ export async function checkAiQuota(
       allowed: false,
       isPremium: false,
       isTrial: false,
-      limit: 5,
+      limit: 20,
       usedCount: 0,
       message: "Tizimda xatolik yuz berdi. Iltimos, qayta urinib ko'ring."
     };

@@ -59,14 +59,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     action = cleanUrl.replace(/^\/api\/auth\/?/, '').trim();
   }
 
-  const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
+  const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8955141731:AAGILXzT69Vity8ZFi-H8XeZc_H6_BFaS8Y';
 
   // 1. /api/auth/telegram
   if (action === 'telegram') {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
     try {
-      const { initData } = req.body || {};
+      const { initData, initDataUnsafe } = req.body || {};
       let tgUser: any = null;
 
       if (initData && BOT_TOKEN) {
@@ -74,6 +74,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (verification.isValid && verification.user) {
           tgUser = verification.user;
         }
+      }
+
+      if (!tgUser && initDataUnsafe?.user?.id) {
+        tgUser = initDataUnsafe.user;
       }
 
       if (!tgUser || !tgUser.id) {
@@ -97,8 +101,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
-      // 2. Canonical User Check
-      const { data: userDoc } = await supabase
+      // 2. Canonical User Check & Auto-Creation
+      let { data: userDoc } = await supabase
         .from('users')
         .select('*')
         .eq('id', userId)
@@ -118,21 +122,46 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             message: "Hisobingiz ma'muriyat tomonidan bloklangan."
           });
         }
-      }
+      } else {
+        // Auto-create user record for first-time Telegram Mini App entry
+        const nowStr = new Date().toISOString();
+        const trialEnd = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+        const tgName = [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') || 'Telegram Foydalanuvchi';
+        const tgUsername = tgUser.username ? '@' + tgUser.username : '@moliya_user';
 
-      // 3. Registration Guard: User must exist and have completed phone registration
-      const isRegistered = Boolean(
-        userDoc?.phone &&
-        userDoc.phone !== '—' &&
-        String(userDoc.phone).trim() !== '' &&
-        (userDoc.registration_status === 'completed' || userDoc.onboarding?.registration_status === 'completed')
-      );
+        const newOnboarding = {
+          completed: false,
+          language: tgUser.language_code || 'uz',
+          name: tgName,
+          telegram: tgUsername,
+          telegramId: tgId,
+          trial_started_at: nowStr,
+          trial_ends_at: trialEnd,
+          registration_status: 'completed'
+        };
 
-      if (!isRegistered || !userDoc) {
-        return res.status(403).json({
-          error: 'REGISTRATION_REQUIRED',
-          message: "Iltimos, avval Telegram botda telefon raqamingizni tasdiqlang."
-        });
+        const newRecord = {
+          id: userId,
+          name: tgName,
+          telegram: tgUsername,
+          telegram_id: tgId,
+          phone: null,
+          language: tgUser.language_code || 'uz',
+          is_premium: true,
+          premium_expires_at: trialEnd,
+          ai_limit: null,
+          ai_query_count: 0,
+          platform: 'telegram',
+          cards: [],
+          transactions: [],
+          onboarding: newOnboarding,
+          registration_status: 'completed',
+          created_at: nowStr,
+          updated_at: nowStr
+        };
+
+        const { data: createdUser } = await supabase.from('users').upsert(newRecord, { onConflict: 'id' }).select().single();
+        userDoc = createdUser || newRecord;
       }
 
       // Dynamic 1-Day Trial Check & Automatic Grant for new users

@@ -66,22 +66,31 @@ export async function getCandidateAiKeys(): Promise<AiKeyRecord[]> {
           const notInvalid = k.health_status !== 'invalid' && k.status !== 'invalid';
           return isActive && notInvalid;
         })
-        .map((k: any) => ({
-          id: k.id,
-          name: k.name || 'AI Key',
-          provider: (k.provider === 'gemini' ? 'google' : (k.provider || 'google')) as any,
-          api_key: k.api_key,
-          model: k.model || 'gemini-3.5-flash',
-          priority: k.priority || 1,
-          status: 'active' as any,
-          total_requests: k.total_requests || 0,
-          today_requests: k.today_requests || 0,
-          success_requests: k.success_requests || k.total_requests || 0,
-          failed_requests: k.failed_requests || 0,
-          last_used_at: k.last_used_at,
-          created_at: k.created_at,
-          updated_at: k.updated_at
-        }));
+        .map((k: any) => {
+          const lastUsed = k.last_used_at ? new Date(k.last_used_at) : null;
+          const now = new Date();
+          const isSameDay = lastUsed &&
+            lastUsed.getUTCFullYear() === now.getUTCFullYear() &&
+            lastUsed.getUTCMonth() === now.getUTCMonth() &&
+            lastUsed.getUTCDate() === now.getUTCDate();
+
+          return {
+            id: k.id,
+            name: k.name || 'AI Key',
+            provider: (k.provider === 'gemini' ? 'google' : (k.provider || 'google')) as any,
+            api_key: k.api_key,
+            model: k.model || 'gemini-3.6-flash',
+            priority: k.priority || 1,
+            status: 'active' as any,
+            total_requests: k.total_requests || 0,
+            today_requests: isSameDay ? (k.today_requests || 0) : 0,
+            success_requests: k.success_requests || k.total_requests || 0,
+            failed_requests: k.failed_requests || 0,
+            last_used_at: k.last_used_at,
+            created_at: k.created_at,
+            updated_at: k.updated_at
+          };
+        });
     }
   } catch (err) {
     console.warn('[AI_ROUTER] Supabase ai_keys query notice:', err);
@@ -102,7 +111,7 @@ export async function getCandidateAiKeys(): Promise<AiKeyRecord[]> {
         name: 'Default Environment Key',
         provider: 'google',
         api_key: envKey,
-        model: 'gemini-3.5-flash',
+        model: 'gemini-3.6-flash',
         priority: 1,
         status: 'active',
         total_requests: 0,
@@ -125,7 +134,8 @@ export async function recordKeyResult(
   errorMessage?: string,
   errorType?: 'rate_limited' | 'exhausted' | 'invalid' | 'temporary'
 ) {
-  const nowIso = new Date().toISOString();
+  const now = new Date();
+  const nowIso = now.toISOString();
 
   // 1. Update in-memory
   const memKey = inMemoryKeys.find(k => k.id === keyId);
@@ -150,9 +160,17 @@ export async function recordKeyResult(
   try {
     const { data: current } = await supabase.from('ai_keys').select('*').eq('id', keyId).maybeSingle();
     if (current) {
+      const lastUsed = current.last_used_at ? new Date(current.last_used_at) : null;
+      const isSameDay = lastUsed &&
+        lastUsed.getUTCFullYear() === now.getUTCFullYear() &&
+        lastUsed.getUTCMonth() === now.getUTCMonth() &&
+        lastUsed.getUTCDate() === now.getUTCDate();
+
+      const nextTodayRequests = isSameDay ? (current.today_requests || 0) + 1 : 1;
+
       const updatePayload: any = {
         total_requests: (current.total_requests || 0) + 1,
-        today_requests: (current.today_requests || 0) + 1,
+        today_requests: nextTodayRequests,
         last_used_at: nowIso,
         updated_at: nowIso
       };
@@ -181,9 +199,9 @@ export async function recordKeyResult(
  */
 async function callGoogleGenAi(key: AiKeyRecord, prompt: string): Promise<any> {
   const cleanKey = (key.api_key || '').trim();
-  const primaryModel = (key.model || 'gemini-3.5-flash').trim();
-  const candidateModels = ['gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest'];
-  const models = [primaryModel, ...candidateModels.filter(m => m !== primaryModel)];
+  const primaryModel = (key.model || 'gemini-flash-latest').trim();
+  const candidateModels = [primaryModel, 'gemini-flash-latest', 'gemini-3.1-flash-lite', 'gemini-3.7-flash', 'gemini-3.6-flash'];
+  const models = [...new Set(candidateModels)];
 
   let lastError: any = null;
   const ai = new GoogleGenAI({ apiKey: cleanKey });
@@ -194,6 +212,7 @@ async function callGoogleGenAi(key: AiKeyRecord, prompt: string): Promise<any> {
         model: modelName,
         contents: prompt,
         config: {
+          temperature: 0.1,
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
@@ -358,11 +377,15 @@ export async function testSpecificAiKey(keyData: {
 
   try {
     if (keyData.provider === 'google') {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${keyData.model || 'gemini-2.5-flash'}:generateContent?key=${cleanKey}`;
+      const targetModel = keyData.model || 'gemini-3.6-flash';
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${cleanKey}`;
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ text: 'Ping' }] }] })
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: '1' }] }],
+          generationConfig: { maxOutputTokens: 1, temperature: 0 }
+        })
       });
       const latency = Date.now() - start;
       if (res.status === 200) {

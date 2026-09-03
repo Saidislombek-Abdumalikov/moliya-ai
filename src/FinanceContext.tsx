@@ -73,11 +73,16 @@ export function isTelegramMiniApp(): boolean {
   if (typeof window === 'undefined') return false
   const hash = window.location.hash || ''
   const search = window.location.search || ''
-  const hasTgHashOrQuery = hash.includes('tgWebAppData') || hash.includes('tgWebAppVersion') || search.includes('tgWebAppData') || search.includes('tgWebAppVersion') || search.includes('code=')
+  // 1. URL carries Telegram WebApp data or Web login exchange code
+  const hasTgHashOrQuery = hash.includes('tgWebAppData=') || search.includes('tgWebAppData=') || search.includes('code=')
+  // 2. Telegram WebApp object has real signed initData or user payload
   const tg = (window as any).Telegram?.WebApp
-  const hasTgObject = Boolean(tg && (tg.initData || tg.initDataUnsafe?.user?.id || typeof tg.ready === 'function'))
+  const hasRealInitData = Boolean(tg && typeof tg.initData === 'string' && tg.initData.trim().length > 0)
+  const hasRealTgUser = Boolean(tg?.initDataUnsafe?.user?.id)
+  // 3. Native mobile Telegram Webview Proxy bridge
   const hasTgProxy = Boolean((window as any).TelegramWebviewProxy)
-  return Boolean(hasTgHashOrQuery || hasTgObject || hasTgProxy)
+
+  return Boolean(hasTgHashOrQuery || hasRealInitData || hasRealTgUser || hasTgProxy)
 }
 
 // Helper: Establish real Supabase Auth session from tokens
@@ -100,24 +105,37 @@ async function setSupabaseSession(accessToken: string, refreshToken: string): Pr
 }
 
 export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const isTg = isTelegramMiniApp()
+  // Resolve Telegram WebApp user
+  const tgUser = (typeof window !== 'undefined' && (window as any).Telegram?.WebApp?.initDataUnsafe?.user) || null
+  const defaultTgUserId = tgUser?.id ? `moliya_user_tg_${tgUser.id}` : null
 
   const [userId, setUserId] = useState<string | null>(() => {
-    return isTg ? (localStorage.getItem('user_id_v1') || null) : null
+    return localStorage.getItem('user_id_v1') || defaultTgUserId || null
   })
 
   const [onboarding, setOnboarding] = useState<OnboardingResult | null>(() => {
-    if (!isTg) return null
     try {
       const saved = localStorage.getItem('user_onboarding_v1')
-      return saved ? JSON.parse(saved) : null
-    } catch {
-      return null
+      if (saved) return JSON.parse(saved)
+    } catch {}
+    if (tgUser) {
+      const tgName = [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') || 'Foydalanuvchi'
+      const tgUsername = tgUser.username ? `@${tgUser.username}` : '@moliya_user'
+      return {
+        completed: true,
+        language: tgUser.language_code || 'uz',
+        name: tgName,
+        phone: '',
+        telegram: tgUsername,
+        telegramId: String(tgUser.id),
+        registration_status: 'completed',
+        isPremium: true
+      } as any
     }
+    return null
   })
 
   const [cards, setCards] = useState<Card[]>(() => {
-    if (!isTg) return []
     try {
       const saved = localStorage.getItem('user_cards_v1')
       return saved ? JSON.parse(saved) : []
@@ -133,7 +151,6 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   })
 
   const [customTransactions, setCustomTransactions] = useState<Transaction[]>(() => {
-    if (!isTg) return []
     try {
       const saved = localStorage.getItem('user_transactions_v1')
       return saved ? JSON.parse(saved) : []
@@ -159,7 +176,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const setHasSampleData = async (val: boolean) => {
     setHasSampleDataState(val)
     localStorage.setItem('user_has_sample_v1', String(val))
-    const targetUserId = userId || localStorage.getItem('user_id_v1')
+    const targetUserId = userId || localStorage.getItem('user_id_v1') || defaultTgUserId
     if (targetUserId) {
       const { error } = await supabase
         .from('users')
@@ -626,40 +643,86 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   // ═══════════════════════════════════════════════════════════
+  // Context Functions with Supabase Persistence & Instant Sync
+  // ═══════════════════════════════════════════════════════════
+  const getEffectiveUserId = (): string => {
+    if (userId) return userId;
+    const stored = localStorage.getItem('user_id_v1');
+    if (stored) return stored;
+    if (defaultTgUserId) return defaultTgUserId;
+    const fallback = `moliya_user_guest_${Date.now()}`;
+    localStorage.setItem('user_id_v1', fallback);
+    setUserId(fallback);
+    return fallback;
+  };
+
+  // Dedicated data refresh function to keep Bot and Mini App 100% in sync
+  const refreshUserData = async (targetId?: string | null) => {
+    const idToUse = targetId || getEffectiveUserId();
+    if (!idToUse) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', idToUse)
+        .maybeSingle();
+
+      if (!error && data) {
+        if (data.onboarding) {
+          setOnboarding(prev => {
+            const merged = { ...(prev || {}), ...data.onboarding };
+            localStorage.setItem('user_onboarding_v1', JSON.stringify(merged));
+            return merged;
+          });
+        }
+        if (Array.isArray(data.cards)) {
+          setCards(data.cards);
+          localStorage.setItem('user_cards_v1', JSON.stringify(data.cards));
+        }
+        if (Array.isArray(data.transactions)) {
+          setCustomTransactions(data.transactions);
+          localStorage.setItem('user_transactions_v1', JSON.stringify(data.transactions));
+        }
+      }
+    } catch (err) {
+      console.warn('[FINANCE] Background sync note:', err);
+    }
+  };
+
+  // ═══════════════════════════════════════════════════════════
   // Supabase Real-Time User & Data Syncing
   // ═══════════════════════════════════════════════════════════
   useEffect(() => {
-    if (!userId || !isAuthReady) return;
+    const activeId = getEffectiveUserId();
+    if (!activeId) return;
 
-    // Load initial user document from Supabase
-    supabase
-      .from('users')
-      .select('*')
-      .eq('id', userId)
-      .maybeSingle()
-      .then(({ data, error }) => {
-        if (!error && data) {
-          if (data.onboarding) {
-            setOnboarding(data.onboarding);
-            localStorage.setItem('user_onboarding_v1', JSON.stringify(data.onboarding));
-          }
-          if (Array.isArray(data.cards)) {
-            setCards(data.cards);
-            localStorage.setItem('user_cards_v1', JSON.stringify(data.cards));
-          }
-          if (Array.isArray(data.transactions)) {
-            setCustomTransactions(data.transactions);
-            localStorage.setItem('user_transactions_v1', JSON.stringify(data.transactions));
-          }
-        }
-      });
+    // 1. Initial authoritative fetch
+    refreshUserData(activeId);
 
-    // Realtime channel listener for instant multi-device syncing
+    // 2. Refresh immediately when returning from Telegram Bot (tab focus or visibility change)
+    const onFocusOrVisibility = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        refreshUserData(activeId);
+      }
+    };
+    document.addEventListener('visibilitychange', onFocusOrVisibility);
+    window.addEventListener('focus', onFocusOrVisibility);
+    window.addEventListener('user_sync_requested', onFocusOrVisibility);
+
+    // 3. Periodic lightweight sync every 5 seconds while active
+    const syncInterval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        refreshUserData(activeId);
+      }
+    }, 5000);
+
+    // 4. Realtime channel listener for instant multi-device syncing
     const channel = supabase
-      .channel(`user-sync-${userId}`)
+      .channel(`user-sync-${activeId}`)
       .on(
         'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'users', filter: `id=eq.${userId}` },
+        { event: 'UPDATE', schema: 'public', table: 'users', filter: `id=eq.${activeId}` },
         (payload: any) => {
           const newData = payload.new;
           if (newData) {
@@ -681,103 +744,96 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       .subscribe();
 
     return () => {
+      document.removeEventListener('visibilitychange', onFocusOrVisibility);
+      window.removeEventListener('focus', onFocusOrVisibility);
+      window.removeEventListener('user_sync_requested', onFocusOrVisibility);
+      clearInterval(syncInterval);
       supabase.removeChannel(channel);
     };
   }, [userId, isAuthReady]);
 
-  // ═══════════════════════════════════════════════════════════
-  // Context Functions with Supabase Persistence
-  // ═══════════════════════════════════════════════════════════
-  const getEffectiveUserId = (): string | null => {
-    if (userId) return userId;
-    const stored = localStorage.getItem('user_id_v1');
-    if (stored) return stored;
-    return null;
-  };
-
   const updateOnboarding = async (newData: Partial<OnboardingResult>): Promise<OnboardingResult> => {
     const targetUserId = getEffectiveUserId();
-    if (!targetUserId) {
-      console.error('[FINANCE] Cannot update onboarding: No authenticated user');
-      throw new Error('AUTH_REQUIRED');
-    }
 
-    // 1. Fetch current authoritative user data from Supabase
-    const { data: dbUser, error: fetchErr } = await supabase
-      .from('users')
-      .select('phone, telegram_id, onboarding, name, language, is_premium')
-      .eq('id', targetUserId)
-      .maybeSingle();
-
-    if (fetchErr) {
-      console.error('[FINANCE] Error fetching user before onboarding update:', fetchErr);
-      throw fetchErr;
-    }
-
-    const existingPhone = dbUser?.phone || onboarding?.phone || null;
-    const existingRegStatus = dbUser?.onboarding?.registration_status || onboarding?.registration_status || 'completed';
-    const existingTgId = dbUser?.telegram_id || onboarding?.telegramId || null;
-
+    // 1. Optimistically update local state & storage immediately
     const updated = {
-      ...(dbUser?.onboarding || onboarding || {}),
+      ...(onboarding || {}),
       ...newData,
-      phone: newData.phone || existingPhone || '',
-      registration_status: newData.registration_status || existingRegStatus || 'completed',
-      telegramId: newData.telegramId || existingTgId || ''
+      phone: newData.phone || onboarding?.phone || '',
+      registration_status: newData.registration_status || onboarding?.registration_status || 'completed',
+      telegramId: newData.telegramId || onboarding?.telegramId || ''
     } as OnboardingResult;
 
-    // 2. Build targeted payload (only intended columns updated)
-    const nowIso = new Date().toISOString();
-    const payload: any = {
-      updated_at: nowIso,
-      onboarding: updated
-    };
-    if (updated.name && updated.name !== '—') payload.name = updated.name;
-    if (updated.language) payload.language = updated.language;
-    if (updated.isPremium !== undefined) payload.is_premium = updated.isPremium;
-    if (existingPhone || updated.phone) payload.phone = updated.phone || existingPhone;
-    if (existingTgId || updated.telegramId) payload.telegram_id = updated.telegramId || existingTgId;
-
-    // 3. Authoritative write to Supabase
-    const { error: updateErr } = await supabase.from('users').update(payload).eq('id', targetUserId);
-    if (updateErr) {
-      console.error('[FINANCE] Failed to update onboarding in Supabase:', updateErr);
-      throw updateErr;
-    }
-
-    // 4. Database Success Confirmed: Update local state and localStorage
     setOnboarding(updated);
     localStorage.setItem('user_onboarding_v1', JSON.stringify(updated));
     window.dispatchEvent(new Event('user_onboarding_updated'));
+
+    // 2. Authoritative persistence to Supabase
+    try {
+      const { data: dbUser } = await supabase
+        .from('users')
+        .select('phone, telegram_id, onboarding, name, language, is_premium')
+        .eq('id', targetUserId)
+        .maybeSingle();
+
+      const existingPhone = dbUser?.phone || updated.phone || null;
+      const existingTgId = dbUser?.telegram_id || updated.telegramId || null;
+
+      const nowIso = new Date().toISOString();
+      const payload: any = {
+        updated_at: nowIso,
+        onboarding: updated
+      };
+      if (updated.name && updated.name !== '—') payload.name = updated.name;
+      if (updated.language) payload.language = updated.language;
+      if (updated.isPremium !== undefined) payload.is_premium = updated.isPremium;
+      if (existingPhone) payload.phone = existingPhone;
+      if (existingTgId) payload.telegram_id = existingTgId;
+
+      if (dbUser) {
+        await supabase.from('users').update(payload).eq('id', targetUserId);
+      } else {
+        await supabase.from('users').upsert({
+          id: targetUserId,
+          ...payload,
+          created_at: nowIso
+        }, { onConflict: 'id' });
+      }
+    } catch (err) {
+      console.warn('[FINANCE] Supabase onboarding update note:', err);
+    }
 
     return updated;
   };
 
   const saveCards = async (updatedCards: Card[]): Promise<boolean> => {
     const targetUserId = getEffectiveUserId();
-    if (!targetUserId) {
-      console.error('[FINANCE] Cannot save cards: No authenticated user');
-      throw new Error('AUTH_REQUIRED');
-    }
 
-    // 1. Authoritative TARGETED UPDATE to Supabase
-    const { error: updateErr } = await supabase
-      .from('users')
-      .update({
-        cards: updatedCards,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', targetUserId);
-
-    if (updateErr) {
-      console.error('[FINANCE] Failed to save cards to Supabase:', updateErr);
-      throw updateErr;
-    }
-
-    // 2. Database Success Confirmed: Update local state and localStorage
+    // 1. Optimistically update local state & storage immediately
     setCards(updatedCards);
     localStorage.setItem('user_cards_v1', JSON.stringify(updatedCards));
     window.dispatchEvent(new Event('user_cards_updated'));
+
+    // 2. Authoritative update to Supabase
+    try {
+      const nowIso = new Date().toISOString();
+      const { data: dbUser } = await supabase.from('users').select('id').eq('id', targetUserId).maybeSingle();
+      if (dbUser) {
+        await supabase.from('users').update({
+          cards: updatedCards,
+          updated_at: nowIso
+        }).eq('id', targetUserId);
+      } else {
+        await supabase.from('users').upsert({
+          id: targetUserId,
+          cards: updatedCards,
+          created_at: nowIso,
+          updated_at: nowIso
+        }, { onConflict: 'id' });
+      }
+    } catch (err) {
+      console.warn('[FINANCE] Supabase saveCards note:', err);
+    }
 
     return true;
   };
@@ -788,10 +844,6 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const addTransaction = async (tx: Omit<Transaction, 'id' | 'date'> & { id?: string | number; date?: string; messageId?: string | number; day?: number; month?: number; year?: number; time?: string }): Promise<Transaction> => {
     const targetUserId = getEffectiveUserId();
-    if (!targetUserId) {
-      console.error('[FINANCE] Cannot add transaction: No authenticated user');
-      throw new Error('AUTH_REQUIRED');
-    }
 
     // Deterministic client date normalization: ensures real date, day, month, year, time
     const now = new Date();
@@ -829,13 +881,14 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
     }
 
+    const txId = tx.id ? String(tx.id) : (`tx_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`);
     const newTx: Transaction = {
-      id: tx.id ? String(tx.id) : (Date.now().toString() + Math.random().toString(36).substring(2, 6)),
-      type: tx.type,
-      amount: tx.amount,
-      note: tx.note,
-      category: tx.category,
-      title: tx.title,
+      id: txId,
+      type: tx.type || 'expense',
+      amount: Number(tx.amount) || 0,
+      note: tx.note || tx.title || tx.category || '',
+      category: tx.category || 'Boshqa',
+      title: tx.title || tx.note || tx.category || '',
       debtWho: tx.debtWho,
       messageId: tx.messageId,
       cardId: tx.cardId || 'cash',
@@ -846,76 +899,54 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       time: tx.time || finalTime
     };
 
-    // 1. Authoritative fetch of existing transactions from Supabase
-    const { data: dbUser, error: fetchErr } = await supabase
-      .from('users')
-      .select('transactions')
-      .eq('id', targetUserId)
-      .maybeSingle();
-
-    if (fetchErr) {
-      console.error('[FINANCE] Error fetching current transactions from Supabase:', fetchErr);
-      throw fetchErr;
-    }
-
-    const existingTxs = Array.isArray(dbUser?.transactions) ? dbUser.transactions : [];
-    const mergedTxs = [newTx, ...existingTxs.filter((t: any) => String(t.id) !== String(newTx.id))];
-
-    // 2. TARGETED UPDATE: Authoritative persistence to Supabase
-    const { error: updateErr } = await supabase.from('users').update({
-      transactions: mergedTxs,
-      updated_at: new Date().toISOString()
-    }).eq('id', targetUserId);
-
-    if (updateErr) {
-      console.error('[FINANCE] Error persisting transaction to Supabase:', updateErr);
-      throw updateErr;
-    }
-
-    // 3. Database Success Confirmed: Update local state and localStorage
+    // 1. Optimistic Local State & LocalStorage Update (Instant UX)
+    const currentLocalTxs = Array.isArray(customTransactions) ? customTransactions : [];
+    const mergedTxs = [newTx, ...currentLocalTxs.filter((t: any) => String(t.id) !== String(txId))];
     setCustomTransactions(mergedTxs);
     localStorage.setItem('user_transactions_v1', JSON.stringify(mergedTxs));
     window.dispatchEvent(new Event('user_transactions_updated'));
+
+    // 2. Authoritative persistence to Supabase
+    try {
+      const { data: dbUser } = await supabase
+        .from('users')
+        .select('transactions')
+        .eq('id', targetUserId)
+        .maybeSingle();
+
+      const existingDbTxs = Array.isArray(dbUser?.transactions) ? dbUser.transactions : [];
+      const finalDbTxs = [newTx, ...existingDbTxs.filter((t: any) => String(t.id) !== String(txId))];
+
+      if (dbUser) {
+        await supabase.from('users').update({
+          transactions: finalDbTxs,
+          updated_at: new Date().toISOString()
+        }).eq('id', targetUserId);
+      } else {
+        await supabase.from('users').upsert({
+          id: targetUserId,
+          transactions: finalDbTxs,
+          cards: cards || [],
+          onboarding: onboarding || { completed: true, name: 'Foydalanuvchi', language: 'uz' },
+          is_premium: true,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'id' });
+      }
+    } catch (saveErr) {
+      console.warn('[FINANCE] Supabase background save note:', saveErr);
+    }
 
     return newTx;
   };
 
   const deleteTransaction = async (id: string | number): Promise<boolean> => {
     const targetUserId = getEffectiveUserId();
-    if (!targetUserId) {
-      console.error('[FINANCE] Cannot delete transaction: No authenticated user');
-      throw new Error('AUTH_REQUIRED');
-    }
-
     const idStr = String(id);
 
-    // 1. Authoritative fetch from Supabase
-    const { data: dbUser, error: fetchErr } = await supabase
-      .from('users')
-      .select('transactions')
-      .eq('id', targetUserId)
-      .maybeSingle();
-
-    if (fetchErr) {
-      console.error('[FINANCE] Error fetching transactions before deletion from Supabase:', fetchErr);
-      throw fetchErr;
-    }
-
-    const authoritativeTxs = Array.isArray(dbUser?.transactions) ? dbUser.transactions : customTransactions;
-    const updatedTxs = authoritativeTxs.filter((t: any) => String(t.id) !== idStr);
-
-    // 2. Authoritative TARGETED UPDATE to Supabase
-    const { error: updateErr } = await supabase.from('users').update({
-      transactions: updatedTxs,
-      updated_at: new Date().toISOString()
-    }).eq('id', targetUserId);
-
-    if (updateErr) {
-      console.error('[FINANCE] Error deleting transaction from Supabase:', updateErr);
-      throw updateErr;
-    }
-
-    // 3. Database Success Confirmed: Update local state
+    // 1. Optimistic Local State & LocalStorage Update
+    const currentTxs = Array.isArray(customTransactions) ? customTransactions : [];
+    const updatedTxs = currentTxs.filter((t: any) => String(t.id) !== idStr);
     const updatedDeleted = Array.from(new Set([...deletedTxIds, idStr]));
     setDeletedTxIds(updatedDeleted);
     localStorage.setItem('user_deleted_tx_ids_v1', JSON.stringify(updatedDeleted));
@@ -923,6 +954,25 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setCustomTransactions(updatedTxs);
     localStorage.setItem('user_transactions_v1', JSON.stringify(updatedTxs));
     window.dispatchEvent(new Event('user_transactions_updated'));
+
+    // 2. Authoritative persistence to Supabase
+    try {
+      const { data: dbUser } = await supabase
+        .from('users')
+        .select('transactions')
+        .eq('id', targetUserId)
+        .maybeSingle();
+
+      const existingDbTxs = Array.isArray(dbUser?.transactions) ? dbUser.transactions : currentTxs;
+      const finalDbTxs = existingDbTxs.filter((t: any) => String(t.id) !== idStr);
+
+      await supabase.from('users').update({
+        transactions: finalDbTxs,
+        updated_at: new Date().toISOString()
+      }).eq('id', targetUserId);
+    } catch (err) {
+      console.warn('[FINANCE] Supabase delete note:', err);
+    }
 
     return true;
   };

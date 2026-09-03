@@ -1,7 +1,6 @@
 import { useState, useRef } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 import { useFinance } from '../FinanceContext'
-import { parseAITransaction } from '../utils/aiParser'
 
 type EntryType = 'expense' | 'income' | 'debt' | 'lending'
 
@@ -39,31 +38,25 @@ const voicePrompts: Record<EntryType, string> = {
 }
 
 async function parseAIText(text: string, cardsList: any[] = [], userId?: string): Promise<{ type: EntryType; amount: string; category: string; note: string; title?: string; debtWho?: string; date?: string; cardId?: string }> {
-  try {
-    const res = await fetch('/api/parse-expense', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, cards: cardsList, userId })
-    });
-    if (res.status === 429) {
-      const errData = await res.json();
-      throw new Error(errData.message || 'Bepul AI so\'rov limiti tugadi. Davom etish uchun VIP Premium obunasini faollashtiring!');
-    }
-    if (res.ok) {
-      const data = await res.json();
-      if (data.amount && data.category) {
-        return { type: data.type || 'expense', amount: data.amount, category: data.category, note: data.note || text, title: data.title, debtWho: data.debtWho, date: data.date, cardId: data.cardId };
-      }
-    }
-  } catch (err: any) {
-    if (err.message && (err.message.includes('limiti tugadi') || err.message.includes('Premium'))) {
-      throw err;
-    }
-    // API endpoint unavailable in dev server, fall back to smart local NLP parser
+  const res = await fetch('/api/parse-expense', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, cards: cardsList, userId })
+  });
+  
+  if (res.status === 429) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.message || '⚠️ Bugungi bepul AI limitingiz tugadi. Xarajatlarni ilovada qo\'lda kiritish mutlaqo bepul va cheksiz!');
   }
 
-  const parsed = parseAITransaction(text, cardsList)
-  return parsed
+  if (res.ok) {
+    const data = await res.json();
+    if (data.amount && data.category) {
+      return { type: data.type || 'expense', amount: data.amount, category: data.category, note: data.note || text, title: data.title, debtWho: data.debtWho, date: data.date, cardId: data.cardId };
+    }
+  }
+
+  throw new Error('AI orqali tahlil qilib bo\'lmadi. Iltimos, pastdagi maydonlarni qo\'lda to\'ldiring.');
 }
 
 export default function AIButton({ visible = true, language = 'uz' }: { visible?: boolean; language?: 'uz' | 'uz_cyrl' | 'ru' | 'en' }) {
@@ -99,8 +92,15 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
           const res = await fetch('/api/parse-receipt', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ base64Image: base64Data, mimeType: file.type })
+            body: JSON.stringify({ base64Image: base64Data, mimeType: file.type, userId })
           })
+
+          if (res.status === 429) {
+            const errData = await res.json().catch(() => ({}));
+            setAiError(errData.message || '⚠️ Bugungi bepul AI chek skanerlash limitingiz tugadi. Xarajatni pastdagi forma orqali qo\'lda kiritishingiz mumkin!');
+            setStep('form');
+            return;
+          }
 
           let parsed: any = null
           if (res.ok) {
@@ -108,8 +108,8 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
           }
 
           if (!parsed || !parsed.amount) {
-            // Show error instead of silently injecting fake data
-            setStep('type')
+            setAiError("Chekni aniqlab bo'lmadi. Iltimos, xarajatni qo'lda kiriting.");
+            setStep('form')
             return
           }
 
@@ -126,9 +126,10 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
             cardId: prev.cardId || 'cash',
           }))
           setStep('form')
-        } catch (err) {
+        } catch (err: any) {
           console.error(err)
-          setAiError(language === 'uz' ? "Rasmni aniqlab bo'lmadi, matnli kiritib ko'ring" : "Couldn't read receipt image")
+          setAiError(err?.message || (language === 'uz' ? "Rasmni aniqlab bo'lmadi, qo'lda kiriting" : "Couldn't read receipt image"))
+          setStep('form')
         } finally {
           setIsProcessing(false)
         }
@@ -165,28 +166,36 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
     setStep('form')
   }
 
-  
   const AI_FREE_LIMIT = 20
 
   const checkAndDeductAIQuery = (): boolean => {
     if (onboarding?.isPremium) return true
-    // Monthly reset: use month-keyed counter
+    
+    // Check if daily quota reached in onboarding state
+    const obAny = onboarding as any
+    if (obAny?.aiLimit && obAny.aiLimit > 0 && (obAny?.aiQueryCount || 0) >= obAny.aiLimit) {
+      setAiError(
+        (language === 'uz' || language === 'uz_cyrl')
+          ? `⚠️ Bugungi bepul AI limitingiz tugadi. Xarajatlarni qo'lda kiritish mutlaqo bepul va cheksiz! Cheksiz AI uchun VIP Premium oling.`
+          : `Daily AI limit reached. Manual entry is completely free and unlimited!`
+      );
+      setStep('form');
+      return false;
+    }
+
     const now = new Date()
-    const monthKey = `ai_query_count_${now.getFullYear()}_${now.getMonth() + 1}`
-    const currentCount = parseInt(localStorage.getItem(monthKey) || '0', 10)
+    const dayKey = `ai_query_count_${now.getFullYear()}_${now.getMonth() + 1}_${now.getDate()}`
+    const currentCount = parseInt(localStorage.getItem(dayKey) || '0', 10)
     if (currentCount >= AI_FREE_LIMIT) {
       setAiError(
         (language === 'uz' || language === 'uz_cyrl')
-          ? (language === 'uz_cyrl'
-              ? `Free тарифда ойлик ${AI_FREE_LIMIT} та AI савол лимити тугади. Чексиз AI учун Premium га ўтинг!`
-              : `Free tarifda oylik ${AI_FREE_LIMIT} ta AI savol limiti tugadi. Cheksiz AI uchun Premium ga o'ting!`)
-          : language === 'ru'
-          ? `Лимит ${AI_FREE_LIMIT} ИИ-запросов за месяц исчерпан. Перейдите на Премиум!`
-          : `Monthly limit of ${AI_FREE_LIMIT} AI queries reached. Upgrade to Premium!`
+          ? `⚠️ Bugungi bepul AI limitingiz (${AI_FREE_LIMIT} ta) tugadi. Xarajatlarni qo'lda kiritish mutlaqo bepul va cheksiz!`
+          : `Daily limit of ${AI_FREE_LIMIT} AI queries reached. Manual entry is completely free!`
       )
+      setStep('form');
       return false
     }
-    localStorage.setItem(monthKey, (currentCount + 1).toString())
+    localStorage.setItem(dayKey, (currentCount + 1).toString())
     return true
   }
 
@@ -213,9 +222,11 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
         cardId: parsed.cardId || prev.cardId || 'cash',
       }))
       setStep('form')
-    } catch (e) {
+    } catch (e: any) {
       console.error(e)
-      setAiError(language === 'uz' ? "Tushunmadim, qayta urinib ko'ring" : language === 'uz_cyrl' ? "Тушунмадим, қайта уриниб кўринг" : language === 'ru' ? 'Не удалось распознать, попробуйте снова' : "Couldn't parse that, try again")
+      const errTxt = e?.message || '';
+      setAiError(errTxt || (language === 'uz' ? "Tushunmadim, iltimos qo'lda kiriting" : "Couldn't parse that, please enter manually"));
+      setStep('form');
     } finally {
       setIsProcessing(false)
     }

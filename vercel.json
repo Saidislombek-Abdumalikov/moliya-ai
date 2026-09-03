@@ -1,5 +1,11 @@
 {
   "version": 2,
+  "crons": [
+    {
+      "path": "/api/admin?route=auto-broadcast",
+      "schedule": "0 15 * * *"
+    }
+  ],
   "rewrites": [
     { "source": "/api/telegram-webhook", "destination": "/api/telegram-webhook" },
     { "source": "/api/admin/:route*", "destination": "/api/admin?route=:route*" },
