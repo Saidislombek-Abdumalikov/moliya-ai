@@ -182,10 +182,6 @@ async function startServer() {
           tgUser = verification.user;
         }
       }
-      if (!tgUser && initDataUnsafe?.user) {
-        tgUser = initDataUnsafe.user;
-      }
-
       if (!tgUser || !tgUser.id) {
         res.status(401).json({ error: "Invalid Telegram signature" });
         return;

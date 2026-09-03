@@ -282,14 +282,16 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         // ===== STEP 0: Telegram Mini App native container check (HIGHEST PRIORITY) =====
         const tg = (window as any).Telegram?.WebApp
         if (tg) {
+          try { if (typeof tg.ready === 'function') tg.ready() } catch {}
+          try { if (typeof tg.expand === 'function') tg.expand() } catch {}
           try {
-            if (typeof tg.ready === 'function') tg.ready()
-            if (typeof tg.expand === 'function') tg.expand()
-            if (typeof tg.requestFullscreen === 'function') tg.requestFullscreen()
-            if (typeof tg.enableClosingConfirmation === 'function') tg.enableClosingConfirmation()
-          } catch (tgErr) {
-            console.error('[AUTH] Telegram WebApp error:', tgErr)
-          }
+            // Fullscreen is supported only in Telegram WebApp API version 7.7+
+            const isVersionSupported = typeof tg.isVersionAtLeast === 'function' && tg.isVersionAtLeast('7.7')
+            if (isVersionSupported && typeof tg.requestFullscreen === 'function') {
+              tg.requestFullscreen()
+            }
+          } catch {}
+          try { if (typeof tg.enableClosingConfirmation === 'function') tg.enableClosingConfirmation() } catch {}
         }
 
         // If outside Telegram (regular web browser), do not restore session or authenticate

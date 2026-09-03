@@ -66,7 +66,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
     try {
-      const { initData, initDataUnsafe } = req.body || {};
+      const { initData } = req.body || {};
       let tgUser: any = null;
 
       if (initData && BOT_TOKEN) {
