@@ -511,8 +511,8 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
     if (!c) return 0
     const initial = Number(String(c.balance).replace(/\s/g, '').replace(/,/g, '')) || 0
     const cardTxs = customTransactions.filter((t: Transaction) => t.cardId === cardId)
-    const cardIncome = cardTxs.filter((t: Transaction) => Number(t.amount) > 0).reduce((acc: number, t: Transaction) => acc + Number(t.amount), 0)
-    const cardExpense = cardTxs.filter((t: Transaction) => Number(t.amount) < 0).reduce((acc: number, t: Transaction) => acc + Math.abs(Number(t.amount)), 0)
+    const cardIncome = cardTxs.filter((t: Transaction) => t.type === 'income' || (!t.type && Number(t.amount) > 0)).reduce((acc: number, t: Transaction) => acc + Math.abs(Number(t.amount)), 0)
+    const cardExpense = cardTxs.filter((t: Transaction) => t.type === 'expense' || t.type === 'lending' || (!t.type && Number(t.amount) < 0)).reduce((acc: number, t: Transaction) => acc + Math.abs(Number(t.amount)), 0)
     return initial + cardIncome - cardExpense
   }
 

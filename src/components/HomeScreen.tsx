@@ -463,16 +463,18 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
   const firstExpense = onboarding?.firstExpense
 
   const mappedCustom = customTransactions.map((t, idx) => {
-    const cleanAmt = Number(String(t.amount).replace(/\s/g, '').replace(/,/g, '')) || 0
+    const rawAmt = Number(String(t.amount).replace(/\s/g, '').replace(/,/g, '')) || 0
+    const isExpense = t.type === 'expense' || t.type === 'lending' || (!t.type && rawAmt < 0)
+    const cleanAmt = isExpense ? -Math.abs(rawAmt) : Math.abs(rawAmt)
     const isNegative = cleanAmt < 0
     return {
       id: t.id || `custom-${idx}`,
-      type: t.type,
+      type: t.type || (isNegative ? 'expense' : 'income'),
       name: t.title || t.debtWho || t.note || t.category,
       category: t.category,
       amount: cleanAmt,
       time: formatTxTime(t.date || new Date().toISOString()),
-      emoji: categoryEmoji[t.category] || (t.type === 'expense' ? '🛒' : t.type === 'income' ? '💼' : t.type === 'debt' ? '⟳' : '⟲'),
+      emoji: categoryEmoji[t.category] || (isNegative ? '🛒' : '💼'),
       color: isNegative ? '#FEF2F2' : '#F0FDF4',
       dot: isNegative ? '#DC2626' : '#16A34A',
       note: t.note,
@@ -566,12 +568,12 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
     if (!c) return 0
     const initial = Number(String(c.balance).replace(/\s/g, '').replace(/,/g, '')) || 0
     const cardTxs = pastTransactions.filter(t => (t as Transaction).cardId === cardId)
-    const cardIncome = cardTxs.filter(t => Number(t.amount) > 0).reduce((acc, t) => acc + Number(t.amount), 0)
-    const cardExpense = cardTxs.filter(t => Number(t.amount) < 0).reduce((acc, t) => acc + Math.abs(Number(t.amount)), 0)
+    const cardIncome = cardTxs.filter(t => t.type === 'income' || (!t.type && Number(t.amount) > 0)).reduce((acc, t) => acc + Math.abs(Number(t.amount)), 0)
+    const cardExpense = cardTxs.filter(t => t.type === 'expense' || t.type === 'lending' || (!t.type && Number(t.amount) < 0)).reduce((acc, t) => acc + Math.abs(Number(t.amount)), 0)
     return initial + cardIncome - cardExpense
   }
-  const totalExpense = pastTransactions.filter((t) => Number(t.amount) < 0).reduce((sum, t) => sum + Math.abs(Number(t.amount)), 0)
-  const totalIncome = pastTransactions.filter((t) => Number(t.amount) > 0).reduce((sum, t) => sum + Number(t.amount), 0)
+  const totalExpense = pastTransactions.filter((t) => t.type === 'expense' || t.type === 'lending' || (!t.type && Number(t.amount) < 0)).reduce((sum, t) => sum + Math.abs(Number(t.amount)), 0)
+  const totalIncome = pastTransactions.filter((t) => t.type === 'income' || (!t.type && Number(t.amount) > 0)).reduce((sum, t) => sum + Math.abs(Number(t.amount)), 0)
   const initialCash = onboarding?.baseBalance || 0
   const cardsTotal = cards.reduce((sum, c) => {
     const val = Number(String(c.balance).replace(/\s/g, '').replace(/,/g, '')) || 0

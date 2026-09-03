@@ -487,10 +487,14 @@ async function saveBotTransaction(userId: string, txItem: {
   const finalTime = txItem.time || `${pad(now.getHours())}:${pad(now.getMinutes())}`;
   const txId = txItem.id || `tx_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 
+  const rawAmt = Math.abs(Number(txItem.amount) || 0);
+  const isIncome = txItem.type === 'income';
+  const signedAmount = isIncome ? rawAmt : -rawAmt;
+
   const cleanTx = {
     id: txId,
     type: txItem.type || 'expense',
-    amount: Number(txItem.amount) || 0,
+    amount: signedAmount,
     category: txItem.category || 'Boshqa',
     note: txItem.note || txItem.name || txItem.title || txItem.category || '',
     title: txItem.title || txItem.name || txItem.note || '',
@@ -1318,29 +1322,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const fileUrl = await getTelegramFileUrl(message.voice.file_id);
       if (fileUrl) {
         try {
-          if (statusMsgId) {
-            await editTelegramMessage(
-              chatId,
-              statusMsgId,
-              `⚙️ <b>Ovoz qayta ishlanmoqda...</b>\n🎧 <i>Nutq matnga aylantirilmoqda</i>`,
-              undefined,
-              userId
-            );
-          }
-
           const audioRes = await fetch(fileUrl);
           const arrayBuffer = await audioRes.arrayBuffer();
           const base64Audio = Buffer.from(arrayBuffer).toString('base64');
-
-          if (statusMsgId) {
-            await editTelegramMessage(
-              chatId,
-              statusMsgId,
-              `🧠 <b>AI tahlil qilmoqda...</b>\n⚡ <i>Xarajat summasi va kategoriya aniqlanmoqda</i>`,
-              undefined,
-              userId
-            );
-          }
 
           const candidateKeys = await getCandidateAiKeys();
           const envKey = process.env.GEMINI_API_KEY;
@@ -1365,9 +1349,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             for (const modelToUse of modelsToTry) {
               try {
                 const ai = new GoogleGenAI({ apiKey: rawApiKey });
-                const prompt = buildUzbekFinancialAiPrompt('Voice audio note containing spoken transaction in Uzbek/Russian', srvCtx);
+                const prompt = `Listen to this financial audio in Uzbek/Russian and extract into JSON:
+{"type":"expense"|"income"|"debt"|"lending","amount":number,"category":string,"title":string,"note":string,"date":"YYYY-MM-DD","debtWho":string}
+Today: ${srvCtx.currentDate}.`;
 
-                const audioResult = await ai.models.generateContent({
+                let timer: any;
+                const timeoutPromise = new Promise((_, reject) => {
+                  timer = setTimeout(() => reject(new Error('AI_TIMEOUT')), 3500);
+                });
+
+                const audioPromise = ai.models.generateContent({
                   model: modelToUse,
                   contents: [
                     {
@@ -1384,9 +1375,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     }
                   ],
                   config: {
-                    responseMimeType: "application/json"
+                    responseMimeType: "application/json",
+                    maxOutputTokens: 200,
+                    temperature: 0.1
                   }
                 });
+
+                const audioResult: any = await Promise.race([audioPromise, timeoutPromise]);
+                clearTimeout(timer);
 
                 if (audioResult.text) {
                   const resJson = JSON.parse(audioResult.text);
@@ -1399,19 +1395,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 }
               } catch (voiceErr: any) {
                 recordKeyResult(keyObj.id, false, voiceErr?.message, 'temporary').catch(() => {});
+                break;
               }
             }
 
             if (parsed) {
               const txId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
               const safeD = parseSafeDate(parsed.date);
+              const rawAmt = Math.abs(Number(parsed.amount) || 0);
+              const isIncome = parsed.type === 'income';
+              const signedAmount = isIncome ? rawAmt : -rawAmt;
+
               const newTx = {
                 id: txId,
                 type: parsed.type || 'expense',
                 name: parsed.title || parsed.note || 'Ovozli xarajat',
                 title: parsed.title || parsed.note || 'Ovozli xarajat',
                 category: parsed.category || 'Boshqa',
-                amount: Number(parsed.amount),
+                amount: signedAmount,
                 date: safeD.date,
                 day: safeD.day,
                 month: safeD.month,

@@ -243,8 +243,11 @@ export default function AnalyticsScreen({ onboarding }: Props) {
 
   const txInRange = allTx.filter((tx) => tx.date >= rangeStart && tx.date <= rangeEnd)
 
-  const summaryIncome = txInRange.filter((tx) => tx.amount > 0).reduce((s, tx) => s + tx.amount, 0)
-  const summaryExpense = txInRange.filter((tx) => tx.amount < 0).reduce((s, tx) => s + Math.abs(tx.amount), 0)
+  const isExpenseTx = (tx: any) => tx.type === 'expense' || tx.type === 'lending' || (!tx.type && tx.amount < 0);
+  const isIncomeTx = (tx: any) => tx.type === 'income' || (!tx.type && tx.amount > 0);
+
+  const summaryIncome = txInRange.filter(isIncomeTx).reduce((s, tx) => s + Math.abs(tx.amount), 0)
+  const summaryExpense = txInRange.filter(isExpenseTx).reduce((s, tx) => s + Math.abs(tx.amount), 0)
   const summaryDebts = txInRange.filter((tx) => tx.type === 'debt').reduce((s, tx) => s + Math.abs(tx.amount), 0)
   const summarySavings = totalLimit - summaryExpense
 
@@ -261,8 +264,8 @@ export default function AnalyticsScreen({ onboarding }: Props) {
   const pushBucket = (bStart: Date, bEnd: Date, label: string) => {
     const bucket = allTx.filter((tx) => tx.date >= bStart && tx.date <= bEnd)
     chartLabels.push(label)
-    chartIncome.push(bucket.filter((tx) => tx.amount > 0).reduce((s, tx) => s + tx.amount, 0))
-    chartSpend.push(bucket.filter((tx) => tx.amount < 0).reduce((s, tx) => s + Math.abs(tx.amount), 0))
+    chartIncome.push(bucket.filter(isIncomeTx).reduce((s, tx) => s + Math.abs(tx.amount), 0))
+    chartSpend.push(bucket.filter(isExpenseTx).reduce((s, tx) => s + Math.abs(tx.amount), 0))
   }
 
   if (period === 'daily') {
@@ -305,7 +308,7 @@ export default function AnalyticsScreen({ onboarding }: Props) {
 
   // Category breakdown from real expense transactions in the selected range
   const catTotals = new Map<string, number>()
-  txInRange.filter((tx) => tx.amount < 0).forEach((tx) => {
+  txInRange.filter(isExpenseTx).forEach((tx) => {
     catTotals.set(tx.category, (catTotals.get(tx.category) || 0) + Math.abs(tx.amount))
   })
   const totalCatAmt = Array.from(catTotals.values()).reduce((s, v) => s + v, 0)

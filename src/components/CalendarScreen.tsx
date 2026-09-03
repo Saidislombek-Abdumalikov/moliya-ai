@@ -310,9 +310,12 @@ export default function CalendarScreen({ onboarding }: Props) {
     return tx.month === currentMonth && (tx.year === currentYear || !tx.year)
   })
 
+  const isExpenseTx = (tx: any) => tx.type === 'expense' || tx.type === 'lending' || (!tx.type && tx.amount < 0);
+  const isIncomeTx = (tx: any) => tx.type === 'income' || (!tx.type && tx.amount > 0);
+
   // Calculate In, Out, Net stats
-  const monthIncome = currentMonthTransactions.filter(tx => tx.amount > 0).reduce((sum, tx) => sum + tx.amount, 0)
-  const monthExpense = currentMonthTransactions.filter(tx => tx.amount < 0).reduce((sum, tx) => sum + Math.abs(tx.amount), 0)
+  const monthIncome = currentMonthTransactions.filter(isIncomeTx).reduce((sum, tx) => sum + Math.abs(tx.amount), 0)
+  const monthExpense = currentMonthTransactions.filter(isExpenseTx).reduce((sum, tx) => sum + Math.abs(tx.amount), 0)
   const monthNet = monthIncome - monthExpense
 
   // Selected date transactions filtered by In / Out
@@ -321,15 +324,15 @@ export default function CalendarScreen({ onboarding }: Props) {
   })
 
   const dayTransactions = rawDayTransactions.filter(tx => {
-    if (filterType === 'in') return tx.amount > 0
-    if (filterType === 'out') return tx.amount < 0
+    if (filterType === 'in') return isIncomeTx(tx)
+    if (filterType === 'out') return isExpenseTx(tx)
     return true
   })
 
   // Agenda list of transactions for entire month
   const agendaTransactions = currentMonthTransactions.filter(tx => {
-    if (filterType === 'in') return tx.amount > 0
-    if (filterType === 'out') return tx.amount < 0
+    if (filterType === 'in') return isIncomeTx(tx)
+    if (filterType === 'out') return isExpenseTx(tx)
     return true
   }).sort((a, b) => b.day - a.day)
 
