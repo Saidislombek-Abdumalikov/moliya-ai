@@ -196,84 +196,19 @@ export function getServerDateTimeContext(): ServerDateTimeContext {
 export const buildUzbekFinancialPrompt = (normalizedText: string, ctx?: ServerDateTimeContext): string => buildUzbekFinancialAiPrompt(normalizedText, ctx);
 
 export function buildUzbekFinancialAiPrompt(normalizedText: string, ctx: ServerDateTimeContext = getServerDateTimeContext()): string {
-  return `You are Moliya AI, a financial-language understanding engine.
-Your job is to understand the user's message and extract the financial meaning.
-Users may write naturally and imperfectly. They may use Uzbek, Russian, English, or mixed language. They may use slang, abbreviations, speech-to-text errors, spelling mistakes, punctuation differences, numbers written as digits or words, and informal expressions.
+  return `Moliya AI parser. Extract financial event from text into JSON.
+Date context: Today is ${ctx.currentDate} (${ctx.currentDayOfWeek}). Input: "${normalizedText}"
 
-Understand the complete meaning of the message.
-Extract the financial event and the fields supported by the Moliya application.
+Categories: 'Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\\'liq', 'Ta\\'lim', 'Ko\\'ngil ochar', 'Maosh', 'Freelance', 'Biznes', 'Sovg\\'a', 'Investitsiya', 'Boshqa'.
+Types: 'expense', 'income', 'debt', 'lending'.
+Currency: Assume Uzbek So'm (UZS). Extract amount as integer.
 
-TRUSTED DATE & TIME CONTEXT:
-- Authoritative Current Date: ${ctx.currentDate} (${ctx.currentDayOfWeek})
-- Authoritative Current Time: ${ctx.currentTime}
-- Timezone: ${ctx.timezone}
+Rules:
+- If relative date (e.g. "kecha", "bugun"), calculate YYYY-MM-DD from ${ctx.currentDate}. If no date, use ${ctx.currentDate}.
+- 'debt' = borrowed money from someone; 'lending' = lent money to someone. Fill 'debtWho' with the person's name if present.
+- 'title': short 2-3 word title. 'note': clean description.
 
-USER INPUT: "${normalizedText}"
-
-1. FINANCIAL EVENT & TRANSACTION TYPE:
-Understand the semantics of the event:
-- 'expense': user spent money, bought something, paid a bill, taxi, fee, groceries, or service ("oldim", "sarfladim", "berdim", "to'ladim", "lunchga", "taksiga", "купил", "потратил", "заплатил")
-- 'income': user received money, salary, wages, transfer in, profit, earnings, gift ("maosh", "oylik", "tushdi", "ishladim", "keldi", "зарплата", "получил", "пришло")
-- 'debt': user borrowed money from someone ("qarz oldim", "взял в долг")
-- 'lending': user loaned/lent money to someone ("qarz berdim", "дал в долг")
-
-2. NUMBER & AMOUNT UNDERSTANDING:
-Understand the amount even when written in digits, words, mixed formats, or abbreviations:
-- Digits: 25000, 50000, 14000000
-- Multipliers: "14 mln" / "14 million" -> 14000000, "2 yarim mln" / "2.5 mln" -> 2500000, "500 ming" / "500k" -> 500000, "30 ming" / "30k" -> 30000
-- Words: "o'n ming" -> 10000, "ellik ming" -> 50000, "bir million" -> 1000000, "ikki million" -> 2000000, "besh yuz ming" -> 500000, "сто тысяч" -> 100000
-- Currency: Assume Uzbek So'm (UZS) unless another currency is explicitly specified.
-
-CRITICAL NUMBER DISAMBIGUATION (NON-FINANCIAL NUMBERS):
-A number in a user's message is NOT automatically money.
-Possible numeric information includes:
-- Financial amount (e.g. 50 ming, 14 mln, 25000)
-- Date (e.g. 25 avgust, 14-kuni)
-- Time (e.g. 14:00, soat 5 da)
-- Street / house / apartment number (e.g. "Uy 14", "dom 5", "kvartira 12")
-- Car / license plate number (e.g. "01 A 777 AA", "spark 01")
-- Phone number (e.g. "+998901234567")
-- Quantity / units (e.g. "2 ta non", "3 dona shashlik", "5 kg go'sht")
-Use sentence context to determine WHICH number represents the financial amount!
-Example: "Uy 14, taksiga 50 ming berdim" -> 14 is address/house number, 50,000 is the transaction amount.
-Example: "2 ta non oldim 8 mingga" -> 2 is quantity, 8,000 is the transaction amount.
-Example: "25 avgust kuni 1.5 mln tushdi" -> 25 is calendar day, 1,500,000 is the transaction amount.
-
-3. DATE UNDERSTANDING:
-Extract dates naturally. Normalize to "YYYY-MM-DD" using the trusted date (${ctx.currentDate}, ${ctx.currentDayOfWeek}):
-- Relative dates: "bugun" / "today" -> ${ctx.currentDate}, "kecha" / "yesterday" -> 1 day before ${ctx.currentDate}, "o'tgan kun" / "oldingi kun" -> 2 days before, "X kun oldin" -> X days before.
-- Days of week: "dushanba"..."yakshanba", "o'tgan juma", "в прошлую пятницу" -> closest matching past weekday.
-- Calendar dates: "25 avgust", "12.08", "25-iyul" -> ${ctx.currentDate.slice(0, 4)}-MM-DD.
-- Natural descriptions: "oy boshida" -> first day of current month.
-- If NO date or temporal phrase is mentioned, strictly use ${ctx.currentDate}.
-
-4. CATEGORIES:
-Map to exactly one existing Moliya category:
-- 'Oziq-ovqat' (food, groceries, restaurant, cafe, lunch, bread, meat)
-- 'Transport' (taxi, bus, fuel, petrol, metro, car fare)
-- 'Kiyim' (clothes, shoes, apparel)
-- 'Kommunal' (utilities, rent, electricity, gas, water, internet, phone bill)
-- 'Sog\\'liq' (medicine, pharmacy, doctor, dentist, clinic)
-- 'Ta\\'lim' (courses, books, tuition, university)
-- 'Ko\\'ngil ochar' (entertainment, movies, games, leisure)
-- 'Maosh' (salary, wages, advance)
-- 'Freelance' (freelance, gigs, side-jobs)
-- 'Biznes' (business revenue/costs)
-- 'Sovg\\'a' (gifts, presents)
-- 'Investitsiya' (investments, shares, gold)
-- 'Boshqa' (other/general)
-
-5. FIELDS TO EXTRACT:
-- 'type': 'expense' | 'income' | 'debt' | 'lending'
-- 'amount': integer in UZS
-- 'category': one of the categories above
-- 'title': concise 2-3 word title (e.g. "Taksi xarajati", "Bozorlik", "Oylik maosh")
-- 'note': clean description preserving user context
-- 'date': YYYY-MM-DD
-- 'debtWho': person's name if debt or lending, else empty string
-
-Do not invent information. If critical information is genuinely ambiguous, do not silently guess.
-Return ONLY valid JSON matching this schema:
+Return ONLY valid JSON:
 {
   "type": "expense" | "income" | "debt" | "lending",
   "amount": number,

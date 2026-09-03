@@ -59,7 +59,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       for (const modelToUse of keyModels) {
         try {
           const ai = new GoogleGenAI({ apiKey: key.api_key.trim() });
-          const response = await ai.models.generateContent({
+          
+          // Timeout race: abort after 2800ms to prevent hanging on throttled keys
+          let timer: any;
+          const timeoutPromise = new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error('AI_TIMEOUT')), 2800);
+          });
+
+          const generatePromise = ai.models.generateContent({
             model: modelToUse,
             contents: prompt,
             config: {
@@ -68,6 +75,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               temperature: 0.1
             }
           });
+
+          const response: any = await Promise.race([generatePromise, timeoutPromise]);
+          clearTimeout(timer);
 
           if (response?.text) {
             const parsed = JSON.parse(response.text);
@@ -89,9 +99,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         } catch (err: any) {
           console.warn(`[PARSE] Key ${key.name} model ${modelToUse} failed:`, err?.message);
           recordKeyResult(key.id, false, err?.message, 'temporary').catch(() => {});
-          // Try next model or next key
+          // If timed out or throttled, immediately try next key
+          break;
         }
       }
+    }
+
+    // Instant local fallback if AI keys are slow or unavailable
+    if (normalized.extractedAmount && normalized.extractedAmount > 0) {
+      const fmtAmt = Number(normalized.extractedAmount).toLocaleString('en-US').replace(/,/g, ' ');
+      return res.status(200).json({
+        success: true,
+        type: normalized.inferredType || 'expense',
+        amount: fmtAmt,
+        category: normalized.inferredCategory || 'Boshqa',
+        note: text,
+        title: text,
+        debtWho: '',
+        date: new Date().toISOString().slice(0, 10)
+      });
     }
 
     return res.status(500).json({ error: 'AI parsing failed across all keys' });
