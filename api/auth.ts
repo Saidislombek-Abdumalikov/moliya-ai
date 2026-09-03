@@ -214,6 +214,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const authSession = await createSupabaseAuthSession(tgId, { name: tgName, telegram: tgUsername });
 
+      if (authSession?.auth_user_id) {
+        await supabase.from('users').update({
+          auth_user_id: authSession.auth_user_id
+        }).eq('id', userId);
+      }
+
       return res.status(200).json({
         userId,
         sessionToken,

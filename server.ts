@@ -4,6 +4,7 @@ import path from "path";
 
 import { createClient } from '@supabase/supabase-js';
 import crypto from "crypto";
+import { createSupabaseAuthSession } from "./api/_authHelper.js";
 
 // Supabase client for local dev server (replaces Firebase)
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://qjumnjzbgjldbwwluggr.supabase.co';
@@ -226,9 +227,21 @@ async function startServer() {
         updated_at: now.toISOString()
       }, { onConflict: 'id' });
 
+      let authSession: any = null;
+      try {
+        authSession = await createSupabaseAuthSession(tgId, { name: tgName, telegram: tgUsername });
+        if (authSession?.auth_user_id) {
+          await supabase.from('users').update({ auth_user_id: authSession.auth_user_id }).eq('id', userId);
+        }
+      } catch (authErr) {
+        console.warn('Warning creating auth session in server.ts:', authErr);
+      }
+
       res.json({
         userId,
         sessionToken,
+        access_token: authSession?.access_token || null,
+        refresh_token: authSession?.refresh_token || null,
         onboarding: updatedOnboarding,
         cards: existingUser?.cards || [],
         transactions: existingUser?.transactions || [],
