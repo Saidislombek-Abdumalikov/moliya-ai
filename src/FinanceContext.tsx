@@ -68,21 +68,44 @@ export const useFinance = () => {
   return context
 }
 
-// Helper: Detect if running inside Telegram Mini App
+// Helper: Detect if running inside a legitimate Telegram Mini App
 export function isTelegramMiniApp(): boolean {
   if (typeof window === 'undefined') return false
-  const hash = window.location.hash || ''
-  const search = window.location.search || ''
-  // 1. URL carries Telegram WebApp data or Web login exchange code
-  const hasTgHashOrQuery = hash.includes('tgWebAppData=') || search.includes('tgWebAppData=') || search.includes('code=')
-  // 2. Telegram WebApp object has real signed initData or user payload
-  const tg = (window as any).Telegram?.WebApp
-  const hasRealInitData = Boolean(tg && typeof tg.initData === 'string' && tg.initData.trim().length > 0)
-  const hasRealTgUser = Boolean(tg?.initDataUnsafe?.user?.id)
-  // 3. Native mobile Telegram Webview Proxy bridge
-  const hasTgProxy = Boolean((window as any).TelegramWebviewProxy)
 
-  return Boolean(hasTgHashOrQuery || hasRealInitData || hasRealTgUser || hasTgProxy)
+  const tg = (window as any).Telegram?.WebApp
+  const hasNativeProxy = Boolean(
+    (window as any).TelegramWebviewProxy ||
+    (window as any).webkit?.messageHandlers?.TelegramWebviewProxy
+  )
+
+  // 1. Native mobile Telegram client (Android / iOS)
+  if (hasNativeProxy) return true
+
+  // 2. Telegram Desktop / Native platforms (tdesktop, macos, unigram, ios, android)
+  const platform = tg?.platform
+  const isNativePlatform = Boolean(
+    platform &&
+    platform !== 'unknown' &&
+    ['ios', 'android', 'tdesktop', 'macos', 'unigram'].includes(platform)
+  )
+  if (isNativePlatform) return true
+
+  // 3. Telegram Web (runs inside an iframe on web.telegram.org)
+  const isInsideIframe = window.self !== window.top
+  if (isInsideIframe) {
+    const hasInitData = Boolean(tg && typeof tg.initData === 'string' && tg.initData.trim().length > 0)
+    if (hasInitData) return true
+  }
+
+  // 4. URL explicitly carries fresh Telegram WebApp data hash from Telegram launch
+  const hash = window.location.hash || ''
+  if (hash.includes('tgWebAppData=') && hash.includes('hash=')) {
+    const hasInitData = Boolean(tg && typeof tg.initData === 'string' && tg.initData.trim().length > 0)
+    if (hasInitData) return true
+  }
+
+  // Normal browser outside Telegram: window.self === window.top, platform === 'unknown', no native proxy
+  return false
 }
 
 // Helper: Establish real Supabase Auth session from tokens
@@ -105,15 +128,20 @@ async function setSupabaseSession(accessToken: string, refreshToken: string): Pr
 }
 
 export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Resolve Telegram WebApp user
-  const tgUser = (typeof window !== 'undefined' && (window as any).Telegram?.WebApp?.initDataUnsafe?.user) || null
+  const isTg = isTelegramMiniApp()
+
+  // Resolve Telegram WebApp user ONLY if legitimately in Telegram
+  const tgUser = (isTg && typeof window !== 'undefined' && (window as any).Telegram?.WebApp?.initDataUnsafe?.user) || null
   const defaultTgUserId = tgUser?.id ? `moliya_user_tg_${tgUser.id}` : null
 
+  // SECURITY: Never restore private user state from localStorage when running in a normal browser outside Telegram
   const [userId, setUserId] = useState<string | null>(() => {
+    if (!isTg) return null
     return localStorage.getItem('user_id_v1') || defaultTgUserId || null
   })
 
   const [onboarding, setOnboarding] = useState<OnboardingResult | null>(() => {
+    if (!isTg) return null
     try {
       const saved = localStorage.getItem('user_onboarding_v1')
       if (saved) return JSON.parse(saved)
@@ -136,6 +164,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   })
 
   const [cards, setCards] = useState<Card[]>(() => {
+    if (!isTg) return []
     try {
       const saved = localStorage.getItem('user_cards_v1')
       return saved ? JSON.parse(saved) : []
@@ -151,6 +180,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   })
 
   const [customTransactions, setCustomTransactions] = useState<Transaction[]>(() => {
+    if (!isTg) return []
     try {
       const saved = localStorage.getItem('user_transactions_v1')
       return saved ? JSON.parse(saved) : []
@@ -160,6 +190,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   })
 
   const [deletedTxIds, setDeletedTxIds] = useState<string[]>(() => {
+    if (!isTg) return []
     try {
       const saved = localStorage.getItem('user_deleted_tx_ids_v1')
       return saved ? JSON.parse(saved) : []
@@ -169,6 +200,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   })
 
   const [hasSampleData, setHasSampleDataState] = useState<boolean>(() => {
+    if (!isTg) return false
     const saved = localStorage.getItem('user_has_sample_v1')
     return saved === 'true'
   })
@@ -260,8 +292,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           }
         }
 
-        // If outside Telegram (regular web browser without credentials), do not restore session or authenticate
-        if (!isTelegramMiniApp() && !window.location.search.includes('code=')) {
+        // If outside Telegram (regular web browser), do not restore session or authenticate
+        if (!isTelegramMiniApp()) {
           console.log('[AUTH] Normal browser detected outside Telegram. Access restricted to Telegram Mini App.');
           setIsAuthReady(true);
           return;
@@ -645,19 +677,18 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   // ═══════════════════════════════════════════════════════════
   // Context Functions with Supabase Persistence & Instant Sync
   // ═══════════════════════════════════════════════════════════
-  const getEffectiveUserId = (): string => {
+  const getEffectiveUserId = (): string | null => {
+    if (!isTelegramMiniApp()) return null;
     if (userId) return userId;
     const stored = localStorage.getItem('user_id_v1');
     if (stored) return stored;
     if (defaultTgUserId) return defaultTgUserId;
-    const fallback = `moliya_user_guest_${Date.now()}`;
-    localStorage.setItem('user_id_v1', fallback);
-    setUserId(fallback);
-    return fallback;
+    return null;
   };
 
   // Dedicated data refresh function to keep Bot and Mini App 100% in sync
   const refreshUserData = async (targetId?: string | null) => {
+    if (!isTelegramMiniApp()) return;
     const idToUse = targetId || getEffectiveUserId();
     if (!idToUse) return;
 
@@ -694,6 +725,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   // Supabase Real-Time User & Data Syncing
   // ═══════════════════════════════════════════════════════════
   useEffect(() => {
+    if (!isTelegramMiniApp()) return;
     const activeId = getEffectiveUserId();
     if (!activeId) return;
 

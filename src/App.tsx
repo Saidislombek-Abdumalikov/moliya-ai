@@ -21,19 +21,22 @@ export default function App() {
 
   const getInitialStage = (): Stage => {
     try {
-      const isOnboarded = localStorage.getItem('user_onboarding_completed_v1') === 'true'
-      if (isOnboarded) {
-        return 'app'
+      if (!isTelegramMiniApp()) {
+        return 'onboarding';
       }
-      return 'onboarding'
+      const isOnboarded = localStorage.getItem('user_onboarding_completed_v1') === 'true';
+      if (isOnboarded) {
+        return 'app';
+      }
+      return 'onboarding';
     } catch {
-      return 'onboarding'
+      return 'onboarding';
     }
-  }
+  };
 
-  const [showTour, setShowTour] = useState(false)
-  const [stage, setStage] = useState<Stage>(getInitialStage)
-  const [activeScreen, setActiveScreen] = useState<Screen>('home')
+  const [showTour, setShowTour] = useState(false);
+  const [stage, setStage] = useState<Stage>(getInitialStage);
+  const [activeScreen, setActiveScreen] = useState<Screen>('home');
 
   // ═══════════════════════════════════════════════════════════
   // ALL HOOKS MUST BE BEFORE ANY CONDITIONAL RETURNS
@@ -43,42 +46,50 @@ export default function App() {
 
   // Determine stage ONLY after auth check completes
   useEffect(() => {
-    if (!isAuthReady) return
+    if (!isAuthReady) return;
+    if (!isTelegramMiniApp()) {
+      setStage('onboarding');
+      return;
+    }
 
-    const isOnboarded = localStorage.getItem('user_onboarding_completed_v1') === 'true' || onboarding?.completed === true
+    const isOnboarded = localStorage.getItem('user_onboarding_completed_v1') === 'true' || onboarding?.completed === true;
 
     if (isOnboarded) {
-      setStage('app')
+      setStage('app');
     } else {
-      setStage('onboarding')
+      setStage('onboarding');
     }
-  }, [isAuthReady, userId, onboarding])
+  }, [isAuthReady, userId, onboarding]);
 
   // Trigger tour on first visit to main page
   useEffect(() => {
-    const tourSeen = localStorage.getItem('user_tour_completed_v2')
+    const tourSeen = localStorage.getItem('user_tour_completed_v2');
     if (!tourSeen && stage === 'app') {
-      setShowTour(true)
+      setShowTour(true);
     }
-  }, [stage])
+  }, [stage]);
 
   // Auto-transition to app/onboarding when user gets authenticated or logs out
   useEffect(() => {
     const checkLoggedIn = () => {
-      const isOnboarded = localStorage.getItem('user_onboarding_completed_v1') === 'true' || onboarding?.completed === true
-      if (isOnboarded) {
-        setStage('app')
-      } else if (isAuthReady) {
-        setStage('onboarding')
+      if (!isTelegramMiniApp()) {
+        setStage('onboarding');
+        return;
       }
-    }
-    window.addEventListener('storage', checkLoggedIn)
-    window.addEventListener('user_logged_in_updated', checkLoggedIn)
+      const isOnboarded = localStorage.getItem('user_onboarding_completed_v1') === 'true' || onboarding?.completed === true;
+      if (isOnboarded) {
+        setStage('app');
+      } else if (isAuthReady) {
+        setStage('onboarding');
+      }
+    };
+    window.addEventListener('storage', checkLoggedIn);
+    window.addEventListener('user_logged_in_updated', checkLoggedIn);
     return () => {
-      window.removeEventListener('storage', checkLoggedIn)
-      window.removeEventListener('user_logged_in_updated', checkLoggedIn)
-    }
-  }, [isAuthReady, onboarding])
+      window.removeEventListener('storage', checkLoggedIn);
+      window.removeEventListener('user_logged_in_updated', checkLoggedIn);
+    };
+  }, [isAuthReady, onboarding]);
 
   // If onboarding is null and user is authenticated, set clean defaults
   useEffect(() => {

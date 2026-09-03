@@ -1,4 +1,4 @@
-const CACHE_NAME = 'moliya-ai-cache-v1';
+const CACHE_NAME = 'moliya-ai-cache-v2';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
@@ -17,7 +17,7 @@ self.addEventListener('install', (event) => {
   );
 });
 
-// Activate Event — Clean Old Caches
+// Activate Event — Clean Old Caches immediately
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((cacheNames) => {
@@ -33,7 +33,7 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Fetch Event — Stale-While-Revalidate Strategy for HTML/Assets, Network First for API
+// Fetch Event — Network-First for Navigation, Stale-While-Revalidate for Static Assets
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
@@ -42,6 +42,25 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // Network-First for navigation / HTML (ensures users immediately receive new deployment)
+  if (event.request.mode === 'navigate' || url.pathname === '/' || url.pathname === '/index.html') {
+    event.respondWith(
+      fetch(event.request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            const responseToCache = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(event.request, responseToCache);
+            });
+          }
+          return networkResponse;
+        })
+        .catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
+  // Stale-While-Revalidate for static assets (images, icons, etc.)
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
       const fetchPromise = fetch(event.request).then((networkResponse) => {

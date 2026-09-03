@@ -76,12 +76,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
       }
 
-      if (!tgUser && initDataUnsafe?.user?.id) {
-        tgUser = initDataUnsafe.user;
-      }
-
       if (!tgUser || !tgUser.id) {
-        return res.status(400).json({ error: "Invalid Telegram authentication data" });
+        return res.status(401).json({ error: "Invalid or unverified Telegram authentication data" });
       }
 
       const tgId = String(tgUser.id);
