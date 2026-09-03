@@ -37,11 +37,13 @@ export async function checkAiQuota(
   }
 
   try {
-    const { data: suUser, error: fetchError } = await supabase
+    const tgId = userId.startsWith('moliya_user_tg_') ? userId.replace('moliya_user_tg_', '') : null;
+    const idsToFetch = tgId ? [userId, `restricted_tg_${tgId}`] : [userId];
+
+    const { data: userRows, error: fetchError } = await supabase
       .from('users')
-      .select('*')
-      .eq('id', userId)
-      .maybeSingle();
+      .select('id, is_premium, premium_expires_at, ai_limit, ai_query_count, last_ai_query_at, onboarding, device_info')
+      .in('id', idsToFetch);
 
     if (fetchError) {
       console.error('[AI_QUOTA] Database fetch error:', fetchError.message);
@@ -55,19 +57,9 @@ export async function checkAiQuota(
       };
     }
 
-    // 1. Check if user or Telegram identity is blocked by admin
-    const tgId = userId.startsWith('moliya_user_tg_') ? userId.replace('moliya_user_tg_', '') : null;
-    let isIdentityBlocked = false;
-    if (tgId) {
-      const { data: blockedDoc } = await supabase
-        .from('users')
-        .select('id, onboarding')
-        .eq('id', `restricted_tg_${tgId}`)
-        .maybeSingle();
-      if (blockedDoc && blockedDoc.onboarding?.is_blocked !== false) {
-        isIdentityBlocked = true;
-      }
-    }
+    const suUser = userRows?.find((u: any) => u.id === userId);
+    const blockedDoc = userRows?.find((u: any) => u.id === `restricted_tg_${tgId}`);
+    const isIdentityBlocked = Boolean(blockedDoc && blockedDoc.onboarding?.is_blocked !== false);
 
     const isUserBlocked = Boolean(
       isIdentityBlocked ||
@@ -189,67 +181,51 @@ export async function checkAiQuota(
 
 /**
  * RECORD USAGE — Increments user AI query count and logs to ai_logs table.
- * Resets count if it's a new UTC day.
+ * Executes writes in parallel without redundant select queries.
  */
 export async function recordAiUsage(
   userId: string | undefined,
   queryType: 'text' | 'receipt',
   promptSummary: string,
-  isPremium: boolean = false
+  isPremium: boolean = false,
+  currentCount?: number
 ): Promise<{ newCount: number }> {
   if (!userId) return { newCount: 0 };
 
-  try {
-    const now = new Date();
-    const todayUtc = getUtcDateString(now);
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const nextCount = (typeof currentCount === 'number' ? currentCount : 0) + 1;
 
-    const { data: user } = await supabase
-      .from('users')
-      .select('ai_query_count, last_ai_query_at')
-      .eq('id', userId)
-      .maybeSingle();
-
-    const lastQueryUtc = user?.last_ai_query_at ? getUtcDateString(new Date(user.last_ai_query_at)) : null;
-
-    let newCount = 1;
-    if (lastQueryUtc === todayUtc) {
-      newCount = Number(user?.ai_query_count || 0) + 1;
-    } else {
-      newCount = 1; // Reset to 1 for the new day
-    }
-
-    await supabase
+  // Execute database updates in parallel
+  Promise.all([
+    supabase
       .from('users')
       .update({
-        ai_query_count: newCount,
-        last_ai_query_at: now.toISOString(),
-        updated_at: now.toISOString()
+        ai_query_count: nextCount,
+        last_ai_query_at: nowIso,
+        updated_at: nowIso
       })
-      .eq('id', userId);
-
-    // Write audit log safely
-    const { data: userExists } = await supabase.from('users').select('id').eq('id', userId).maybeSingle();
-    await supabase
+      .eq('id', userId),
+    supabase
       .from('ai_logs')
       .insert([{
-        user_id: userExists ? userId : null,
+        user_id: userId,
         query_type: queryType || 'text',
         prompt_summary: (promptSummary || '').slice(0, 300),
         is_premium: isPremium,
-        timestamp: now.toISOString()
-      }]);
+        timestamp: nowIso
+      }])
+  ]).catch(err => {
+    console.warn('[AI_QUOTA] Background usage recording error:', err?.message);
+  });
 
-    return { newCount };
-  } catch (e) {
-    console.error('[AI_QUOTA] Error recording usage in Supabase:', e);
-    return { newCount: 1 };
-  }
+  return { newCount: nextCount };
 }
 
 export const recordAiUsageBackend = recordAiUsage;
 
 /**
- * Combined check & record helper
+ * Combined check & record helper — fast single-fetch execution
  */
 export async function checkAndRecordAiUsage(
   userId: string | undefined,
@@ -261,7 +237,7 @@ export async function checkAndRecordAiUsage(
     return check;
   }
 
-  const usage = await recordAiUsage(userId, queryType, promptSummary, check.isPremium);
+  const usage = await recordAiUsage(userId, queryType, promptSummary, check.isPremium, check.usedCount);
   return {
     allowed: true,
     isPremium: check.isPremium,

@@ -48,11 +48,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 - title: store name or main item (e.g. 'Korzinka', 'Makro', 'Taksi')
 - note: summary of purchased items`;
 
-    const visionModels = ['gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest'];
+    const visionModels = ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.5-flash'];
 
     // Try each key with model fallback
     for (const key of googleKeys) {
-      for (const modelName of visionModels) {
+      let primary = key.model || 'gemini-3.5-flash-lite';
+      if (primary === 'gemini-flash-latest' || primary.includes('2.0-flash') || primary.includes('3.1-flash')) {
+        primary = 'gemini-3.5-flash-lite';
+      }
+      const modelsToTry = [...new Set([primary, ...visionModels])];
+      for (const modelName of modelsToTry) {
         try {
           const ai = new GoogleGenAI({ apiKey: key.api_key.trim() });
           const response = await ai.models.generateContent({

@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabase } from './_supabaseClient.js';
-import { maskApiKey, testSpecificAiKey, executeAiWithRotation, AiKeyRecord } from './_aiRouter.js';
+import { maskApiKey, testSpecificAiKey, executeAiWithRotation, AiKeyRecord, invalidateAiKeysCache } from './_aiRouter.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -185,7 +185,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               name: 'Default Environment Gemini Key',
               provider: 'google',
               api_key: envKey,
-              model: 'gemini-2.5-flash',
+              model: 'gemini-3.5-flash-lite',
               priority: 1,
               status: 'active',
               total_requests: 0,
@@ -213,25 +213,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
         });
 
-        const safeKeys = keys.map((k: any) => ({
-          id: k.id,
-          name: k.name || 'Unnamed Key',
-          provider: k.provider || 'gemini',
-          maskedKey: maskApiKey(k.api_key),
-          model: k.model || 'gemini-2.0-flash',
-          priority: k.priority || 1,
-          status: k.is_active === false ? 'disabled' : (k.health_status || k.status || 'active'),
-          isActive: k.is_active !== false,
-          healthStatus: k.health_status || 'healthy',
-          totalRequests: k.total_requests || 0,
-          todayRequests: k.today_requests || 0,
-          successRequests: k.success_requests || 0,
-          failedRequests: k.failed_requests || 0,
-          lastError: k.last_error || null,
-          lastUsedAt: k.last_used_at || null,
-          createdAt: k.created_at || nowIso,
-          updatedAt: k.updated_at || nowIso,
-        }));
+        const safeKeys = keys.map((k: any) => {
+          const lastUsed = k.last_used_at ? new Date(k.last_used_at) : null;
+          const now = new Date();
+          const isSameDay = lastUsed &&
+            lastUsed.getUTCFullYear() === now.getUTCFullYear() &&
+            lastUsed.getUTCMonth() === now.getUTCMonth() &&
+            lastUsed.getUTCDate() === now.getUTCDate();
+
+          let effectiveModel = k.model || 'gemini-3.5-flash-lite';
+          if (effectiveModel === 'gemini-flash-latest' || effectiveModel.includes('2.0-flash') || effectiveModel.includes('3.1-flash')) {
+            effectiveModel = 'gemini-3.5-flash-lite';
+          }
+
+          return {
+            id: k.id,
+            name: k.name || 'Unnamed Key',
+            provider: k.provider || 'gemini',
+            maskedKey: maskApiKey(k.api_key),
+            model: effectiveModel,
+            priority: k.priority || 1,
+            status: k.is_active === false ? 'disabled' : (k.health_status || k.status || 'active'),
+            isActive: k.is_active !== false,
+            healthStatus: k.health_status || 'healthy',
+            totalRequests: k.total_requests || 0,
+            todayRequests: isSameDay ? (k.today_requests || 0) : 0,
+            successRequests: k.success_requests || 0,
+            failedRequests: k.failed_requests || 0,
+            lastError: k.last_error || null,
+            lastUsedAt: k.last_used_at || null,
+            createdAt: k.created_at || nowIso,
+            updatedAt: k.updated_at || nowIso,
+          };
+        });
 
         const metrics = {
           totalKeys: safeKeys.length,
@@ -267,7 +281,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             provider: provider === 'google' ? 'gemini' : (provider || 'gemini'),
             api_key: trimmedKey,
             key_preview: keyPreview,
-            model: model || (provider === 'google' || provider === 'gemini' ? 'gemini-2.0-flash' : 'gpt-4o-mini'),
+            model: model || (provider === 'google' || provider === 'gemini' ? 'gemini-3.5-flash-lite' : 'gpt-4o-mini'),
             priority: Number(priority) || 1,
             is_active: true,
             health_status: 'healthy',
@@ -282,6 +296,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             console.error('[ADMIN] AI key insert error:', error);
             return res.status(500).json({ error: 'Failed to save AI key', details: error.message });
           }
+
+          invalidateAiKeysCache();
 
           return res.status(200).json({
             success: true,
@@ -310,6 +326,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
 
           await supabase.from('ai_keys').update(updatePayload).eq('id', keyId);
+          invalidateAiKeysCache();
           return res.status(200).json({ success: true, message: 'AI kaliti yangilandi! ✏️' });
         }
 
@@ -322,12 +339,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             health_status: nextActive ? 'healthy' : 'disabled',
             updated_at: nowIso 
           }).eq('id', keyId);
+          invalidateAiKeysCache();
           return res.status(200).json({ success: true, is_active: nextActive });
         }
 
         if (action === 'delete') {
           if (!keyId) return res.status(400).json({ error: 'Missing keyId' });
           await supabase.from('ai_keys').delete().eq('id', keyId);
+          invalidateAiKeysCache();
           return res.status(200).json({ success: true, message: 'AI kaliti o\'chirildi 🗑️' });
         }
 

@@ -541,20 +541,26 @@ async function parseTextWithAi(text: string) {
   const envKey = process.env.GEMINI_API_KEY;
   const keysToTry = candidateKeys.length > 0
     ? candidateKeys
-    : (envKey ? [{ id: 'env_gemini', api_key: envKey, name: 'ENV Key', model: 'gemini-3.6-flash' }] : []);
+    : (envKey ? [{ id: 'env_gemini', api_key: envKey, name: 'ENV Key', model: 'gemini-3.5-flash-lite' }] : []);
 
   if (keysToTry.length === 0) {
     return null;
   }
 
   const prompt = buildUzbekFinancialAiPrompt(normalized.normalizedText);
-  const activeModels = ['gemini-flash-latest', 'gemini-3.1-flash-lite', 'gemini-3.7-flash', 'gemini-3.6-flash'];
+  const activeModels = ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.5-flash'];
 
   for (const keyObj of keysToTry) {
     const rawApiKey = (keyObj.api_key || '').trim();
     if (!rawApiKey) continue;
 
-    for (const modelToUse of activeModels) {
+    let primary = keyObj.model || 'gemini-3.5-flash-lite';
+    if (primary === 'gemini-flash-latest' || primary.includes('2.0-flash') || primary.includes('3.1-flash')) {
+      primary = 'gemini-3.5-flash-lite';
+    }
+    const modelsToTry = [...new Set([primary, ...activeModels])];
+
+    for (const modelToUse of modelsToTry) {
       try {
         const ai = new GoogleGenAI({ apiKey: rawApiKey });
         const response = await ai.models.generateContent({
@@ -1340,17 +1346,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const envKey = process.env.GEMINI_API_KEY;
           const keysToTry = candidateKeys.length > 0
             ? candidateKeys
-            : (envKey ? [{ id: 'env_gemini', api_key: envKey, name: 'ENV Key', model: 'gemini-3.6-flash' }] : []);
+            : (envKey ? [{ id: 'env_gemini', api_key: envKey, name: 'ENV Key', model: 'gemini-3.5-flash-lite' }] : []);
 
-          const activeModels = ['gemini-flash-latest', 'gemini-3.1-flash-lite', 'gemini-3.7-flash', 'gemini-3.6-flash'];
+          const activeModels = ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.5-flash'];
 
           for (const keyObj of keysToTry) {
             const rawApiKey = (keyObj.api_key || '').trim();
             if (!rawApiKey) continue;
 
+            let primary = keyObj.model || 'gemini-3.5-flash-lite';
+            if (primary === 'gemini-flash-latest' || primary.includes('2.0-flash') || primary.includes('3.1-flash')) {
+              primary = 'gemini-3.5-flash-lite';
+            }
+            const modelsToTry = [...new Set([primary, ...activeModels])];
+
             let parsed: any = null;
             const srvCtx = getServerDateTimeContext();
-            for (const modelToUse of activeModels) {
+            for (const modelToUse of modelsToTry) {
               try {
                 const ai = new GoogleGenAI({ apiKey: rawApiKey });
                 const prompt = buildUzbekFinancialAiPrompt('Voice audio note containing spoken transaction in Uzbek/Russian', srvCtx);
@@ -1524,16 +1536,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const envKey = process.env.GEMINI_API_KEY;
           const keysToTry = candidateKeys.length > 0
             ? candidateKeys
-            : (envKey ? [{ id: 'env_gemini', api_key: envKey, name: 'ENV Key', model: 'gemini-3.6-flash' }] : []);
+            : (envKey ? [{ id: 'env_gemini', api_key: envKey, name: 'ENV Key', model: 'gemini-3.5-flash-lite' }] : []);
 
-          const activeModels = ['gemini-flash-latest', 'gemini-3.1-flash-lite', 'gemini-3.7-flash', 'gemini-3.6-flash'];
+          const activeModels = ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.5-flash'];
 
           for (const keyObj of keysToTry) {
             const rawApiKey = (keyObj.api_key || '').trim();
             if (!rawApiKey) continue;
 
+            let primary = keyObj.model || 'gemini-3.5-flash-lite';
+            if (primary === 'gemini-flash-latest' || primary.includes('2.0-flash') || primary.includes('3.1-flash')) {
+              primary = 'gemini-3.5-flash-lite';
+            }
+            const modelsToTry = [...new Set([primary, ...activeModels])];
+
             let parsed: any = null;
-            for (const modelToUse of activeModels) {
+            for (const modelToUse of modelsToTry) {
               try {
                 const ai = new GoogleGenAI({ apiKey: rawApiKey });
                 const prompt = `You are an OCR receipt scanner for Moliya AI. Extract receipt info into JSON:

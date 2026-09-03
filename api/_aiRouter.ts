@@ -38,6 +38,13 @@ export interface AiParseResult {
 // In-memory runtime fallback storage if database table is initializing
 let inMemoryKeys: AiKeyRecord[] = [];
 
+// High-speed candidate keys in-memory cache (60 seconds TTL)
+let cachedCandidateKeys: { keys: AiKeyRecord[]; expiresAt: number } | null = null;
+
+export function invalidateAiKeysCache() {
+  cachedCandidateKeys = null;
+}
+
 /**
  * Safely masks secret API key (e.g., "AIzaSy...ABCD" -> "••••••••••••ABCD")
  */
@@ -48,9 +55,14 @@ export function maskApiKey(key: string): string {
 
 /**
  * Retrieves ordered list of active candidate AI keys from Supabase
- * Handles both column schemas: (is_active + health_status) and (status)
+ * Uses 60-second in-memory cache to eliminate redundant database round-trips
  */
-export async function getCandidateAiKeys(): Promise<AiKeyRecord[]> {
+export async function getCandidateAiKeys(forceRefresh = false): Promise<AiKeyRecord[]> {
+  const nowMs = Date.now();
+  if (!forceRefresh && cachedCandidateKeys && cachedCandidateKeys.expiresAt > nowMs && cachedCandidateKeys.keys.length > 0) {
+    return cachedCandidateKeys.keys;
+  }
+
   try {
     // Fetch ALL keys — filter in code to handle both DB column schemas
     const { data: dbKeys, error } = await supabase
@@ -59,7 +71,7 @@ export async function getCandidateAiKeys(): Promise<AiKeyRecord[]> {
       .order('priority', { ascending: true });
 
     if (!error && Array.isArray(dbKeys) && dbKeys.length > 0) {
-      return dbKeys
+      const parsedKeys = dbKeys
         .filter((k: any) => {
           // Support both schemas: is_active (bool) OR status (string)
           const isActive = k.is_active !== undefined ? k.is_active : (k.status !== 'disabled');
@@ -74,12 +86,18 @@ export async function getCandidateAiKeys(): Promise<AiKeyRecord[]> {
             lastUsed.getUTCMonth() === now.getUTCMonth() &&
             lastUsed.getUTCDate() === now.getUTCDate();
 
+          // Auto-migrate legacy slow models to gemini-3.5-flash-lite
+          let effectiveModel = k.model || 'gemini-3.5-flash-lite';
+          if (effectiveModel === 'gemini-flash-latest' || effectiveModel.includes('2.0-flash') || effectiveModel.includes('3.1-flash')) {
+            effectiveModel = 'gemini-3.5-flash-lite';
+          }
+
           return {
             id: k.id,
             name: k.name || 'AI Key',
             provider: (k.provider === 'gemini' ? 'google' : (k.provider || 'google')) as any,
             api_key: k.api_key,
-            model: k.model || 'gemini-3.6-flash',
+            model: effectiveModel,
             priority: k.priority || 1,
             status: 'active' as any,
             total_requests: k.total_requests || 0,
@@ -91,6 +109,18 @@ export async function getCandidateAiKeys(): Promise<AiKeyRecord[]> {
             updated_at: k.updated_at
           };
         });
+
+      // Sort by least-recently-used (LRU) so requests are balanced across all keys
+      parsedKeys.sort((a: any, b: any) => {
+        const timeA = a.last_used_at ? new Date(a.last_used_at).getTime() : 0;
+        const timeB = b.last_used_at ? new Date(b.last_used_at).getTime() : 0;
+        return timeA - timeB;
+      });
+
+      if (parsedKeys.length > 0) {
+        cachedCandidateKeys = { keys: parsedKeys, expiresAt: nowMs + 60000 };
+        return [...parsedKeys];
+      }
     }
   } catch (err) {
     console.warn('[AI_ROUTER] Supabase ai_keys query notice:', err);
@@ -111,7 +141,7 @@ export async function getCandidateAiKeys(): Promise<AiKeyRecord[]> {
         name: 'Default Environment Key',
         provider: 'google',
         api_key: envKey,
-        model: 'gemini-3.6-flash',
+        model: 'gemini-3.5-flash-lite',
         priority: 1,
         status: 'active',
         total_requests: 0,
@@ -137,7 +167,25 @@ export async function recordKeyResult(
   const now = new Date();
   const nowIso = now.toISOString();
 
-  // 1. Update in-memory
+  // 1. Round-Robin Queue Rotation in memory
+  if (cachedCandidateKeys && Array.isArray(cachedCandidateKeys.keys)) {
+    const cachedIdx = cachedCandidateKeys.keys.findIndex(k => k.id === keyId);
+    if (cachedIdx !== -1) {
+      const [keyObj] = cachedCandidateKeys.keys.splice(cachedIdx, 1);
+      keyObj.total_requests = (keyObj.total_requests || 0) + 1;
+      keyObj.today_requests = (keyObj.today_requests || 0) + 1;
+      keyObj.last_used_at = nowIso;
+      if (isSuccess) {
+        keyObj.success_requests = (keyObj.success_requests || 0) + 1;
+      } else {
+        keyObj.failed_requests = (keyObj.failed_requests || 0) + 1;
+        keyObj.last_error = errorMessage || 'Failed';
+      }
+      // Move key to back of queue for round-robin rotation
+      cachedCandidateKeys.keys.push(keyObj);
+    }
+  }
+
   const memKey = inMemoryKeys.find(k => k.id === keyId);
   if (memKey) {
     memKey.total_requests = (memKey.total_requests || 0) + 1;
@@ -199,8 +247,11 @@ export async function recordKeyResult(
  */
 async function callGoogleGenAi(key: AiKeyRecord, prompt: string): Promise<any> {
   const cleanKey = (key.api_key || '').trim();
-  const primaryModel = (key.model || 'gemini-flash-latest').trim();
-  const candidateModels = [primaryModel, 'gemini-flash-latest', 'gemini-3.1-flash-lite', 'gemini-3.7-flash', 'gemini-3.6-flash'];
+  let primaryModel = (key.model || 'gemini-3.5-flash-lite').trim();
+  if (primaryModel === 'gemini-flash-latest' || primaryModel.includes('2.0-flash') || primaryModel.includes('3.1-flash')) {
+    primaryModel = 'gemini-3.5-flash-lite';
+  }
+  const candidateModels = [primaryModel, 'gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.5-flash'];
   const models = [...new Set(candidateModels)];
 
   let lastError: any = null;
@@ -214,18 +265,7 @@ async function callGoogleGenAi(key: AiKeyRecord, prompt: string): Promise<any> {
         config: {
           temperature: 0.1,
           responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              type: { type: Type.STRING },
-              amount: { type: Type.NUMBER },
-              category: { type: Type.STRING },
-              note: { type: Type.STRING },
-              title: { type: Type.STRING },
-              debtWho: { type: Type.STRING },
-            },
-            required: ["type", "amount", "category", "note"],
-          }
+          maxOutputTokens: 250
         }
       });
 
@@ -376,8 +416,12 @@ export async function testSpecificAiKey(keyData: {
   const cleanKey = (keyData.api_key || '').trim();
 
   try {
-    if (keyData.provider === 'google') {
-      const targetModel = keyData.model || 'gemini-3.6-flash';
+    const isGoogle = keyData.provider === 'google' || (keyData.provider as string) === 'gemini';
+    if (isGoogle) {
+      let targetModel = keyData.model || 'gemini-3.5-flash-lite';
+      if (targetModel === 'gemini-flash-latest' || targetModel.includes('2.0-flash') || targetModel.includes('3.1-flash')) {
+        targetModel = 'gemini-3.5-flash-lite';
+      }
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${cleanKey}`;
       const res = await fetch(url, {
         method: 'POST',

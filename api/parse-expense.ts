@@ -44,13 +44,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Build prompt with normalized financial context
     const prompt = buildUzbekFinancialPrompt(normalized.normalizedText || text);
 
-    // Try each key with active Gemini models
-    const activeModels = ['gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest'];
+    // Try each key with fastest active Gemini models first
+    const activeModels = ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.5-flash'];
 
     for (const key of candidateKeys) {
-      if (key.provider !== 'google') continue;
+      if (key.provider !== 'google' && (key.provider as string) !== 'gemini') continue;
       
-      const keyModels = [key.model, ...activeModels.filter(m => m !== key.model)].filter(Boolean);
+      let primary = key.model || 'gemini-3.5-flash-lite';
+      if (primary === 'gemini-flash-latest' || primary.includes('2.0-flash') || primary.includes('3.1-flash')) {
+        primary = 'gemini-3.5-flash-lite';
+      }
+      const keyModels = [...new Set([primary, ...activeModels])];
 
       for (const modelToUse of keyModels) {
         try {
@@ -60,19 +64,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             contents: prompt,
             config: {
               responseMimeType: "application/json",
-              responseSchema: {
-                type: Type.OBJECT,
-                properties: {
-                  type: { type: Type.STRING },
-                  amount: { type: Type.NUMBER },
-                  category: { type: Type.STRING },
-                  note: { type: Type.STRING },
-                  title: { type: Type.STRING },
-                  debtWho: { type: Type.STRING },
-                  date: { type: Type.STRING },
-                },
-                required: ["type", "amount", "category", "note"],
-              }
+              maxOutputTokens: 250,
+              temperature: 0.1
             }
           });
 

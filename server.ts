@@ -322,7 +322,7 @@ Input text: "${cleanText}"
 `;
 
       const response = await ai.models.generateContent({
-        model: "gemini-3.1-flash-lite",
+        model: "gemini-3.5-flash-lite",
         contents: promptText,
         config: {
           responseMimeType: "application/json",
@@ -373,7 +373,7 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
 `;
 
       const response = await ai.models.generateContent({
-        model: "gemini-3.1-flash-lite",
+        model: "gemini-3.5-flash-lite",
         contents: [
           {
             inlineData: {
@@ -565,7 +565,7 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
 - note: string`;
 
               const response = await ai.models.generateContent({
-                model: "gemini-3.1-flash-lite",
+                model: "gemini-3.5-flash-lite",
                 contents: [
                   {
                     inlineData: {
@@ -779,7 +779,7 @@ Return JSON object:
 - note: string (clean summary)
 `;
           const response = await ai.models.generateContent({
-            model: "gemini-3.1-flash-lite",
+            model: "gemini-3.5-flash-lite",
             contents: promptText,
             config: {
               responseMimeType: "application/json",
