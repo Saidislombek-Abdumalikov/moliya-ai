@@ -541,6 +541,20 @@ async function parseTextWithAi(text: string) {
   // Pre-process and normalize Uzbek abbreviations & multipliers (e.g. 14 mln, 50k, 2 yarim mln)
   const normalized = normalizeUzbekFinancialText(text);
 
+  // 1. ROCKET FAST PATH (<1ms): If amount and category are cleanly inferred locally, return immediately!
+  if (normalized.extractedAmount && normalized.extractedAmount > 0 && normalized.inferredCategory) {
+    return {
+      isValid: true,
+      type: normalized.inferredType || 'expense',
+      amount: normalized.extractedAmount,
+      category: normalized.inferredCategory,
+      name: normalized.originalText.slice(0, 80),
+      note: normalized.originalText,
+      date: getServerDateTimeContext().currentDate,
+      debtWho: ''
+    };
+  }
+
   const candidateKeys = await getCandidateAiKeys();
   const envKey = process.env.GEMINI_API_KEY;
   const keysToTry = candidateKeys.length > 0
@@ -548,6 +562,18 @@ async function parseTextWithAi(text: string) {
     : (envKey ? [{ id: 'env_gemini', api_key: envKey, name: 'ENV Key', model: 'gemini-3.5-flash-lite' }] : []);
 
   if (keysToTry.length === 0) {
+    if (normalized.extractedAmount && normalized.extractedAmount > 0) {
+      return {
+        isValid: true,
+        type: normalized.inferredType || 'expense',
+        amount: normalized.extractedAmount,
+        category: normalized.inferredCategory || 'Boshqa',
+        name: normalized.originalText.slice(0, 80),
+        note: normalized.originalText,
+        date: getServerDateTimeContext().currentDate,
+        debtWho: ''
+      };
+    }
     return null;
   }
 
@@ -567,26 +593,24 @@ async function parseTextWithAi(text: string) {
     for (const modelToUse of modelsToTry) {
       try {
         const ai = new GoogleGenAI({ apiKey: rawApiKey });
-        const response = await ai.models.generateContent({
+
+        let timer: any;
+        const timeoutPromise = new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('AI_TIMEOUT')), 2500);
+        });
+
+        const generatePromise = ai.models.generateContent({
           model: modelToUse,
           contents: prompt,
           config: {
             responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                type: { type: Type.STRING },
-                amount: { type: Type.NUMBER },
-                category: { type: Type.STRING },
-                note: { type: Type.STRING },
-                title: { type: Type.STRING },
-                date: { type: Type.STRING },
-                debtWho: { type: Type.STRING }
-              },
-              required: ["type", "amount", "category", "note"]
-            }
+            maxOutputTokens: 200,
+            temperature: 0.1
           }
         });
+
+        const response: any = await Promise.race([generatePromise, timeoutPromise]);
+        clearTimeout(timer);
 
         if (response?.text) {
           const rawParsed = JSON.parse(response.text);
@@ -598,7 +622,8 @@ async function parseTextWithAi(text: string) {
         }
       } catch (e: any) {
         recordKeyResult(keyObj.id, false, e?.message, 'temporary').catch(() => {});
-        console.warn(`[BOT] Gemini parse error with key on ${modelToUse}, trying next...`, e?.message);
+        console.warn(`[BOT] Gemini parse error with key on ${modelToUse}:`, e?.message);
+        break; // try next key immediately
       }
     }
   }
@@ -1562,7 +1587,12 @@ Today: ${srvCtx.currentDate}.`;
 - note: store or merchant name and summary
 - title: merchant name`;
 
-                const imgResult = await ai.models.generateContent({
+                let timer: any;
+                const timeoutPromise = new Promise((_, reject) => {
+                  timer = setTimeout(() => reject(new Error('AI_TIMEOUT')), 3500);
+                });
+
+                const imgPromise = ai.models.generateContent({
                   model: modelToUse,
                   contents: [
                     {
@@ -1579,9 +1609,14 @@ Today: ${srvCtx.currentDate}.`;
                     }
                   ],
                   config: {
-                    responseMimeType: "application/json"
+                    responseMimeType: "application/json",
+                    maxOutputTokens: 200,
+                    temperature: 0.1
                   }
                 });
+
+                const imgResult: any = await Promise.race([imgPromise, timeoutPromise]);
+                clearTimeout(timer);
 
                 if (imgResult.text) {
                   const resJson = JSON.parse(imgResult.text);
@@ -1593,6 +1628,7 @@ Today: ${srvCtx.currentDate}.`;
                 }
               } catch (imgErr: any) {
                 recordKeyResult(keyObj.id, false, imgErr?.message, 'temporary').catch(() => {});
+                break;
               }
             }
 

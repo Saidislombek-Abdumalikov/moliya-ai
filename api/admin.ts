@@ -982,7 +982,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const { data: userRow, error } = await supabase.from('users').select('id, name, telegram, telegram_id, onboarding').eq('id', userId).maybeSingle();
       if (error) return res.status(500).json({ error: error.message });
 
-      const messages = Array.isArray(userRow?.onboarding?.bot_messages) ? userRow.onboarding.bot_messages : [];
+      const rawMessages = Array.isArray(userRow?.onboarding?.bot_messages) ? userRow.onboarding.bot_messages : [];
+      const messages = rawMessages.map((m: any) => {
+        const fileId = m.metadata?.file_id;
+        return {
+          ...m,
+          fileDownloadUrl: fileId ? `/api/admin?route=telegram-file&fileId=${encodeURIComponent(fileId)}&download=1` : null,
+          filePreviewUrl: fileId ? `/api/admin?route=telegram-file&fileId=${encodeURIComponent(fileId)}` : null
+        };
+      });
+
       return res.status(200).json({
         success: true,
         userId,
@@ -991,6 +1000,49 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     } catch (e: any) {
       return res.status(500).json({ error: 'Failed to fetch bot messages', details: e?.message });
+    }
+  }
+
+  // ==========================================
+  // ROUTE: /api/admin/telegram-file
+  // Open / download any file (photos, audio, receipts, documents) sent to the bot
+  // ==========================================
+  if (route === 'telegram-file') {
+    if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+    try {
+      const fileId = req.query.fileId as string;
+      if (!fileId) return res.status(400).json({ error: 'Missing fileId parameter' });
+
+      const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+      if (!BOT_TOKEN) return res.status(500).json({ error: 'Missing TELEGRAM_BOT_TOKEN' });
+
+      const tgRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${encodeURIComponent(fileId)}`);
+      const tgData: any = await tgRes.json();
+
+      if (!tgData.ok || !tgData.result?.file_path) {
+        return res.status(404).json({ error: 'File not found on Telegram servers', details: tgData });
+      }
+
+      const filePath = tgData.result.file_path;
+      const downloadUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
+
+      // If direct download or raw stream requested, redirect directly to file
+      if (req.query.download === '1' || req.query.raw === '1') {
+        return res.redirect(302, downloadUrl);
+      }
+
+      return res.status(200).json({
+        success: true,
+        fileId,
+        filePath,
+        fileSize: tgData.result.file_size,
+        downloadUrl,
+        isImage: /\.(jpe?g|png|webp|gif)$/i.test(filePath),
+        isAudio: /\.(oga|ogg|mp3|m4a)$/i.test(filePath),
+        isVideo: /\.(mp4|mov)$/i.test(filePath)
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: 'Failed to retrieve Telegram file', details: err?.message });
     }
   }
 
