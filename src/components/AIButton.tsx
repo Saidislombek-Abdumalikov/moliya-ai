@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 import { useFinance } from '../FinanceContext'
 
@@ -71,10 +71,19 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
   const [isProcessing, setIsProcessing] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [aiError, setAiError] = useState('')
+  const [tipIndex, setTipIndex] = useState(0)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const recognitionRef = useRef<any>(null)
   const isStartingVoiceRef = useRef(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (!isProcessing) return
+    const interval = setInterval(() => {
+      setTipIndex(prev => (prev + 1) % 4)
+    }, 2200)
+    return () => clearInterval(interval)
+  }, [isProcessing])
 
   const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -480,11 +489,11 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
         await setHasSampleData(false)
       }
 
-      // 2. Database confirmed success: show success checkmark and close
+      // 2. Database confirmed success: show celebratory card and auto-dismiss
       setSaved(true)
       setTimeout(() => {
         closeModal()
-      }, 1000)
+      }, 2400)
     } catch (saveErr: any) {
       console.error('[AIButton] Failed to save transaction to database:', saveErr)
       setAiError(
@@ -602,27 +611,129 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                 </button>
               </div>
 
-            {/* Saved state */}
+            {/* Celebratory Post-Transaction Marketing Card */}
             {saved && (
-              <div style={{ textAlign: 'center', padding: '20px 0' }}>
+              <motion.div
+                initial={{ opacity: 0, scale: 0.92 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ type: 'spring', damping: 20 }}
+                style={{ textAlign: 'center', padding: '16px 8px 12px' }}
+              >
+                {/* Glowing Celebratory Badge */}
+                <div style={{ position: 'relative', width: 76, height: 76, margin: '0 auto 16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <motion.div
+                    animate={{ scale: [1, 1.35, 1], opacity: [0.35, 0.75, 0.35] }}
+                    transition={{ repeat: Infinity, duration: 2, ease: "easeInOut" }}
+                    style={{
+                      position: 'absolute',
+                      width: 76,
+                      height: 76,
+                      borderRadius: '50%',
+                      background: entry.type === 'income'
+                        ? 'radial-gradient(circle, rgba(22,163,74,0.35) 0%, rgba(22,163,74,0) 70%)'
+                        : 'radial-gradient(circle, rgba(124,58,237,0.35) 0%, rgba(124,58,237,0) 70%)',
+                    }}
+                  />
+                  <div style={{
+                    width: 58,
+                    height: 58,
+                    borderRadius: 20,
+                    background: entry.type === 'income'
+                      ? 'linear-gradient(135deg, #22C55E 0%, #16A34A 100%)'
+                      : 'linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    boxShadow: entry.type === 'income'
+                      ? '0 8px 24px rgba(22,163,74,0.35)'
+                      : '0 8px 24px rgba(124,58,237,0.35)',
+                    color: '#ffffff',
+                    fontSize: 28,
+                    fontWeight: 800,
+                  }}>
+                    ✓
+                  </div>
+                </div>
+
+                <h3 style={{ fontSize: 20, fontWeight: 800, color: '#1E1A3C', marginBottom: 6 }}>
+                  {language === 'uz' ? 'Muvaffaqiyatli saqlandi! 🎉' : language === 'uz_cyrl' ? 'Муваффақиятли сақланди! 🎉' : language === 'ru' ? 'Успешно сохранено! 🎉' : 'Successfully Saved! 🎉'}
+                </h3>
+
+                {/* Amount & Category Pill */}
                 <div style={{
-                  width: 64, height: 64, borderRadius: 20, background: '#F0FDF4',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  margin: '0 auto 12px', fontSize: 28,
-                }}>✓</div>
-                <p style={{ fontSize: 17, fontWeight: 600, color: '#16A34A' }}>{language === 'uz' ? 'Saqlandi!' : language === 'uz_cyrl' ? 'Сақланди!' : language === 'ru' ? 'Сохранено!' : 'Saved!'}</p>
-              </div>
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  background: entry.type === 'income' ? '#F0FDF4' : '#FEF2F2',
+                  border: `1px solid ${entry.type === 'income' ? '#DCFCE7' : '#FEE2E2'}`,
+                  borderRadius: 20,
+                  padding: '6px 16px',
+                  margin: '6px auto 14px',
+                }}>
+                  <span style={{
+                    fontSize: 16,
+                    fontWeight: 800,
+                    color: entry.type === 'income' ? '#16A34A' : '#DC2626',
+                  }}>
+                    {entry.type === 'income' ? '+' : '-'}{Number(String(entry.amount).replace(/[^\d]/g, '') || 0).toLocaleString('uz-UZ').replace(/,/g, ' ')} so'm
+                  </span>
+                  {entry.category && (
+                    <span style={{ fontSize: 13, fontWeight: 600, color: '#5C548A' }}>
+                      • {entry.category}
+                    </span>
+                  )}
+                </div>
+
+                {/* Engaging Marketing Motivation Card */}
+                <div style={{
+                  background: 'linear-gradient(135deg, #F8F7FF 0%, #F5F3FF 100%)',
+                  border: '1px solid #EDE9FE',
+                  borderRadius: 16,
+                  padding: '14px 16px',
+                  marginBottom: 16,
+                  textAlign: 'left'
+                }}>
+                  <p style={{ fontSize: 13, color: '#6D28D9', fontWeight: 600, lineHeight: 1.45, margin: 0 }}>
+                    ✨ {language === 'uz'
+                      ? "Moliyaviy intizom — kelajak boyligingiz! Balansingiz va diagrammalar yangilandi."
+                      : language === 'uz_cyrl'
+                      ? "Молиявий интизом — келажак бойлигингиз! Балансингиз ва диаграммалар янгиланди."
+                      : language === 'ru'
+                      ? "Финансовая дисциплина — ключ к богатству! Баланс и графики обновлены."
+                      : "Financial discipline is the path to wealth! Your balance and charts have been updated."}
+                  </p>
+                </div>
+
+                {/* Instant CTA Button */}
+                <button
+                  onClick={closeModal}
+                  style={{
+                    width: '100%',
+                    padding: '14px 20px',
+                    borderRadius: 16,
+                    border: 'none',
+                    background: 'linear-gradient(135deg, #7C3AED 0%, #6D28D9 100%)',
+                    color: '#ffffff',
+                    fontSize: 15,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    boxShadow: '0 4px 14px rgba(124,58,237,0.35)',
+                  }}
+                >
+                  {language === 'uz' ? "Balansni ko'rish 🚀" : language === 'uz_cyrl' ? "Балансни кўриш 🚀" : language === 'ru' ? "Смотреть баланс 🚀" : "View Balance 🚀"}
+                </button>
+              </motion.div>
             )}
 
-            {/* Processing state */}
+            {/* Processing state with dynamic rotating tips */}
             {isProcessing && (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 0', minHeight: 250 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '30px 10px', minHeight: 270 }}>
                 {/* Glowing pulsating AI circle */}
-                <div style={{ position: 'relative', width: 90, height: 90, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 24 }}>
+                <div style={{ position: 'relative', width: 90, height: 90, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 20 }}>
                   <motion.div
                     animate={{
-                      scale: [1, 1.25, 1],
-                      opacity: [0.3, 0.6, 0.3],
+                      scale: [1, 1.3, 1],
+                      opacity: [0.3, 0.7, 0.3],
                     }}
                     transition={{
                       repeat: Infinity,
@@ -634,7 +745,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                       width: 90,
                       height: 90,
                       borderRadius: '50%',
-                      background: 'radial-gradient(circle, rgba(124,58,237,0.3) 0%, rgba(124,58,237,0) 70%)',
+                      background: 'radial-gradient(circle, rgba(124,58,237,0.35) 0%, rgba(124,58,237,0) 70%)',
                     }}
                   />
                   <motion.div
@@ -647,34 +758,66 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                       ease: "easeInOut"
                     }}
                     style={{
-                      width: 54,
-                      height: 54,
+                      width: 56,
+                      height: 56,
                       borderRadius: 18,
-                      background: '#7C3AED',
+                      background: 'linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%)',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      boxShadow: '0 8px 24px rgba(124,58,237,0.4)',
+                      boxShadow: '0 8px 24px rgba(124,58,237,0.45)',
                     }}
                   >
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                      <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                      <path d="M2 17L12 22L22 17" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                      <path d="M2 12L12 17L22 12" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
+                      <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M2 17L12 22L22 17" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M2 12L12 17L22 12" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
                   </motion.div>
                 </div>
 
                 <motion.p
-                  animate={{ opacity: [0.5, 1, 0.5] }}
+                  animate={{ opacity: [0.6, 1, 0.6] }}
                   transition={{ repeat: Infinity, duration: 1.5 }}
-                  style={{ fontSize: 16, fontWeight: 600, color: '#1E1A3C', marginBottom: 6 }}
+                  style={{ fontSize: 17, fontWeight: 700, color: '#1E1A3C', marginBottom: 6 }}
                 >
-                  {language === 'uz' ? "AI qayta ishlayapti..." : language === 'uz_cyrl' ? "AI қайта ишлаяпти..." : language === 'ru' ? "ИИ обрабатывает..." : "AI processing..."}
+                  {language === 'uz' ? "AI tahlil qilmoqda..." : language === 'uz_cyrl' ? "AI таҳлил қилмоқда..." : language === 'ru' ? "ИИ анализирует..." : "AI analyzing..."}
                 </motion.p>
-                <p style={{ fontSize: 13, color: '#8B82C4', textAlign: 'center', maxWidth: 280 }}>
-                  {language === 'uz' ? "Matningiz tahlil qilinmoqda va xarajat aniqlanmoqda" : language === 'uz_cyrl' ? "Матнингиз таҳлил қилинмоқда ва харажат аниқланмоқда" : language === 'ru' ? "Ваш текст анализируется для определения транзакции" : "Analyzing your text to parse transaction details"}
+                <p style={{ fontSize: 13, color: '#8B82C4', textAlign: 'center', maxWidth: 300, marginBottom: 16 }}>
+                  {language === 'uz' ? "Summa, toifa va ma'lumotlar aniqlanmoqda" : language === 'uz_cyrl' ? "Сумма, тоифа ва маълумотлар аниқланмоқда" : language === 'ru' ? "Определение суммы, категории и деталей" : "Extracting amount, category, and details"}
                 </p>
+
+                {/* Rotating engaging marketing/wisdom tip */}
+                <div style={{
+                  background: '#F7F5FF',
+                  border: '1px solid #DDD6FE',
+                  borderRadius: 14,
+                  padding: '10px 14px',
+                  maxWidth: 320,
+                  textAlign: 'center',
+                  minHeight: 52,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}>
+                  <AnimatePresence mode="wait">
+                    <motion.p
+                      key={tipIndex}
+                      initial={{ opacity: 0, y: 5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -5 }}
+                      transition={{ duration: 0.25 }}
+                      style={{ fontSize: 12, color: '#6D28D9', fontWeight: 600, margin: 0, lineHeight: 1.4 }}
+                    >
+                      {[
+                        language === 'uz' ? "💡 Har kuni xarajatlarni yozib borish — moliyaviy erkinlik sari eng katta qadam!" : "💡 Recording daily expenses is the greatest step toward financial freedom!",
+                        language === 'uz' ? "⚡ Moliya AI cheklar va xabarlarni 1 soniyada avtomatik toifalarga ajratadi" : "⚡ Moliya AI categorizes receipts and messages in 1 second",
+                        language === 'uz' ? "🎯 Oylik limitingizni belgilang va orzuingizdagi maqsadga 2 barobar tezroq erishing" : "🎯 Set your monthly limit and reach your goals twice as fast",
+                        language === 'uz' ? "👑 VIP Premium bilan cheksiz AI va chuqur tahlillarga ega bo'ling" : "👑 Enjoy unlimited AI and deep analytics with VIP Premium"
+                      ][tipIndex]}
+                    </motion.p>
+                  </AnimatePresence>
+                </div>
               </div>
             )}
 

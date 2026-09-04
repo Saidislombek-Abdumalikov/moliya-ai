@@ -37,6 +37,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
+    // Rocket Fast Path (<1ms): If amount and category are cleanly inferred locally, return immediately!
+    if (normalized.extractedAmount && normalized.extractedAmount > 0 && normalized.inferredCategory) {
+      const fmtAmt = Number(normalized.extractedAmount).toLocaleString('en-US').replace(/,/g, ' ');
+      return res.status(200).json({
+        success: true,
+        type: normalized.inferredType || 'expense',
+        amount: fmtAmt,
+        category: normalized.inferredCategory,
+        note: normalized.originalText,
+        title: normalized.originalText.slice(0, 80),
+        debtWho: '',
+        date: new Date().toISOString().slice(0, 10)
+      });
+    }
+
     if (candidateKeys.length === 0) {
       return res.status(500).json({ error: 'No active AI keys configured' });
     }

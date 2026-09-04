@@ -537,6 +537,57 @@ const CATEGORY_EMOJIS: Record<string, string> = {
   'Hamkasb': '👥'
 };
 
+// ── Marketing & Financial Wisdom Hooks ───────────────────────
+const MARKETING_HOOKS = [
+  "💡 <b>Moliya AI Maslahati:</b> Har bir xarajatni o'z vaqtida yozib borish oyiga o'rtacha 15-20% ortiqcha sarf-xarajatning oldini oladi!",
+  "🎯 <b>Moliyaviy Erkinlik:</b> Oylik xarajat limitingizni belgilang va ko'zlagan maqsadingizga 2 barobar tezroq erishing!",
+  "📊 <b>Jonli Tahlil:</b> Balansingiz va xarajatlar tuzilmasini interaktiv grafiklar bilan Moliya Mini App orqali kuzating.",
+  "⚡ <b>Tezkorlik:</b> Chek surati yoki 2 soniyali ovozli xabar orqali ham barcha xarajatlaringizni 1 zumda kiritishingiz mumkin!",
+  "⭐ <b>VIP Imkoniyatlar:</b> Cheksiz AI tahlili, chuqur oylik hisobotlar va eksklyuziv imkoniyatlar uchun VIP Premium-ga ulaning!"
+];
+
+function buildTransactionSuccessCard(tx: {
+  id?: string;
+  type?: string;
+  category?: string;
+  amount: number;
+  name?: string;
+  title?: string;
+  note?: string;
+  date?: string;
+  time?: string;
+}, isInc: boolean, txId: string) {
+  const cat = tx.category || 'Boshqa';
+  const emoji = CATEGORY_EMOJIS[cat] || (isInc ? '💰' : '💸');
+  const absAmount = Math.abs(Number(tx.amount) || 0);
+  const formattedAmount = absAmount.toLocaleString('uz-UZ').replace(/,/g, ' ');
+  const randomHook = MARKETING_HOOKS[Math.floor(Math.random() * MARKETING_HOOKS.length)];
+  const label = tx.title || tx.name || tx.note || cat;
+
+  const text =
+    `✨ <b>Muvaffaqiyatli saqlandi!</b>\n\n` +
+    `${isInc ? '🟢' : '🔴'} <b>Turi:</b> ${isInc ? 'Daromad' : 'Xarajat'}\n` +
+    `${emoji} <b>Kategoriya:</b> ${cat}\n` +
+    `💰 <b>Summa:</b> ${formattedAmount} so'm\n` +
+    `📝 <b>Izoh:</b> ${label}\n` +
+    `📅 <b>Sana:</b> ${tx.date || 'Bugun'}${tx.time ? ` | ${tx.time}` : ''}\n\n` +
+    `───────────────────\n` +
+    `${randomHook}`;
+
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: "📱 Mini Appni ochish (Jonli Balans) 🚀", web_app: { url: appUrl } }],
+      [
+        { text: "📊 Bugungi hisobot", callback_data: "today_stats" },
+        { text: "⭐ VIP Premium", callback_data: "view_premium" }
+      ],
+      [{ text: "🗑 Bekor qilish", callback_data: `del_${txId}` }]
+    ]
+  };
+
+  return { text, keyboard };
+}
+
 async function parseTextWithAi(text: string) {
   // Pre-process and normalize Uzbek abbreviations & multipliers (e.g. 14 mln, 50k, 2 yarim mln)
   const normalized = normalizeUzbekFinancialText(text);
@@ -838,7 +889,7 @@ async function renderStatsMessage(userId: string) {
   const catTotals: Record<string, number> = {};
 
   for (const t of txs) {
-    const amt = Number(t.amount || 0);
+    const amt = Math.abs(Number(t.amount || 0));
     if (t.type === 'income') {
       totalIncome += amt;
     } else {
@@ -990,9 +1041,53 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           return res.status(200).json({ status: 'ok' });
         }
 
-        if (data === 'view_stats' || data === 'menu_stats') {
-          const { text, keyboard } = await renderStatsMessage(userId);
-          await editTelegramMessage(chatId, cb.message.message_id, text, keyboard, userId);
+        if (data === 'today_stats') {
+          const { data: u } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
+          const txs = Array.isArray(u?.transactions) ? u.transactions : [];
+
+          const srv = getServerDateTimeContext();
+          const todayStr = srv.currentDate;
+          const [tY, tM, tD] = todayStr.split('-').map(Number);
+
+          const todayTxs = txs.filter((t: any) => {
+            if (t.date === todayStr) return true;
+            if (t.day === tD && t.month === tM && t.year === tY) return true;
+            if (t.date && typeof t.date === 'string' && t.date.startsWith(todayStr)) return true;
+            return false;
+          });
+
+          let todayExpense = 0;
+          let todayIncome = 0;
+          let expenseCount = 0;
+
+          for (const t of todayTxs) {
+            const amt = Math.abs(Number(t.amount) || 0);
+            if (t.type === 'income') {
+              todayIncome += amt;
+            } else {
+              todayExpense += amt;
+              expenseCount++;
+            }
+          }
+
+          const netToday = todayIncome - todayExpense;
+          const netSign = netToday >= 0 ? '+' : '';
+
+          const reportText =
+            `📊 <b>Bugungi Moliyaviy Hisobot (${todayStr})</b>\n\n` +
+            `🔴 <b>Bugungi xarajatlar:</b> ${todayExpense.toLocaleString('uz-UZ').replace(/,/g, ' ')} so'm (${expenseCount} ta)\n` +
+            `🟢 <b>Bugungi daromadlar:</b> ${todayIncome.toLocaleString('uz-UZ').replace(/,/g, ' ')} so'm\n` +
+            `⚖️ <b>Kunlik qoldiq:</b> ${netSign}${netToday.toLocaleString('uz-UZ').replace(/,/g, ' ')} so'm\n\n` +
+            `💡 <i>Barcha xarajatlar tahlili, toifalar taqsimoti va chiroyli grafiklar uchun Mini Appni oching!</i>`;
+
+          const reportKeyboard = {
+            inline_keyboard: [
+              [{ text: "📱 Mini Appda to'liq ko'rish 🚀", web_app: { url: appUrl } }],
+              [{ text: "💳 Kartalarim", callback_data: "menu_cards" }, { text: "📈 Oylik statistika", callback_data: "menu_stats" }]
+            ]
+          };
+
+          await editTelegramMessage(chatId, cb.message.message_id, reportText, reportKeyboard, userId);
           await answerCallbackQuery(cb.id);
           return res.status(200).json({ status: 'ok' });
         }
@@ -1376,6 +1471,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 const ai = new GoogleGenAI({ apiKey: rawApiKey });
                 const prompt = `Listen to this financial audio in Uzbek/Russian and extract into JSON:
 {"type":"expense"|"income"|"debt"|"lending","amount":number,"category":string,"title":string,"note":string,"date":"YYYY-MM-DD","debtWho":string}
+CRITICAL RULES:
+- Default type is "expense".
+- Spending money (taksi, ovqat, to'ladim, ketdi, sarfladim, xarid, bozorlik) is ALWAYS "expense".
+- Only mark type="income" if words clearly indicate receiving money (maosh, oylik, daromad, stipendiya, tushdi, berishdi, topdim).
 Today: ${srvCtx.currentDate}.`;
 
                 let timer: any;
@@ -1425,6 +1524,13 @@ Today: ${srvCtx.currentDate}.`;
             }
 
             if (parsed) {
+              // Safeguard against false-positive income classifications for common expenses
+              const incomeKeywords = /\b(maosh|oylik|daromad|avans|stipendiya|tushdi|keldi|ish haqi|berishdi|topdim)\b/i;
+              const isKnownExpenseCat = ['Transport', 'Oziq-ovqat', 'Kiyim', 'Kommunal', 'Sog\'liq', 'Ta\'lim'].includes(parsed.category);
+              if (parsed.type === 'income' && (isKnownExpenseCat || !incomeKeywords.test(`${parsed.title || ''} ${parsed.note || ''}`))) {
+                parsed.type = 'expense';
+              }
+
               const txId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
               const safeD = parseSafeDate(parsed.date);
               const rawAmt = Math.abs(Number(parsed.amount) || 0);
@@ -1461,26 +1567,13 @@ Today: ${srvCtx.currentDate}.`;
                 await saveBotTransaction(userId, newTx);
                 await recordAiUsage(userId, 'text', parsed.note || 'Voice expense', quota.isPremium);
 
-                const emoji = CATEGORY_EMOJIS[newTx.category] || (newTx.type === 'income' ? '💰' : '💸');
                 const isInc = newTx.type === 'income';
-                const successMsg =
-                  `✅ <b>Ovozli ${isInc ? 'daromad' : 'xarajat'} saqlandi!</b>\n\n` +
-                  `${emoji} <b>Kategoriya:</b> ${newTx.category}\n` +
-                  `💰 <b>Summa:</b> ${newTx.amount.toLocaleString()} so'm\n` +
-                  `📝 <b>Izoh:</b> ${newTx.name}\n` +
-                  `📅 <b>Sana:</b> ${newTx.date} ${newTx.time}`;
-
-                const inlineKb = {
-                  inline_keyboard: [
-                    [{ text: "🗑 O'chirish", callback_data: `del_${txId}` }],
-                    [{ text: "📱 Moliya Mini Appni ochish", web_app: { url: appUrl } }]
-                  ]
-                };
+                const successCard = buildTransactionSuccessCard(newTx, isInc, txId);
 
                 if (statusMsgId) {
-                  await editTelegramMessage(chatId, statusMsgId, successMsg, inlineKb, userId, 'ai_response');
+                  await editTelegramMessage(chatId, statusMsgId, successCard.text, successCard.keyboard, userId, 'ai_response');
                 } else {
-                  await sendTelegramMessage(chatId, successMsg, inlineKb, userId, 'ai_response');
+                  await sendTelegramMessage(chatId, successCard.text, successCard.keyboard, userId, 'ai_response');
                 }
                 return res.status(200).json({ status: 'ok' });
               } catch (saveErr) {
@@ -1665,25 +1758,12 @@ Today: ${srvCtx.currentDate}.`;
                 await saveBotTransaction(userId, newTx);
                 await recordAiUsage(userId, 'receipt', parsed.note || 'Receipt scan', quota.isPremium);
 
-                const emoji = CATEGORY_EMOJIS[newTx.category] || '🧾';
-                const successMsg =
-                  `🧾 <b>Chek skanerlandi va saqlandi!</b>\n\n` +
-                  `${emoji} <b>Kategoriya:</b> ${newTx.category}\n` +
-                  `💰 <b>Summa:</b> ${newTx.amount.toLocaleString()} so'm\n` +
-                  `📝 <b>Izoh:</b> ${newTx.name}\n` +
-                  `📅 <b>Sana:</b> ${newTx.date} ${newTx.time}`;
-
-                const inlineKb = {
-                  inline_keyboard: [
-                    [{ text: "🗑 O'chirish", callback_data: `del_${txId}` }],
-                    [{ text: "📱 Mini Appda ko'rish", web_app: { url: appUrl } }]
-                  ]
-                };
+                const successCard = buildTransactionSuccessCard(newTx, false, txId);
 
                 if (statusMsgId) {
-                  await editTelegramMessage(chatId, statusMsgId, successMsg, inlineKb, userId, 'ai_response');
+                  await editTelegramMessage(chatId, statusMsgId, successCard.text, successCard.keyboard, userId, 'ai_response');
                 } else {
-                  await sendTelegramMessage(chatId, successMsg, inlineKb, userId, 'ai_response');
+                  await sendTelegramMessage(chatId, successCard.text, successCard.keyboard, userId, 'ai_response');
                 }
                 return res.status(200).json({ status: 'ok' });
               } catch (saveErr) {
@@ -1830,22 +1910,10 @@ Today: ${srvCtx.currentDate}.`;
           await saveBotTransaction(userId, newTx);
           await recordAiUsage(userId, 'text', text, quota.isPremium);
 
-          const emoji = CATEGORY_EMOJIS[newTx.category] || (newTx.type === 'income' ? '💰' : '💸');
           const isInc = newTx.type === 'income';
+          const successCard = buildTransactionSuccessCard(newTx, isInc, txId);
 
-          const successMsg =
-            `${isInc ? '🟢' : '🔴'} <b>${isInc ? 'Daromad' : 'Xarajat'} saqlandi!</b>\n\n` +
-            `${emoji} <b>Kategoriya:</b> ${newTx.category}\n` +
-            `💰 <b>Summa:</b> ${newTx.amount.toLocaleString()} so'm\n` +
-            `📝 <b>Izoh:</b> ${newTx.name}\n` +
-            `📅 <b>Sana:</b> ${newTx.date} ${newTx.time}`;
-
-          await sendTelegramMessage(chatId, successMsg, {
-            inline_keyboard: [
-              [{ text: "🗑 O'chirish", callback_data: `del_${txId}` }],
-              [{ text: "📱 Moliya Mini Appni ochish", web_app: { url: appUrl } }]
-            ]
-          }, userId, 'ai_response');
+          await sendTelegramMessage(chatId, successCard.text, successCard.keyboard, userId, 'ai_response');
           return res.status(200).json({ status: 'ok' });
         } catch (saveErr) {
           console.error('[BOT] Error saving text transaction to Supabase:', saveErr);
