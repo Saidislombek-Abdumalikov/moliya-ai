@@ -69,13 +69,135 @@ const UZBEK_WORD_NUMBERS: Record<string, number> = {
   'yarim': 0.5
 };
 
-export interface NormalizedFinancialInput {
-  originalText: string;
-  normalizedText: string;
-  extractedAmount?: number;
-  inferredType?: 'expense' | 'income' | 'debt' | 'lending';
-  inferredCategory?: string;
+export interface TurboTransaction {
+  type: 'expense' | 'income' | 'debt' | 'lending';
+  amount: number;
+  currency: string;
+  category: string;
+  description: string;
+  date: string; // YYYY-MM-DD
+  time: string | null;
+  counterparty: string | null;
+  confidence: number;
 }
+
+export interface TurboParseResult {
+  intent: 'record_transaction' | 'query_finances' | 'general_question' | 'unknown';
+  transactions: TurboTransaction[];
+  needs_clarification: boolean;
+  clarification_reason: string | null;
+  overall_confidence: number;
+  is_local_turbo: boolean;
+}
+
+/**
+ * High-speed extractor for spoken and written numbers in Uzbek & Russian
+ */
+export function extractUzbekNumber(raw: string): number | null {
+  if (!raw || typeof raw !== 'string') return null;
+  let text = raw.toLowerCase().replace(/[`ʻ‘’]/g, "'");
+
+  // Multiplier abbreviations
+  text = text.replace(/(\d+)\s*(k|к)\b/gi, '$1000');
+  text = text.replace(/(\d+)\s*(mln|млн|million|миллион)\b/gi, (_, n) => `${n}000000`);
+  text = text.replace(/(\d+)\s*(m|м)\b(?!\w)/gi, (_, n) => `${n}000000`);
+  text = text.replace(/(\d+)\s*(ming|минг)\b/gi, (_, n) => `${n}000`);
+
+  // Decimals & "yarim" (e.g. 2 yarim mln, 2.5 mln, 1.5m)
+  text = text.replace(/(\d+)\s*(yarim|\.5|,5)\s*(mln|million|000000)\b/gi, (_, n) => `${n}500000`);
+  text = text.replace(/(\d+)\s*(yarim|\.5|,5)\s*(ming|000)\b/gi, (_, n) => `${n}500`);
+  text = text.replace(/(\d+)[.,](\d+)\s*(mln|million|000000)\b/gi, (_, whole, frac) => {
+    const paddedFrac = frac.padEnd(6, '0').slice(0, 6);
+    return `${whole}${paddedFrac}`;
+  });
+
+  // Extract explicit digits first
+  const cleanedDigits = text.replace(/(\d+)\s+(\d{3})\b/g, '$1$2');
+  const numberMatch = cleanedDigits.match(/\b\d{3,12}\b/);
+  if (numberMatch) {
+    return parseInt(numberMatch[0].replace(/\s+/g, ''), 10);
+  }
+
+  // Fallback to spoken words
+  const words = text.split(/\s+/);
+  let total = 0;
+  let current = 0;
+  let hasNumber = false;
+
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i].replace(/[^\w']/g, '');
+    if (w === 'yarim' && (words[i + 1] === 'million' || words[i + 1] === 'mln' || words[i + 1] === 'ming')) {
+      current += 0.5;
+      hasNumber = true;
+      continue;
+    }
+    const val = UZBEK_WORD_NUMBERS[w];
+    if (val !== undefined) {
+      hasNumber = true;
+      if (val === 100) current = (current || 1) * 100;
+      else if (val === 1000) { total += (current || 1) * 1000; current = 0; }
+      else if (val === 1000000) { total += (current || 1) * 1000000; current = 0; }
+      else if (val === 1000000000) { total += (current || 1) * 1000000000; current = 0; }
+      else current += val;
+    }
+  }
+  total += current;
+  return hasNumber && total > 0 ? Math.round(total) : null;
+}
+
+// Category Dictionary with stems
+export const TURBO_CATEGORY_MAP = [
+  {
+    category: 'Transport',
+    type: 'expense' as const,
+    regex: /\b(taxi\w*|taksi\w*|yandex\w*|benzin\w*|metan\w*|propan\w*|zapravka\w*|avtobus\w*|metro\w*|yo'?lkira\w*|mashina\w*|moy\w*|zapchast\w*|parkovka\w*|stoyanka\w*|radar\w*|shtraf\w*|moyka\w*)\b/i
+  },
+  {
+    category: 'Oziq-ovqat',
+    type: 'expense' as const,
+    regex: /\b(ovqat\w*|non\w*|go'?sht\w*|bozor\w*|bozorlik\w*|korzinka\w*|makro\w*|havas\w*|supermarket\w*|osh\w*|choyxona\w*|lunch\w*|obed\w*|tushlik\w*|kechki\s+ovqat|kafe\w*|restoran\w*|kofe\w*|lavash\w*|shashlik\w*|somsa\w*|shirinlik\w*|suv\w*|ichimlik\w*|pechenye\w*|meva\w*|sabzavot\w*|kartoshka\w*|piyoz\w*|guruch\w*|un\w*|yog'?\w*|magazin\w*)\b/i
+  },
+  {
+    category: 'Kommunal',
+    type: 'expense' as const,
+    regex: /\b(svet\w*|gaz\w*|suv\w*|musor\w*|kommunal\w*|kvartira\w*|arenda\w*|ijara\w*|wifi\w*|internet\w*|beeline\w*|ucell\w*|uztelecom\w*|mobiuz\w*|paynet\w*|elektr\w*|isitish\w*|domkom\w*)\b/i
+  },
+  {
+    category: 'Sog\'liq',
+    type: 'expense' as const,
+    regex: /\b(dori\w*|dorixona\w*|apteka\w*|shifokor\w*|doktor\w*|klinika\w*|analiz\w*|tish\w*|stomatolog\w*|ukol\w*|retsept\w*|operatsiya\w*|shifoxona\w*|bolnitsa\w*|terapevt\w*|massaj\w*)\b/i
+  },
+  {
+    category: 'Kiyim',
+    type: 'expense' as const,
+    regex: /\b(kiyim\w*|poyafzal\w*|kurtka\w*|shim\w*|ko'ylak\w*|oyoq\s+kiyim|futbolka\w*|kostyum\w*|palto\w*|etik\w*|krossovka\w*|paypoq\w*|shapka\w*|sumka\w*|tufli\w*)\b/i
+  },
+  {
+    category: 'Ta\'lim',
+    type: 'expense' as const,
+    regex: /\b(o'qish\w*|kurs\w*|repetitor\w*|repititor\w*|kontrakt\w*|kitob\w*|maktab\w*|universitet\w*|institut\w*|kollej\w*|dars\w*|daftar\w*|ruchka\w*|talim\w*|ta'lim\w*|ucheba\w*)\b/i
+  },
+  {
+    category: 'Ko\'ngil ochar',
+    type: 'expense' as const,
+    regex: /\b(kino\w*|teatr\w*|konsert\w*|o'yin\w*|pubg\w*|park\w*|attraktsion\w*|bouling\w*|bilyard\w*|fitnes\w*|sportzal\w*|zal\w*|baseyn\w*|trenirovka\w*)\b/i
+  },
+  {
+    category: 'Maosh',
+    type: 'income' as const,
+    regex: /\b(maosh\w*|oylik\w*|avans\w*|ish\s+haqi|zarplata\w*|stipendiya\w*|tushdi|keldi|berishdi|topdim|daromad\w*|gonorar\w*)\b/i
+  },
+  {
+    category: 'Do\'st',
+    type: 'lending' as const,
+    regex: /\b(qarz\s*(?:berdim|bervordim)|qarzga\s*(?:berdim|bervordim)|berdim|bervordim)\b/i
+  },
+  {
+    category: 'Do\'st',
+    type: 'debt' as const,
+    regex: /\b(qarz\s*(?:oldim|oluvdim)|qarzga\s*(?:oldim|oluvdim)|oldim|qarzdor)\b/i
+  }
+];
 
 /**
  * Normalizes Uzbek financial text containing abbreviations like "14 mln", "50k", "2 yarim mln", "lunchga 30 ming"
@@ -103,7 +225,6 @@ export function normalizeUzbekFinancialText(rawText: string): NormalizedFinancia
   text = text.replace(/(\d+)\s*(ming|минг)\b/gi, (_, n) => `${n}000`);
 
   // 3. Handle decimal and "yarim" (half) multipliers:
-  // e.g. "2 yarim mln" -> "2500000", "2.5 mln" / "2,5 mln" -> "2500000", "1 yarim ming" -> "1500"
   text = text.replace(/(\d+)\s*(yarim|\.5|,5)\s*(mln|million|000000)\b/gi, (_, n) => `${n}500000`);
   text = text.replace(/(\d+)\s*(yarim|\.5|,5)\s*(ming|000)\b/gi, (_, n) => `${n}500`);
   text = text.replace(/(\d+)[.,](\d+)\s*(mln|million|000000)\b/gi, (_, whole, frac) => {
@@ -111,7 +232,7 @@ export function normalizeUzbekFinancialText(rawText: string): NormalizedFinancia
     return `${whole}${paddedFrac}`;
   });
 
-  // 4. Colloquial Suffix Normalization (e.g., "30 mingga" -> "30000 ga", "lunchga" -> "tushlikka")
+  // 4. Colloquial Suffix Normalization
   text = text.replace(/(\d+)\s*mingga\b/gi, '$1000 ga');
   text = text.replace(/(\d+)\s*mlnga\b/gi, '$1000000 ga');
 
@@ -119,36 +240,16 @@ export function normalizeUzbekFinancialText(rawText: string): NormalizedFinancia
   let inferredCategory: string | undefined;
   let inferredType: 'expense' | 'income' | 'debt' | 'lending' | undefined;
 
-  if (/\b(maosh|oylik|zarplata|avans|ish haqi|daromad|stipendiya|tushdi|keldi|berishdi)\b/i.test(text)) {
-    inferredType = 'income';
-    inferredCategory = 'Maosh';
-  } else if (/\b(taxi\w*|taksi\w*|yandex\w*|benzin\w*|metan\w*|propan\w*|zapravka\w*|avtobus\w*|metro\w*|yo'?lkira\w*)/i.test(text)) {
-    inferredCategory = 'Transport';
-    inferredType = 'expense';
-  } else if (/\b(ovqat\w*|non\w*|go'?sht\w*|bozor\w*|korzinka\w*|makro\w*|havas\w*|supermarket\w*|osh\w*|choyxona\w*|lunch\w*|obed\w*|kechki ovqat|kafe\w*|restoran\w*|kofe\w*|lavash\w*|shashlik\w*)/i.test(text)) {
-    inferredCategory = 'Oziq-ovqat';
-    inferredType = 'expense';
-  } else if (/\b(svet\w*|gaz\w*|suv\w*|musor\w*|kommunal\w*|kvartira\w*|arenda\w*|wifi\w*|internet\w*|beeline\w*|ucell\w*|uztelecom\w*|mobiuz\w*)/i.test(text)) {
-    inferredCategory = 'Kommunal';
-    inferredType = 'expense';
-  } else if (/\b(dori\w*|dorixona\w*|apteka\w*|shifokor\w*|doktor\w*|klinika\w*|analiz\w*|tish\w*|stomatolog\w*)/i.test(text)) {
-    inferredCategory = 'Sog\'liq';
-    inferredType = 'expense';
-  } else if (/\b(kiyim\w*|poyafzal\w*|kurtka\w*|shim\w*|ko'ylak\w*|oyoq kiyim|futbolka\w*)/i.test(text)) {
-    inferredCategory = 'Kiyim';
-    inferredType = 'expense';
-  } else if (/\b(qarz berdim|qarzga berdim|berdim)\b/i.test(text)) {
-    inferredType = 'lending';
-    inferredCategory = 'Do\'st';
-  } else if (/\b(qarz oldim|qarzga oldim)\b/i.test(text)) {
-    inferredType = 'debt';
-    inferredCategory = 'Do\'st';
+  for (const item of TURBO_CATEGORY_MAP) {
+    if (item.regex.test(text)) {
+      inferredCategory = item.category;
+      inferredType = item.type;
+      break;
+    }
   }
 
-  // Extract explicit standalone numbers (e.g. 14000000, 50000, 30000)
-  const cleanedDigits = text.replace(/(\d+)\s+(\d{3})\b/g, '$1$2');
-  const numberMatch = cleanedDigits.match(/\b\d{4,12}\b/) || text.match(/\b\d{3,12}\b/);
-  const extractedAmount = numberMatch ? parseInt(numberMatch[0].replace(/\s+/g, ''), 10) : undefined;
+  // Extract amount: first via digits, then spoken numbers
+  let extractedAmount = extractUzbekNumber(text) || undefined;
 
   return {
     originalText,
@@ -156,6 +257,141 @@ export function normalizeUzbekFinancialText(rawText: string): NormalizedFinancia
     extractedAmount,
     inferredType,
     inferredCategory
+  };
+}
+
+/**
+ * Ultra-Fast Local Deterministic NLP Engine (<1ms)
+ * Parses financial sentences without calling cloud LLM.
+ */
+export function parseTurboFinancialText(rawText: string, todayStr?: string): TurboParseResult | null {
+  if (!rawText || typeof rawText !== 'string') return null;
+  const clean = rawText.trim();
+  const lower = clean.toLowerCase().replace(/[`ʻ‘’]/g, "'");
+  const fallbackDate = todayStr || getServerDateTimeContext().currentDate;
+
+  // 1. Detect Intent: query_finances (e.g. "balansim qancha?", "oylik hisobot", "qancha pul qoldi?")
+  if (/\b(balans\w*|qancha\s+(?:pulim|qoldi|ishlatdim|sarfladim)|hisobot\w*|statistika\w*|sarf-xarajat\w*)\b/i.test(lower)) {
+    return {
+      intent: 'query_finances',
+      transactions: [],
+      needs_clarification: false,
+      clarification_reason: null,
+      overall_confidence: 0.99,
+      is_local_turbo: true
+    };
+  }
+
+  // 2. Detect Intent: general_question (e.g. "salom", "yordam ber", "/start")
+  if (/^(salom|assalomu|qalaysiz|qalesiz|start|\/start|yordam|help|nima\s+qila\s+olasan)\b/i.test(lower)) {
+    return {
+      intent: 'general_question',
+      transactions: [],
+      needs_clarification: false,
+      clarification_reason: null,
+      overall_confidence: 0.99,
+      is_local_turbo: true
+    };
+  }
+
+  // 3. Multi-Transaction Splitting (e.g. "50k taksiga va 100k bozorlikka")
+  const parts = clean.split(/\s+(?:va\s+yana|va|hamda|\+)\s+/i);
+  if (parts.length > 1) {
+    const multiResults: TurboTransaction[] = [];
+    for (const part of parts) {
+      const single = parseSingleTurboTransaction(part, fallbackDate);
+      if (single) multiResults.push(single);
+    }
+    if (multiResults.length > 1) {
+      return {
+        intent: 'record_transaction',
+        transactions: multiResults,
+        needs_clarification: false,
+        clarification_reason: null,
+        overall_confidence: 0.98,
+        is_local_turbo: true
+      };
+    }
+  }
+
+  // 4. Single transaction parse
+  const single = parseSingleTurboTransaction(clean, fallbackDate);
+  if (single) {
+    return {
+      intent: 'record_transaction',
+      transactions: [single],
+      needs_clarification: false,
+      clarification_reason: null,
+      overall_confidence: single.confidence,
+      is_local_turbo: true
+    };
+  }
+
+  return null;
+}
+
+function parseSingleTurboTransaction(text: string, todayStr: string): TurboTransaction | null {
+  const amount = extractUzbekNumber(text);
+  if (!amount || amount <= 0) return null;
+
+  // Currency
+  let currency = 'UZS';
+  if (/\b(dollar|dollor|dolir|usd|\$|доллар)\b/i.test(text)) {
+    currency = 'USD';
+  } else if (/\b(rubl|rub|руб|₽)\b/i.test(text)) {
+    currency = 'RUB';
+  }
+
+  // Category & Type
+  let category = 'Boshqa';
+  let type: 'expense' | 'income' | 'debt' | 'lending' = 'expense';
+  let matched = false;
+
+  for (const item of TURBO_CATEGORY_MAP) {
+    if (item.regex.test(text)) {
+      category = item.category;
+      type = item.type;
+      matched = true;
+      break;
+    }
+  }
+
+  // Counterparty Detection: e.g. "Akmalga 200$ qarz berdim", "Sardordan 100 ming oldim"
+  let counterparty: string | null = null;
+  const isDebtOrLending = type === 'debt' || type === 'lending';
+  const personMatch = text.match(/\b([A-ZА-Яa-zа-я']+)(?:ga|dan|bilan)\b/);
+  if (personMatch) {
+    const rawName = personMatch[1];
+    const isExcluded = /^(bugun|kecha|o'tgan|taksi|supermarket|korzinka|makro|obed|lunch|arenda|kvartira|kurs|dars|o'qish|dori|svet|gaz|suv|so'm|som|sum|dollar|rubl|ovqat|tushlik|bozorlik|bozor|kartoshka|go'sht|benzin)/i.test(rawName);
+    const isCapitalized = /^[A-ZА-Я]/.test(rawName);
+    if (!isExcluded && (isDebtOrLending || isCapitalized)) {
+      counterparty = rawName.charAt(0).toUpperCase() + rawName.slice(1).toLowerCase();
+    }
+  }
+
+  // Date resolution
+  let date = todayStr;
+  const [y, m, d] = todayStr.split('-').map(Number);
+  const nowObj = new Date(y, m - 1, d);
+
+  if (/\b(kecha|kechagi|вчера)\b/i.test(text)) {
+    nowObj.setDate(nowObj.getDate() - 1);
+    date = `${nowObj.getFullYear()}-${String(nowObj.getMonth() + 1).padStart(2, '0')}-${String(nowObj.getDate()).padStart(2, '0')}`;
+  } else if (/\b(o'tgan\s+kuni|avvalgi\s+kun|позавчера)\b/i.test(text)) {
+    nowObj.setDate(nowObj.getDate() - 2);
+    date = `${nowObj.getFullYear()}-${String(nowObj.getMonth() + 1).padStart(2, '0')}-${String(nowObj.getDate()).padStart(2, '0')}`;
+  }
+
+  return {
+    type,
+    amount,
+    currency,
+    category,
+    description: text.slice(0, 80),
+    date,
+    time: null,
+    counterparty,
+    confidence: matched ? 0.98 : 0.85
   };
 }
 

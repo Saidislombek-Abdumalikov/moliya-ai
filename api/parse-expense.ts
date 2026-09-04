@@ -2,7 +2,11 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI, Type } from "@google/genai";
 import { checkAndRecordAiUsage } from './_aiQuotaHelper.js';
 import { getCandidateAiKeys, recordKeyResult } from './_aiRouter.js';
-import { normalizeUzbekFinancialText, buildUzbekFinancialPrompt } from './_uzbekFinancialNormalizer.js';
+import {
+  normalizeUzbekFinancialText,
+  buildUzbekFinancialPrompt,
+  parseTurboFinancialText
+} from './_uzbekFinancialNormalizer.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -17,6 +21,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { text, userId } = req.body || {};
     if (!text || typeof text !== 'string') {
       return res.status(400).json({ error: 'Missing text' });
+    }
+
+    // 1. ROCKET FAST TURBO PATH (<1ms): Local Deterministic NLP Engine
+    const turboRes = parseTurboFinancialText(text);
+    if (turboRes && turboRes.transactions.length > 0 && turboRes.overall_confidence >= 0.85) {
+      const tx = turboRes.transactions[0];
+      const fmtAmt = Number(tx.amount).toLocaleString('en-US').replace(/,/g, ' ');
+      if (userId) {
+        checkAndRecordAiUsage(userId, 'text', text).catch(() => {});
+      }
+      return res.status(200).json({
+        success: true,
+        type: tx.type || 'expense',
+        amount: fmtAmt,
+        category: tx.category,
+        note: tx.description,
+        title: tx.description.slice(0, 80),
+        debtWho: tx.counterparty || '',
+        currency: tx.currency,
+        date: tx.date,
+        transactions: turboRes.transactions,
+        is_local_turbo: true
+      });
     }
 
     const normalized = normalizeUzbekFinancialText(text);
@@ -37,7 +64,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    // Rocket Fast Path (<1ms): If amount and category are cleanly inferred locally, return immediately!
+    // Fallback Fast Path: If amount and category are cleanly inferred locally, return immediately!
     if (normalized.extractedAmount && normalized.extractedAmount > 0 && normalized.inferredCategory) {
       const fmtAmt = Number(normalized.extractedAmount).toLocaleString('en-US').replace(/,/g, ' ');
       return res.status(200).json({
@@ -48,7 +75,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         note: normalized.originalText,
         title: normalized.originalText.slice(0, 80),
         debtWho: '',
-        date: new Date().toISOString().slice(0, 10)
+        date: new Date().toISOString().slice(0, 10),
+        is_local_turbo: true
       });
     }
 

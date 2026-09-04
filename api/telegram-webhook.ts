@@ -9,7 +9,10 @@ import {
   buildUzbekFinancialAiPrompt,
   validateAiFinancialOutput,
   getServerDateTimeContext,
-  parseSafeDate
+  parseSafeDate,
+  parseTurboFinancialText,
+  TurboTransaction,
+  TurboParseResult
 } from './_uzbekFinancialNormalizer.js';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8955141731:AAGILXzT69Vity8ZFi-H8XeZc_H6_BFaS8Y';
@@ -455,6 +458,74 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any) {
 }
 
 // ── Transaction Helper ───────────────────────────────────────
+async function saveBotTransactions(userId: string, txItems: Array<{
+  id?: string;
+  type?: string;
+  name?: string;
+  title?: string;
+  category?: string;
+  amount: number;
+  date?: string;
+  day?: number;
+  month?: number;
+  year?: number;
+  time?: string;
+  note?: string;
+  debtWho?: string;
+  cardId?: string;
+  counterparty?: string | null;
+  description?: string;
+}>) {
+  if (!txItems || txItems.length === 0) return [];
+  const { data: user, error: fetchErr } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
+  if (fetchErr) {
+    console.error('[BOT] Error fetching user transactions:', fetchErr);
+    throw fetchErr;
+  }
+  const currentTxs = Array.isArray(user?.transactions) ? user.transactions : [];
+
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+
+  const cleanTxs = txItems.map((txItem, idx) => {
+    const finalDate = txItem.date || `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    const finalDay = txItem.day || now.getDate();
+    const finalMonth = txItem.month || (now.getMonth() + 1);
+    const finalYear = txItem.year || now.getFullYear();
+    const finalTime = txItem.time || `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    const txId = txItem.id || `tx_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`;
+
+    const rawAmt = Math.abs(Number(txItem.amount) || 0);
+    const isIncome = txItem.type === 'income';
+    const signedAmount = isIncome ? rawAmt : -rawAmt;
+
+    return {
+      id: txId,
+      type: txItem.type || 'expense',
+      amount: signedAmount,
+      category: txItem.category || 'Boshqa',
+      note: txItem.note || txItem.description || txItem.name || txItem.title || txItem.category || '',
+      title: txItem.title || txItem.description || txItem.name || txItem.note || '',
+      cardId: txItem.cardId || 'cash',
+      date: finalDate,
+      day: finalDay,
+      month: finalMonth,
+      year: finalYear,
+      time: finalTime,
+      debtWho: txItem.debtWho || txItem.counterparty || ''
+    };
+  });
+
+  const newTxIds = new Set(cleanTxs.map(t => String(t.id)));
+  const updated = [...cleanTxs, ...currentTxs.filter((t: any) => !newTxIds.has(String(t.id)))];
+  const { error: updateErr } = await supabase.from('users').update({ transactions: updated, updated_at: new Date().toISOString() }).eq('id', userId);
+  if (updateErr) {
+    console.error('[BOT] Error updating transactions column in Supabase:', updateErr);
+    throw updateErr;
+  }
+  return cleanTxs;
+}
+
 async function saveBotTransaction(userId: string, txItem: {
   id?: string;
   type?: string;
@@ -471,49 +542,8 @@ async function saveBotTransaction(userId: string, txItem: {
   debtWho?: string;
   cardId?: string;
 }) {
-  const { data: user, error: fetchErr } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
-  if (fetchErr) {
-    console.error('[BOT] Error fetching user transactions:', fetchErr);
-    throw fetchErr;
-  }
-  const currentTxs = Array.isArray(user?.transactions) ? user.transactions : [];
-
-  const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const finalDate = txItem.date || `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-  const finalDay = txItem.day || now.getDate();
-  const finalMonth = txItem.month || (now.getMonth() + 1);
-  const finalYear = txItem.year || now.getFullYear();
-  const finalTime = txItem.time || `${pad(now.getHours())}:${pad(now.getMinutes())}`;
-  const txId = txItem.id || `tx_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-
-  const rawAmt = Math.abs(Number(txItem.amount) || 0);
-  const isIncome = txItem.type === 'income';
-  const signedAmount = isIncome ? rawAmt : -rawAmt;
-
-  const cleanTx = {
-    id: txId,
-    type: txItem.type || 'expense',
-    amount: signedAmount,
-    category: txItem.category || 'Boshqa',
-    note: txItem.note || txItem.name || txItem.title || txItem.category || '',
-    title: txItem.title || txItem.name || txItem.note || '',
-    cardId: txItem.cardId || 'cash',
-    date: finalDate,
-    day: finalDay,
-    month: finalMonth,
-    year: finalYear,
-    time: finalTime,
-    debtWho: txItem.debtWho || ''
-  };
-
-  const updated = [cleanTx, ...currentTxs.filter((t: any) => String(t.id) !== String(txId))];
-  const { error: updateErr } = await supabase.from('users').update({ transactions: updated, updated_at: new Date().toISOString() }).eq('id', userId);
-  if (updateErr) {
-    console.error('[BOT] Error updating transactions column in Supabase:', updateErr);
-    throw updateErr;
-  }
-  return true;
+  const saved = await saveBotTransactions(userId, [txItem]);
+  return saved.length > 0;
 }
 
 // ── Category Emoji Map ───────────────────────────────────────
@@ -588,21 +618,96 @@ function buildTransactionSuccessCard(tx: {
   return { text, keyboard };
 }
 
+function buildMultiTransactionSuccessCard(txs: any[]) {
+  const randomHook = MARKETING_HOOKS[Math.floor(Math.random() * MARKETING_HOOKS.length)];
+  let listText = '';
+  let totalExpense = 0;
+  let totalIncome = 0;
+
+  for (const tx of txs) {
+    const isInc = tx.type === 'income';
+    const cat = tx.category || 'Boshqa';
+    const emoji = CATEGORY_EMOJIS[cat] || (isInc ? '💰' : '💸');
+    const amt = Math.abs(Number(tx.amount) || 0);
+    if (isInc) totalIncome += amt;
+    else totalExpense += amt;
+    const formattedAmt = amt.toLocaleString('uz-UZ').replace(/,/g, ' ');
+    const desc = tx.title || tx.note || tx.description || tx.name || cat;
+    listText += `${isInc ? '🟢' : '🔴'} ${emoji} <b>${cat}:</b> ${formattedAmt} so'm <i>(${desc})</i>\n`;
+  }
+
+  const text =
+    `✨ <b>${txs.length} ta operatsiya muvaffaqiyatli saqlandi!</b>\n\n` +
+    listText + '\n' +
+    (totalExpense > 0 ? `🔴 <b>Jami xarajat:</b> ${totalExpense.toLocaleString('uz-UZ').replace(/,/g, ' ')} so'm\n` : '') +
+    (totalIncome > 0 ? `🟢 <b>Jami daromad:</b> ${totalIncome.toLocaleString('uz-UZ').replace(/,/g, ' ')} so'm\n` : '') +
+    `📅 <b>Sana:</b> ${txs[0]?.date || 'Bugun'}\n\n` +
+    `───────────────────\n` +
+    `${randomHook}`;
+
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: "📱 Mini Appni ochish (Jonli Balans) 🚀", web_app: { url: appUrl } }],
+      [
+        { text: "📊 Bugungi hisobot", callback_data: "today_stats" },
+        { text: "⭐ VIP Premium", callback_data: "view_premium" }
+      ]
+    ]
+  };
+
+  return { text, keyboard };
+}
+
 async function parseTextWithAi(text: string) {
+  // 1. ROCKET FAST PATH (<1ms): Local Turbo Deterministic NLP Engine
+  const turboResult = parseTurboFinancialText(text);
+  if (turboResult && turboResult.overall_confidence >= 0.85) {
+    const firstTx = turboResult.transactions[0];
+    return {
+      intent: turboResult.intent,
+      transactions: turboResult.transactions,
+      // Backward compatibility properties:
+      isValid: true,
+      type: firstTx?.type || 'expense',
+      amount: firstTx?.amount || 0,
+      currency: firstTx?.currency || 'UZS',
+      category: firstTx?.category || 'Boshqa',
+      name: firstTx?.description || text.slice(0, 80),
+      note: firstTx?.description || text,
+      date: firstTx?.date || getServerDateTimeContext().currentDate,
+      debtWho: firstTx?.counterparty || '',
+      is_local_turbo: true
+    };
+  }
+
   // Pre-process and normalize Uzbek abbreviations & multipliers (e.g. 14 mln, 50k, 2 yarim mln)
   const normalized = normalizeUzbekFinancialText(text);
 
-  // 1. ROCKET FAST PATH (<1ms): If amount and category are cleanly inferred locally, return immediately!
+  // If amount and category cleanly inferred locally, return immediately!
   if (normalized.extractedAmount && normalized.extractedAmount > 0 && normalized.inferredCategory) {
     return {
+      intent: 'record_transaction' as const,
+      transactions: [{
+        type: (normalized.inferredType as any) || 'expense',
+        amount: normalized.extractedAmount,
+        currency: 'UZS',
+        category: normalized.inferredCategory,
+        description: normalized.originalText.slice(0, 80),
+        date: getServerDateTimeContext().currentDate,
+        time: null,
+        counterparty: null,
+        confidence: 0.95
+      }],
       isValid: true,
       type: normalized.inferredType || 'expense',
       amount: normalized.extractedAmount,
+      currency: 'UZS',
       category: normalized.inferredCategory,
       name: normalized.originalText.slice(0, 80),
       note: normalized.originalText,
       date: getServerDateTimeContext().currentDate,
-      debtWho: ''
+      debtWho: '',
+      is_local_turbo: true
     };
   }
 
@@ -615,14 +720,28 @@ async function parseTextWithAi(text: string) {
   if (keysToTry.length === 0) {
     if (normalized.extractedAmount && normalized.extractedAmount > 0) {
       return {
+        intent: 'record_transaction' as const,
+        transactions: [{
+          type: (normalized.inferredType as any) || 'expense',
+          amount: normalized.extractedAmount,
+          currency: 'UZS',
+          category: normalized.inferredCategory || 'Boshqa',
+          description: normalized.originalText.slice(0, 80),
+          date: getServerDateTimeContext().currentDate,
+          time: null,
+          counterparty: null,
+          confidence: 0.85
+        }],
         isValid: true,
         type: normalized.inferredType || 'expense',
         amount: normalized.extractedAmount,
+        currency: 'UZS',
         category: normalized.inferredCategory || 'Boshqa',
         name: normalized.originalText.slice(0, 80),
         note: normalized.originalText,
         date: getServerDateTimeContext().currentDate,
-        debtWho: ''
+        debtWho: '',
+        is_local_turbo: true
       };
     }
     return null;
@@ -668,7 +787,30 @@ async function parseTextWithAi(text: string) {
           const validated = validateAiFinancialOutput(rawParsed, normalized);
           if (validated.isValid) {
             recordKeyResult(keyObj.id, true).catch(() => {});
-            return validated;
+            return {
+              intent: 'record_transaction' as const,
+              transactions: [{
+                type: (validated.type as any) || 'expense',
+                amount: validated.amount,
+                currency: 'UZS',
+                category: validated.category,
+                description: validated.name,
+                date: validated.date,
+                time: validated.time,
+                counterparty: validated.debtWho || null,
+                confidence: 0.95
+              }],
+              isValid: true,
+              type: validated.type,
+              amount: validated.amount,
+              currency: 'UZS',
+              category: validated.category,
+              name: validated.name,
+              note: validated.note,
+              date: validated.date,
+              debtWho: validated.debtWho || '',
+              is_local_turbo: false
+            };
           }
         }
       } catch (e: any) {
@@ -682,14 +824,28 @@ async function parseTextWithAi(text: string) {
   // Fallback to purely normalized extraction if AI network fails
   if (normalized.extractedAmount && normalized.extractedAmount > 0) {
     return {
+      intent: 'record_transaction' as const,
+      transactions: [{
+        type: (normalized.inferredType as any) || 'expense',
+        amount: normalized.extractedAmount,
+        currency: 'UZS',
+        category: normalized.inferredCategory || 'Boshqa',
+        description: normalized.originalText.slice(0, 80),
+        date: getServerDateTimeContext().currentDate,
+        time: null,
+        counterparty: null,
+        confidence: 0.85
+      }],
       isValid: true,
       type: normalized.inferredType || 'expense',
       amount: normalized.extractedAmount,
+      currency: 'UZS',
       category: normalized.inferredCategory || 'Boshqa',
       name: normalized.originalText.slice(0, 80),
       note: normalized.originalText,
       date: getServerDateTimeContext().currentDate,
-      debtWho: ''
+      debtWho: '',
+      is_local_turbo: true
     };
   }
 
@@ -1887,23 +2043,74 @@ Today: ${srvCtx.currentDate}.`;
 
       sendChatAction(chatId, 'typing').catch(() => {});
       const parsed = await parseTextWithAi(text);
-      if (parsed && parsed.amount && Number(parsed.amount) > 0) {
+
+      // 1. Intent: query_finances (e.g. "balansim qancha?", "oylik xarajatim qancha bo'ldi?")
+      if (parsed?.intent === 'query_finances') {
+        const { text: statsText, keyboard: statsKeyboard } = await renderStatsMessage(userId);
+        await sendTelegramMessage(chatId, statsText, statsKeyboard, userId, 'bot_response');
+        return res.status(200).json({ status: 'ok' });
+      }
+
+      // 2. Intent: general_question
+      if (parsed?.intent === 'general_question') {
+        await sendTelegramMessage(
+          chatId,
+          `💡 <b>Moliya AI yordamchisi</b>\n\n` +
+          `Men daromad va xarajatlaringizni avtomatik hisoblab boraman.\n\n` +
+          `📝 <b>Qanday ishlatish mumkin?</b>\n` +
+          `• <b>Xarajat:</b> <i>"taksiga 25000"</i> yoki <i>"50 000 bozorlik"</i>\n` +
+          `• <b>Daromad:</b> <i>"14 mln maosh tushdi"</i>\n` +
+          `• <b>Ko'p operatsiya:</b> <i>"50k taksiga va 120 ming bozorlikka"</i>\n` +
+          `• <b>Ovozli xabar:</b> Ovoz bilan aytib yuboring 🎙\n` +
+          `• <b>Chek:</b> Xarid cheki rasmini yuboring 📸\n\n` +
+          `👇 <i>Barcha hisobotlar va tahlillar uchun Mini Appni oching:</i>`,
+          {
+            inline_keyboard: [
+              [{ text: "📱 Moliya Mini Appni ochish", web_app: { url: appUrl } }],
+              [{ text: "👤 Profilim", callback_data: "menu_profile" }, { text: "💳 Kartalarim", callback_data: "menu_cards" }]
+            ]
+          },
+          userId,
+          'bot_response'
+        );
+        return res.status(200).json({ status: 'ok' });
+      }
+
+      // 3. Multi-Transaction (e.g. "50k taksiga va 120 ming bozorlikka")
+      if (parsed?.transactions && parsed.transactions.length > 1) {
+        try {
+          const savedTxs = await saveBotTransactions(userId, parsed.transactions);
+          await recordAiUsage(userId, 'text', text, quota.isPremium);
+
+          const multiCard = buildMultiTransactionSuccessCard(savedTxs);
+          await sendTelegramMessage(chatId, multiCard.text, multiCard.keyboard, userId, 'ai_response');
+          return res.status(200).json({ status: 'ok' });
+        } catch (saveErr) {
+          console.error('[BOT] Error saving multi-transactions to Supabase:', saveErr);
+          await sendTelegramMessage(chatId, "❌ Xatolik: Operatsiyalarni saqlab bo'lmadi. Iltimos, qayta urinib ko'ring.", undefined, userId);
+          return res.status(500).json({ error: 'DB_SAVE_FAILED' });
+        }
+      }
+
+      // 4. Single Transaction
+      if (parsed && ((parsed.amount && Number(parsed.amount) > 0) || (parsed.transactions && parsed.transactions.length === 1))) {
+        const txObj = parsed.transactions?.[0] || parsed;
         const txId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-        const safeD = parseSafeDate(parsed.date);
+        const safeD = parseSafeDate(txObj.date);
         const newTx = {
           id: txId,
-          type: parsed.type || 'expense',
-          name: parsed.name || text,
-          title: parsed.name || text,
-          category: parsed.category || 'Boshqa',
-          amount: Number(parsed.amount),
+          type: txObj.type || 'expense',
+          name: (txObj as any).name || txObj.description || text,
+          title: (txObj as any).title || txObj.description || (txObj as any).name || text,
+          category: txObj.category || 'Boshqa',
+          amount: Number(txObj.amount),
           date: safeD.date,
           day: safeD.day,
           month: safeD.month,
           year: safeD.year,
           time: safeD.time,
-          note: parsed.note || text,
-          debtWho: parsed.debtWho || ''
+          note: (txObj as any).note || txObj.description || text,
+          debtWho: (txObj as any).debtWho || txObj.counterparty || ''
         };
 
         try {
@@ -1929,6 +2136,7 @@ Today: ${srvCtx.currentDate}.`;
           `📝 <b>Qanday ishlatish mumkin?</b>\n` +
           `• <b>Xarajat:</b> <i>"taksiga 25000"</i> yoki <i>"50 000 bozorlik"</i>\n` +
           `• <b>Daromad:</b> <i>"14 mln maosh tushdi"</i>\n` +
+          `• <b>Ko'p operatsiya:</b> <i>"50k taksiga va 120 ming bozorlikka"</i>\n` +
           `• <b>Ovozli xabar:</b> Ovoz bilan aytib yuboring 🎙\n` +
           `• <b>Chek:</b> Xarid cheki rasmini yuboring 📸\n\n` +
           `👇 <i>Barcha hisobotlar va tahlillar uchun Mini Appni oching:</i>`,
