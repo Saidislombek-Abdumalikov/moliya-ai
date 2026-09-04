@@ -64,34 +64,104 @@ const UZBEK_WORD_NUMBERS: Record<string, number> = {
   'ming': 1000,
   'mingta': 1000,
   'million': 1000000,
+  'milyon': 1000000,
+  'millyon': 1000000,
+  'milion': 1000000,
   'mln': 1000000,
   'milliard': 1000000000,
-  'yarim': 0.5
+  'miliard': 1000000000,
+  'yarim': 0.5,
+  'yarm': 0.5,
+  'bita': 1,
+  'iki': 2,
+  'yeti': 7,
+  'sakiz': 8,
+  'toqiz': 9,
+  'otiz': 30,
+  'elik': 50,
+  'elikk': 50,
+  'oltmis': 60,
+  'yetmis': 70
 };
 
-export interface TurboTransaction {
-  type: 'expense' | 'income' | 'debt' | 'lending';
-  amount: number;
-  currency: string;
-  category: string;
-  description: string;
-  date: string; // YYYY-MM-DD
-  time: string | null;
-  counterparty: string | null;
-  confidence: number;
-}
+const UZBEK_SUFFIXES = [
+  'likdan', 'likka', 'chidan', 'chiga',
+  'larga', 'lardan', 'larda',
+  'lik', 'dan', 'ga', 'ka', 'qa', 'da', 'ni', 'ning', 'si', 'cha', 'lar'
+];
 
-export interface TurboParseResult {
-  intent: 'record_transaction' | 'query_finances' | 'general_question' | 'unknown';
-  transactions: TurboTransaction[];
-  needs_clarification: boolean;
-  clarification_reason: string | null;
-  overall_confidence: number;
-  is_local_turbo: boolean;
+/**
+ * Strips Uzbek suffixes (e.g. "taksiga" -> "taksi", "aptekaga" -> "apteka")
+ */
+export function stripUzbekSuffix(word: string): string {
+  if (!word || word.length <= 3) return word;
+  const lower = word.toLowerCase();
+  for (const suf of UZBEK_SUFFIXES) {
+    if (lower.length > suf.length + 2 && lower.endsWith(suf)) {
+      return lower.slice(0, -suf.length);
+    }
+  }
+  return lower;
 }
 
 /**
- * High-speed extractor for spoken and written numbers in Uzbek & Russian
+ * High-speed Levenshtein & Phonetic distance fuzzy matcher (<0.001 ms)
+ * Handles 1-letter typos, missing letters, phonetic substitutions
+ */
+export function isFuzzyMatch(rawWord: string, target: string, maxDist: number = 1): boolean {
+  if (!rawWord || !target) return false;
+  const w = rawWord.toLowerCase();
+  const t = target.toLowerCase();
+  if (w === t) return true;
+
+  const stem = stripUzbekSuffix(w);
+  if (stem === t) return true;
+
+  // Phonetic normalization: x -> ks, w -> v, ye -> e, collapse repeated letters (elikk -> elik)
+  const normW = w.replace(/[`ʻ‘’]/g, "'").replace(/x/g, 'ks').replace(/w/g, 'v').replace(/ye/g, 'e').replace(/(.)\1+/g, '$1');
+  const normT = t.replace(/[`ʻ‘’]/g, "'").replace(/x/g, 'ks').replace(/w/g, 'v').replace(/ye/g, 'e').replace(/(.)\1+/g, '$1');
+  if (normW === normT) return true;
+
+  const normStem = stem.replace(/[`ʻ‘’]/g, "'").replace(/x/g, 'ks').replace(/w/g, 'v').replace(/ye/g, 'e').replace(/(.)\1+/g, '$1');
+  if (normStem === normT) return true;
+
+  const testW = stem.length >= 3 ? stem : w;
+  const lenDiff = Math.abs(testW.length - t.length);
+  if (lenDiff > maxDist) return false;
+
+  const m = testW.length;
+  const n = t.length;
+  let prevRow = new Int32Array(n + 1);
+  let currRow = new Int32Array(n + 1);
+  for (let j = 0; j <= n; j++) prevRow[j] = j;
+
+  for (let i = 1; i <= m; i++) {
+    currRow[0] = i;
+    let minInRow = currRow[0];
+    const charA = testW.charCodeAt(i - 1);
+
+    for (let j = 1; j <= n; j++) {
+      const cost = charA === t.charCodeAt(j - 1) ? 0 : 1;
+      const val = Math.min(
+        prevRow[j] + 1,
+        currRow[j - 1] + 1,
+        prevRow[j - 1] + cost
+      );
+      currRow[j] = val;
+      if (val < minInRow) minInRow = val;
+    }
+
+    if (minInRow > maxDist) return false;
+    const temp = prevRow;
+    prevRow = currRow;
+    currRow = temp;
+  }
+
+  return prevRow[n] <= maxDist;
+}
+
+/**
+ * High-speed extractor for spoken and written numbers in Uzbek & Russian with typo tolerance
  */
 export function extractUzbekNumber(raw: string): number | null {
   if (!raw || typeof raw !== 'string') return null;
@@ -131,7 +201,17 @@ export function extractUzbekNumber(raw: string): number | null {
       hasNumber = true;
       continue;
     }
-    const val = UZBEK_WORD_NUMBERS[w];
+    let val = UZBEK_WORD_NUMBERS[w];
+    if (val === undefined && w.length >= 3) {
+      // 1-Letter Typo tolerance for spoken numbers
+      for (const [keyNum, numVal] of Object.entries(UZBEK_WORD_NUMBERS)) {
+        if (keyNum.length >= 3 && isFuzzyMatch(w, keyNum, 1)) {
+          val = numVal;
+          break;
+        }
+      }
+    }
+
     if (val !== undefined) {
       hasNumber = true;
       if (val === 100) current = (current || 1) * 100;
@@ -145,47 +225,86 @@ export function extractUzbekNumber(raw: string): number | null {
   return hasNumber && total > 0 ? Math.round(total) : null;
 }
 
+// Primary category keywords for 1-letter typo / fuzzy matching
+export const PRIMARY_CATEGORY_KEYWORDS: Array<{ keyword: string; category: string; type: 'expense' | 'income' | 'debt' | 'lending' }> = [
+  { keyword: 'taksi', category: 'Transport', type: 'expense' },
+  { keyword: 'benzin', category: 'Transport', type: 'expense' },
+  { keyword: 'yandex', category: 'Transport', type: 'expense' },
+  { keyword: 'avtobus', category: 'Transport', type: 'expense' },
+  { keyword: 'metro', category: 'Transport', type: 'expense' },
+  { keyword: 'bozor', category: 'Oziq-ovqat', type: 'expense' },
+  { keyword: 'ovqat', category: 'Oziq-ovqat', type: 'expense' },
+  { keyword: 'tushlik', category: 'Oziq-ovqat', type: 'expense' },
+  { keyword: 'obed', category: 'Oziq-ovqat', type: 'expense' },
+  { keyword: 'kafe', category: 'Oziq-ovqat', type: 'expense' },
+  { keyword: 'restoran', category: 'Oziq-ovqat', type: 'expense' },
+  { keyword: 'supermarket', category: 'Oziq-ovqat', type: 'expense' },
+  { keyword: 'magazin', category: 'Oziq-ovqat', type: 'expense' },
+  { keyword: 'svet', category: 'Kommunal', type: 'expense' },
+  { keyword: 'gaz', category: 'Kommunal', type: 'expense' },
+  { keyword: 'suv', category: 'Kommunal', type: 'expense' },
+  { keyword: 'internet', category: 'Kommunal', type: 'expense' },
+  { keyword: 'ijara', category: 'Kommunal', type: 'expense' },
+  { keyword: 'kvartira', category: 'Kommunal', type: 'expense' },
+  { keyword: 'dori', category: 'Sog\'liq', type: 'expense' },
+  { keyword: 'apteka', category: 'Sog\'liq', type: 'expense' },
+  { keyword: 'doktor', category: 'Sog\'liq', type: 'expense' },
+  { keyword: 'kiyim', category: 'Kiyim', type: 'expense' },
+  { keyword: 'poyafzal', category: 'Kiyim', type: 'expense' },
+  { keyword: 'maktab', category: 'Ta\'lim', type: 'expense' },
+  { keyword: 'kurs', category: 'Ta\'lim', type: 'expense' },
+  { keyword: 'kontrakt', category: 'Ta\'lim', type: 'expense' },
+  { keyword: 'kino', category: 'Ko\'ngil ochar', type: 'expense' },
+  { keyword: 'fitnes', category: 'Ko\'ngil ochar', type: 'expense' },
+  { keyword: 'sport', category: 'Ko\'ngil ochar', type: 'expense' },
+  { keyword: 'maosh', category: 'Maosh', type: 'income' },
+  { keyword: 'oylik', category: 'Maosh', type: 'income' },
+  { keyword: 'avans', category: 'Maosh', type: 'income' },
+  { keyword: 'zarplata', category: 'Maosh', type: 'income' },
+  { keyword: 'qarz', category: 'Do\'st', type: 'lending' }
+];
+
 // Category Dictionary with stems
 export const TURBO_CATEGORY_MAP = [
   {
     category: 'Transport',
     type: 'expense' as const,
-    regex: /\b(taxi\w*|taksi\w*|yandex\w*|benzin\w*|metan\w*|propan\w*|zapravka\w*|avtobus\w*|metro\w*|yo'?lkira\w*|mashina\w*|moy\w*|zapchast\w*|parkovka\w*|stoyanka\w*|radar\w*|shtraf\w*|moyka\w*)\b/i
+    regex: /\b(taxi\w*|taksi\w*|taxsi\w*|yandex\w*|yandeks\w*|benzin\w*|benzn\w*|binzin\w*|metan\w*|propan\w*|zapravka\w*|avtobus\w*|metro\w*|yo'?lkira\w*|yolkira\w*|mashina\w*|moy\w*|zapchast\w*|parkovka\w*|stoyanka\w*|radar\w*|shtraf\w*|moyka\w*)\b/i
   },
   {
     category: 'Oziq-ovqat',
     type: 'expense' as const,
-    regex: /\b(ovqat\w*|non\w*|go'?sht\w*|bozor\w*|bozorlik\w*|korzinka\w*|makro\w*|havas\w*|supermarket\w*|osh\w*|choyxona\w*|lunch\w*|obed\w*|tushlik\w*|kechki\s+ovqat|kafe\w*|restoran\w*|kofe\w*|lavash\w*|shashlik\w*|somsa\w*|shirinlik\w*|suv\w*|ichimlik\w*|pechenye\w*|meva\w*|sabzavot\w*|kartoshka\w*|piyoz\w*|guruch\w*|un\w*|yog'?\w*|magazin\w*)\b/i
+    regex: /\b(ovqat\w*|avqat\w*|non\w*|go'?sht\w*|gosht\w*|bozor\w*|bozrlik\w*|bazar\w*|korzinka\w*|makro\w*|havas\w*|supermarket\w*|supermark\w*|osh\w*|choyxona\w*|lunch\w*|obed\w*|tushlik\w*|kechki\s+ovqat|kafe\w*|restoran\w*|kofe\w*|lavash\w*|shashlik\w*|somsa\w*|shirinlik\w*|suv\w*|ichimlik\w*|pechenye\w*|meva\w*|sabzavot\w*|kartoshka\w*|piyoz\w*|guruch\w*|un\w*|yog'?\w*|magazin\w*|magaz\w*)\b/i
   },
   {
     category: 'Kommunal',
     type: 'expense' as const,
-    regex: /\b(svet\w*|gaz\w*|suv\w*|musor\w*|kommunal\w*|kvartira\w*|arenda\w*|ijara\w*|wifi\w*|internet\w*|beeline\w*|ucell\w*|uztelecom\w*|mobiuz\w*|paynet\w*|elektr\w*|isitish\w*|domkom\w*)\b/i
+    regex: /\b(svet\w*|swet\w*|svyet\w*|gaz\w*|suv\w*|musor\w*|kommunal\w*|kvartira\w*|arenda\w*|ijara\w*|wifi\w*|internet\w*|beeline\w*|ucell\w*|uztelecom\w*|mobiuz\w*|paynet\w*|elektr\w*|isitish\w*|domkom\w*)\b/i
   },
   {
     category: 'Sog\'liq',
     type: 'expense' as const,
-    regex: /\b(dori\w*|dorixona\w*|apteka\w*|shifokor\w*|doktor\w*|klinika\w*|analiz\w*|tish\w*|stomatolog\w*|ukol\w*|retsept\w*|operatsiya\w*|shifoxona\w*|bolnitsa\w*|terapevt\w*|massaj\w*)\b/i
+    regex: /\b(dori\w*|dorixona\w*|dorxona\w*|apteka\w*|abteka\w*|shifokor\w*|doktor\w*|klinika\w*|analiz\w*|tish\w*|stomatolog\w*|ukol\w*|retsept\w*|operatsiya\w*|shifoxona\w*|bolnitsa\w*|terapevt\w*|massaj\w*)\b/i
   },
   {
     category: 'Kiyim',
     type: 'expense' as const,
-    regex: /\b(kiyim\w*|poyafzal\w*|kurtka\w*|shim\w*|ko'ylak\w*|oyoq\s+kiyim|futbolka\w*|kostyum\w*|palto\w*|etik\w*|krossovka\w*|paypoq\w*|shapka\w*|sumka\w*|tufli\w*)\b/i
+    regex: /\b(kiyim\w*|poyafzal\w*|kurtka\w*|shim\w*|ko'ylak\w*|koylak\w*|oyoq\s+kiyim|futbolka\w*|kostyum\w*|palto\w*|etik\w*|krossovka\w*|paypoq\w*|shapka\w*|sumka\w*|tufli\w*)\b/i
   },
   {
     category: 'Ta\'lim',
     type: 'expense' as const,
-    regex: /\b(o'qish\w*|kurs\w*|repetitor\w*|repititor\w*|kontrakt\w*|kitob\w*|maktab\w*|universitet\w*|institut\w*|kollej\w*|dars\w*|daftar\w*|ruchka\w*|talim\w*|ta'lim\w*|ucheba\w*)\b/i
+    regex: /\b(o'qish\w*|oqish\w*|kurs\w*|repetitor\w*|repititor\w*|kontrakt\w*|kitob\w*|maktab\w*|maktap\w*|universitet\w*|institut\w*|kollej\w*|dars\w*|daftar\w*|ruchka\w*|talim\w*|ta'lim\w*|ucheba\w*)\b/i
   },
   {
     category: 'Ko\'ngil ochar',
     type: 'expense' as const,
-    regex: /\b(kino\w*|teatr\w*|konsert\w*|o'yin\w*|pubg\w*|park\w*|attraktsion\w*|bouling\w*|bilyard\w*|fitnes\w*|sportzal\w*|zal\w*|baseyn\w*|trenirovka\w*)\b/i
+    regex: /\b(kino\w*|teatr\w*|konsert\w*|o'yin\w*|oyin\w*|pubg\w*|park\w*|attraktsion\w*|bouling\w*|bilyard\w*|fitnes\w*|sportzal\w*|zal\w*|baseyn\w*|trenirovka\w*)\b/i
   },
   {
     category: 'Maosh',
     type: 'income' as const,
-    regex: /\b(maosh\w*|oylik\w*|avans\w*|ish\s+haqi|zarplata\w*|stipendiya\w*|tushdi|keldi|berishdi|topdim|daromad\w*|gonorar\w*)\b/i
+    regex: /\b(maosh\w*|mayosh\w*|oylik\w*|avans\w*|ish\s+haqi|zarplata\w*|stipendiya\w*|tushdi|keldi|berishdi|topdim|daromad\w*|gonorar\w*)\b/i
   },
   {
     category: 'Do\'st',
@@ -353,6 +472,24 @@ function parseSingleTurboTransaction(text: string, todayStr: string): TurboTrans
       type = item.type;
       matched = true;
       break;
+    }
+  }
+
+  // 1-Letter Typo / Fuzzy Fallback Matcher (<0.01 ms)
+  if (!matched) {
+    const words = text.split(/\s+/);
+    for (const w of words) {
+      const cleanW = w.replace(/[^\w']/g, '');
+      if (cleanW.length < 3) continue;
+      for (const item of PRIMARY_CATEGORY_KEYWORDS) {
+        if (isFuzzyMatch(cleanW, item.keyword, 1)) {
+          category = item.category;
+          type = item.type;
+          matched = true;
+          break;
+        }
+      }
+      if (matched) break;
     }
   }
 

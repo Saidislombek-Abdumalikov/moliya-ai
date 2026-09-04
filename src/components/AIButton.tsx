@@ -367,6 +367,8 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
       rec.onresult = async (event: any) => {
         const resultText = event.results[0][0].transcript
         setRecording(false)
+        setIsProcessing(true)
+        setAiError('')
 
         try {
           const parsed = await parseAIText(resultText, cards, userId || undefined)
@@ -383,11 +385,17 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
             cardId: parsed.cardId || prev.cardId || 'cash',
           }))
           setStep('form')
-        } catch (e) {
+        } catch (e: any) {
           console.error(e)
           setAiText(resultText)
-          setAiError(language === 'uz' ? "Tushunmadim, qayta urinib ko'ring" : language === 'uz_cyrl' ? "Тушунмадим, қайта уриниб кўринг" : language === 'ru' ? 'Не удалось распознать, попробуйте снова' : "Couldn't parse that, try again")
-          setStep('type')
+          setEntry(prev => ({
+            ...prev,
+            note: resultText
+          }))
+          setAiError(e?.message || (language === 'uz' ? "Tushunmadim, iltimos pastda tekshirib tasdiqlang" : language === 'uz_cyrl' ? "Тушунмадим, илтимос пастда текшириб тасдиқланг" : language === 'ru' ? 'Не удалось распознать, пожалуйста, проверьте ниже' : "Couldn't parse that, please verify below"))
+          setStep('form')
+        } finally {
+          setIsProcessing(false)
         }
       }
 
@@ -556,7 +564,9 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            onClick={closeModal}
+            onClick={() => {
+              if (!isProcessing && !isSaving) closeModal()
+            }}
             className="gpu-layer"
             style={{
               position: 'fixed',
@@ -578,7 +588,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
               dragConstraints={{ top: 0, bottom: 0 }}
               dragElastic={{ top: 0, bottom: 0.5 }}
               onDragEnd={(_, info) => {
-                if (info.offset.y > 100) closeModal()
+                if (!isProcessing && !isSaving && info.offset.y > 100) closeModal()
               }}
               transition={{ type: 'spring', damping: 26, stiffness: 220 }}
               onClick={(e) => e.stopPropagation()}
