@@ -161,11 +161,55 @@ export function isFuzzyMatch(rawWord: string, target: string, maxDist: number = 
 }
 
 /**
+ * Resolves compound spoken/written numbers before single multiplier expansion:
+ * - "1mln 250 ming" -> "1250000"
+ * - "1 million 250 ming" -> "1250000"
+ * - "2 mln 500k" -> "2500000"
+ * - "1mln 50 ming" -> "1050000"
+ * - "3mln 200" -> "3200000"
+ * - "50 ming 500" -> "50500"
+ */
+export function resolveCompoundFinancialNumbers(raw: string): string {
+  if (!raw) return raw;
+  let text = raw.toLowerCase().replace(/[`ʻ‘’]/g, "'");
+
+  // Compound Million + Thousand + Hundred: e.g. "1mln 250 ming", "1 million 250 ming"
+  text = text.replace(/(\d+)\s*(?:mln|млн|million|миллион|m)\s*(\d+)\s*(?:ming|минг|k|к)\s*(\d{1,3})?\b/gi, (_, mln, th, h) => {
+    const total = parseInt(mln, 10) * 1000000 + parseInt(th, 10) * 1000 + (h ? parseInt(h, 10) : 0);
+    return ` ${total} `;
+  });
+
+  // Compound Million + Thousand (k): e.g. "2 mln 500k"
+  text = text.replace(/(\d+)\s*(?:mln|млн|million|миллион|m)\s*(\d+)\s*(?:k|к)\b/gi, (_, mln, th) => {
+    const total = parseInt(mln, 10) * 1000000 + parseInt(th, 10) * 1000;
+    return ` ${total} `;
+  });
+
+  // Colloquial "1mln 250" where second number is 1-3 digits (implies thousands)
+  text = text.replace(/(\d+)\s*(?:mln|млн|million|миллион|m)\s*(\d{1,3})\b(?!\s*(?:so'm|som|sum|dollar|rubl|%))/gi, (_, mln, th) => {
+    const thNum = parseInt(th, 10);
+    const total = parseInt(mln, 10) * 1000000 + thNum * 1000;
+    return ` ${total} `;
+  });
+
+  // Compound Thousand + Hundreds: e.g. "50 ming 500", "25k 500"
+  text = text.replace(/(\d+)\s*(?:ming|минг|k|к)\s*(\d{1,3})\b/gi, (_, th, h) => {
+    const total = parseInt(th, 10) * 1000 + parseInt(h, 10);
+    return ` ${total} `;
+  });
+
+  return text;
+}
+
+/**
  * High-speed extractor for spoken and written numbers in Uzbek & Russian with typo tolerance
  */
 export function extractUzbekNumber(raw: string): number | null {
   if (!raw || typeof raw !== 'string') return null;
   let text = raw.toLowerCase().replace(/[`ʻ‘’]/g, "'");
+
+  // 1. Resolve compound numbers FIRST (e.g. "1mln 250 ming" -> 1250000)
+  text = resolveCompoundFinancialNumbers(text);
 
   // Multiplier abbreviations
   text = text.replace(/(\d+)\s*(k|к)\b/gi, '$1000');
@@ -337,7 +381,10 @@ export function normalizeUzbekFinancialText(rawText: string): NormalizedFinancia
   text = text.replace(/\b(dollar|dollor|usd|\$)\b/gi, " dollar ");
   text = text.replace(/\b(rubl|rub|руб|₽)\b/gi, " rubl ");
 
-  // 2. Multiplier Preprocessing (e.g., "14mln" -> "14000000", "50k" -> "50000", "14m" -> "14000000")
+  // 2. Resolve compound numbers FIRST (e.g., "1mln 250 ming" -> "1250000")
+  text = resolveCompoundFinancialNumbers(text);
+
+  // 3. Multiplier Preprocessing (e.g., "14mln" -> "14000000", "50k" -> "50000", "14m" -> "14000000")
   text = text.replace(/(\d+)\s*(k|к)\b/gi, '$1000');
   text = text.replace(/(\d+)\s*(mln|млн|million|миллион)\b/gi, (_, n) => `${n}000000`);
   text = text.replace(/(\d+)\s*(m|м)\b(?!\w)/gi, (_, n) => `${n}000000`);
