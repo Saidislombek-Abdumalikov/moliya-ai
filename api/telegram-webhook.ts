@@ -1898,7 +1898,7 @@ Today: ${srvCtx.currentDate}. Output valid JSON only.`;
                 }
 
                 await saveBotTransaction(userId, newTx);
-                await recordAiUsage(userId, 'text', parsed.note || 'Voice expense', quota.isPremium, undefined, 'telegram_bot');
+                await recordAiUsage(userId, 'text', parsed.note || 'Voice expense', quota.isPremium, quota.usedCount, 'telegram_bot');
 
                 const isInc = newTx.type === 'income';
                 const successCard = buildTransactionSuccessCard(newTx, isInc, txId);
@@ -2089,7 +2089,7 @@ Today: ${srvCtx.currentDate}. Output valid JSON only.`;
                 }
 
                 await saveBotTransaction(userId, newTx);
-                await recordAiUsage(userId, 'receipt', parsed.note || 'Receipt scan', quota.isPremium, undefined, 'telegram_bot');
+                await recordAiUsage(userId, 'receipt', parsed.note || 'Receipt scan', quota.isPremium, quota.usedCount, 'telegram_bot');
 
                 const successCard = buildTransactionSuccessCard(newTx, false, txId);
 
@@ -2270,7 +2270,7 @@ Today: ${srvCtx.currentDate}. Output valid JSON only.`;
       if (parsed?.transactions && parsed.transactions.length > 1) {
         try {
           const savedTxs = await saveBotTransactions(userId, parsed.transactions);
-          await recordAiUsage(userId, 'text', text, quota.isPremium, undefined, 'telegram_bot');
+          await recordAiUsage(userId, 'text', text, quota.isPremium, quota.usedCount, 'telegram_bot');
 
           const multiCard = buildMultiTransactionSuccessCard(savedTxs);
           if (statusMsgId) {
@@ -2313,7 +2313,7 @@ Today: ${srvCtx.currentDate}. Output valid JSON only.`;
 
         try {
           await saveBotTransaction(userId, newTx);
-          await recordAiUsage(userId, 'text', text, quota.isPremium, undefined, 'telegram_bot');
+          await recordAiUsage(userId, 'text', text, quota.isPremium, quota.usedCount, 'telegram_bot');
 
           const isInc = newTx.type === 'income';
           const successCard = buildTransactionSuccessCard(newTx, isInc, txId);

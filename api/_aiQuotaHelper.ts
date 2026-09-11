@@ -172,9 +172,25 @@ export async function recordAiUsage(
 
   const now = new Date();
   const nowIso = now.toISOString();
-  const nextCount = (typeof currentCount === 'number' ? currentCount : 0) + 1;
+
+  let nextCount = 1;
+  if (typeof currentCount === 'number') {
+    nextCount = currentCount + 1;
+  } else {
+    try {
+      const { data: uRow } = await supabase
+        .from('users')
+        .select('ai_query_count')
+        .eq('id', userId)
+        .maybeSingle();
+      nextCount = Number(uRow?.ai_query_count || 0) + 1;
+    } catch {
+      nextCount = 1;
+    }
+  }
 
   // Execute database updates in parallel
+  // NOTE: ai_logs schema uses raw_payload (JSONB) for metadata, not a top-level 'source' column!
   Promise.all([
     supabase
       .from('users')
@@ -191,7 +207,7 @@ export async function recordAiUsage(
         query_type: queryType || 'text',
         prompt_summary: (promptSummary || '').slice(0, 300),
         is_premium: isPremium,
-        source: source || 'unknown',
+        raw_payload: { source: source || 'unknown' },
         timestamp: nowIso
       }])
   ]).catch(err => {
