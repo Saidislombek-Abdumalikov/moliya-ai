@@ -1562,5 +1562,73 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   }
 
+  // ── EDIT TELEGRAM MESSAGE (admin → bot message) ────────────
+  if (route === 'edit-telegram-message' && req.method === 'POST') {
+    try {
+      const { chatId, messageId, message } = req.body || {};
+      if (!chatId || !messageId || !message) {
+        return res.status(400).json({ error: 'Missing chatId, messageId or message' });
+      }
+
+      const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
+      if (!BOT_TOKEN) return res.status(500).json({ error: 'TELEGRAM_BOT_TOKEN is not configured' });
+
+      const editResp = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          message_id: messageId,
+          text: message,
+          parse_mode: 'HTML'
+        })
+      });
+
+      const editResult = await editResp.json();
+      if (!editResult.ok) {
+        return res.status(500).json({ error: 'Failed to edit Telegram message', details: editResult.description });
+      }
+
+      await logAdminAction('edit_telegram_message', `tg_${chatId}`, undefined, { chatId, messageId, messagePreview: message.slice(0, 100) });
+
+      return res.status(200).json({ success: true, result: editResult.result });
+    } catch (e: any) {
+      return res.status(500).json({ error: 'Failed to edit message', details: e?.message });
+    }
+  }
+
+  // ── DELETE TELEGRAM MESSAGE (admin → bot message) ──────────
+  if (route === 'delete-telegram-message' && req.method === 'POST') {
+    try {
+      const { chatId, messageId } = req.body || {};
+      if (!chatId || !messageId) {
+        return res.status(400).json({ error: 'Missing chatId or messageId' });
+      }
+
+      const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
+      if (!BOT_TOKEN) return res.status(500).json({ error: 'TELEGRAM_BOT_TOKEN is not configured' });
+
+      const delResp = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/deleteMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          message_id: messageId
+        })
+      });
+
+      const delResult = await delResp.json();
+      if (!delResult.ok) {
+        return res.status(500).json({ error: 'Failed to delete Telegram message', details: delResult.description });
+      }
+
+      await logAdminAction('delete_telegram_message', `tg_${chatId}`, undefined, { chatId, messageId });
+
+      return res.status(200).json({ success: true });
+    } catch (e: any) {
+      return res.status(500).json({ error: 'Failed to delete message', details: e?.message });
+    }
+  }
+
   return res.status(404).json({ error: 'Admin route not found', route });
 }
