@@ -237,35 +237,49 @@ export function formatReportForTelegram(report: GeneratedFinancialReport): strin
   const m = report.metrics;
   const isPositive = m.netBalance >= 0;
   const balanceEmoji = isPositive ? '📈' : '📉';
+  const miniAppTelegramUrl = process.env.TELEGRAM_MINI_APP_URL || 'https://t.me/moliya_ai_bot/app';
 
-  let text = `📊 <b>Moliya AI — ${report.periodLabel}</b>\n\n`;
-  text += `👤 <b>Foydalanuvchi:</b> ${report.userName}\n`;
+  let text = `📊 <b>Moliya AI — ${report.periodLabel}</b>\n`;
+  text += `👤 <b>Foydalanuvchi:</b> ${report.userName}\n\n`;
+
+  text += `<blockquote>`;
   text += `💰 <b>Daromad:</b> ${formatUzbekCurrency(m.totalIncome)}\n`;
   text += `💸 <b>Xarajat:</b> ${formatUzbekCurrency(m.totalExpense)}\n`;
-  text += `${balanceEmoji} <b>Sof qoldiq:</b> ${formatUzbekCurrency(m.netBalance)}\n`;
+  text += `${balanceEmoji} <b>Sof qoldiq:</b> ${m.netBalance > 0 ? '+' : ''}${formatUzbekCurrency(m.netBalance)}\n`;
   if (m.totalIncome > 0) {
     text += `💎 <b>Jamg'arma darajasi:</b> ${m.savingsRate}%\n`;
   }
-  text += `📅 <b>Kunlik o'rtacha xarajat:</b> ${formatUzbekCurrency(m.avgDailyExpense)}\n\n`;
+  text += `📅 <b>Kunlik o'rtacha xarajat:</b> ${formatUzbekCurrency(m.avgDailyExpense)}`;
+  text += `</blockquote>\n\n`;
 
   if (m.topCategories.length > 0) {
     text += `🏷️ <b>Asosiy xarajat toifalari:</b>\n`;
+    text += `<blockquote>`;
     m.topCategories.slice(0, 4).forEach((c, idx) => {
-      text += `  ${idx + 1}. ${c.category}: <b>${formatUzbekCurrency(c.amount)}</b> (${c.percentage}%)\n`;
+      text += `${idx + 1}. ${c.category}: <b>${formatUzbekCurrency(c.amount)}</b> (${c.percentage}%)\n`;
     });
-    text += `\n`;
+    text += `</blockquote>\n\n`;
   }
 
-  text += `💡 <b>AI Moliyaviy Xulosa:</b>\n<i>${report.aiAnalysis.summary}</i>\n\n`;
+  text += `💡 <b>AI Moliyaviy Xulosa:</b>\n`;
+  text += `<blockquote>${report.aiAnalysis.summary}</blockquote>\n\n`;
 
-  text += `🎯 <b>Amaliy Tavsiyalar:</b>\n`;
-  report.aiAnalysis.recommendations.forEach((rec, idx) => {
-    text += `  ${idx + 1}. ${rec}\n`;
-  });
-  text += `\n`;
+  if (report.aiAnalysis.recommendations && report.aiAnalysis.recommendations.length > 0) {
+    text += `🎯 <b>Amaliy Tavsiyalar:</b>\n`;
+    text += `<blockquote expandable>`;
+    report.aiAnalysis.recommendations.forEach((rec, idx) => {
+      text += `${idx + 1}. ${rec}\n`;
+    });
+    text += `</blockquote>\n\n`;
+  }
 
-  text += `✨ <b>Oltin Maslahat:</b>\n<i>"${report.aiAnalysis.keyTip}"</i>\n\n`;
-  text += `📱 <i>Barcha batafsil tahlillarni Moliya Mini App da ko'rishingiz mumkin!</i>`;
+  if (report.aiAnalysis.keyTip) {
+    text += `✨ <b>Oltin Maslahat:</b>\n`;
+    text += `<blockquote>💡 <i>"${report.aiAnalysis.keyTip}"</i></blockquote>\n\n`;
+  }
+
+  text += `📱 <b>Moliya Mini App:</b> <i>Barcha daromad, xarajat, qarzlar va grafiklar 1 ta qulay ekranda!</i>\n`;
+  text += `👉 <a href="${miniAppTelegramUrl}">Mini Appda to'liq hisobotni ochish</a>`;
 
   return text;
 }

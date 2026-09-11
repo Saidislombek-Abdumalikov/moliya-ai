@@ -1941,6 +1941,55 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const { userId, type = 'weekly', sendTelegram = false, force = false, startDate, endDate } = req.body || {};
       if (!userId) return res.status(400).json({ error: 'Missing userId parameter' });
 
+      // Batch individual report generation for all eligible users
+      if (userId === 'all') {
+        const { data: allUsers } = await supabase
+          .from('users')
+          .select('id, name, telegram_id, onboarding, transactions')
+          .neq('id', 'moliya_system_audit_logs');
+
+        const eligibleUsers = (allUsers || []).filter(u => {
+          const isBlocked = u.onboarding?.is_blocked || u.onboarding?.is_restricted;
+          if (isBlocked) return false;
+          const hasTx = Array.isArray(u.transactions) && u.transactions.length > 0;
+          const hasTg = u.telegram_id && u.telegram_id !== '—';
+          return hasTx || hasTg;
+        });
+
+        const generatedReports: any[] = [];
+        let sentCount = 0;
+        let failedCount = 0;
+
+        for (const u of eligibleUsers) {
+          try {
+            const resSingle = await generateAndSaveUserReport(u.id, type, { sendTelegram, force, startDate, endDate });
+            if (resSingle.success && resSingle.report) {
+              generatedReports.push(resSingle.report);
+              if (resSingle.report.sentToTelegram) sentCount++;
+            }
+          } catch {
+            failedCount++;
+          }
+        }
+
+        await logAdminAction('generate_all_reports', 'all', 'Barcha foydalanuvchilar', {
+          type,
+          totalEligible: eligibleUsers.length,
+          generated: generatedReports.length,
+          sentToTelegram: sentCount,
+          failed: failedCount
+        });
+
+        return res.status(200).json({
+          success: true,
+          total: eligibleUsers.length,
+          generated: generatedReports.length,
+          sentCount,
+          failedCount,
+          reports: generatedReports
+        });
+      }
+
       const result = await generateAndSaveUserReport(userId, type, { sendTelegram, force, startDate, endDate });
       if (!result.success) {
         return res.status(500).json({ error: result.error || 'Failed to generate report' });
@@ -1961,6 +2010,49 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     } catch (e: any) {
       return res.status(500).json({ error: 'Error generating report', details: e?.message });
+    }
+  }
+
+  // ==========================================
+  // ROUTE: /api/admin/run-scheduled-reports
+  // Automatic end-of-week & end-of-month scheduled tahlil dispatcher
+  // ==========================================
+  if (route === 'run-scheduled-reports' && (req.method === 'POST' || req.method === 'GET')) {
+    try {
+      const now = new Date();
+      const tomorrow = new Date(now.getTime() + 86400000);
+      const isMonthEnd = tomorrow.getDate() === 1;
+      const reportType: 'weekly' | 'monthly' = isMonthEnd ? 'monthly' : 'weekly';
+
+      const { data: allUsers } = await supabase
+        .from('users')
+        .select('id, name, telegram_id, onboarding, transactions')
+        .neq('id', 'moliya_system_audit_logs');
+
+      const eligibleUsers = (allUsers || []).filter(u => {
+        const isBlocked = u.onboarding?.is_blocked || u.onboarding?.is_restricted;
+        if (isBlocked) return false;
+        const hasTg = u.telegram_id && u.telegram_id !== '—';
+        return Boolean(hasTg);
+      });
+
+      let sentCount = 0;
+      for (const u of eligibleUsers) {
+        try {
+          const res = await generateAndSaveUserReport(u.id, reportType, { sendTelegram: true, force: false });
+          if (res?.success && res.report?.sentToTelegram) sentCount++;
+        } catch {}
+      }
+
+      return res.status(200).json({
+        success: true,
+        reportType,
+        totalEligible: eligibleUsers.length,
+        sentCount,
+        executedAt: now.toISOString()
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: 'Scheduled report error', details: err?.message });
     }
   }
 
