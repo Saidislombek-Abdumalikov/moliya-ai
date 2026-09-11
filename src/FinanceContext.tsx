@@ -111,17 +111,20 @@ export function computeAccessState(raw: any): UserAccessState {
     }
   }
 
-  // 4. Free Trial
-  const trialEnd = raw.trial_ends_at || raw.trialEndsAt || raw.onboarding?.trial_ends_at || raw.onboarding?.trialEndsAt || expiresAt
-  if (trialEnd) {
-    const trialMs = new Date(trialEnd).getTime()
-    if (trialMs > Date.now()) {
-      return {
-        isPremium: true,
-        isVip: false,
-        premiumExpiresAt: trialEnd,
-        unlimitedAi: false,
-        isTrial: true,
+  // 4. Free Trial (strictly based on trial end date and only if not explicitly marked as not-trial)
+  const isExplicitlyNotTrial = raw.is_trial === false || raw.onboarding?.is_trial === false
+  if (!isExplicitlyNotTrial && !rawIsPremium) {
+    const trialEnd = raw.trial_ends_at || raw.trialEndsAt || raw.onboarding?.trial_ends_at || raw.onboarding?.trialEndsAt
+    if (trialEnd) {
+      const trialMs = new Date(trialEnd).getTime()
+      if (trialMs > Date.now()) {
+        return {
+          isPremium: true,
+          isVip: false,
+          premiumExpiresAt: trialEnd,
+          unlimitedAi: false,
+          isTrial: true,
+        }
       }
     }
   }

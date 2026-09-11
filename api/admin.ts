@@ -2,20 +2,41 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabase } from './_supabaseClient.js';
 import { maskApiKey, testSpecificAiKey, executeAiWithRotation, AiKeyRecord, invalidateAiKeysCache } from './_aiRouter.js';
 import { effectiveAccess, accountStatus } from './_accessHelper.js';
+import { generateAndSaveUserReport } from './_financialReportEngine.js';
 
 // ── Admin Audit Log Helper ────────────────────────────────────
-async function logAdminAction(action: string, targetUserId?: string, targetUserName?: string, details?: any) {
+async function appendSystemAuditLog(entry: any) {
   try {
-    await supabase.from('admin_audit_log').insert([{
-      action,
-      target_user_id: targetUserId || null,
-      target_user_name: targetUserName || null,
-      details: details || null,
-      admin_id: 'admin',
-      created_at: new Date().toISOString()
-    }]);
+    const { data: sysRow } = await supabase.from('users').select('onboarding').eq('id', 'moliya_system_audit_logs').maybeSingle();
+    const existing = Array.isArray(sysRow?.onboarding?.logs) ? sysRow.onboarding.logs : [];
+    const updated = [entry, ...existing].slice(0, 200);
+    await supabase.from('users').upsert({
+      id: 'moliya_system_audit_logs',
+      name: 'System Audit Logs',
+      onboarding: { logs: updated },
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'id' });
+  } catch {}
+}
+
+async function logAdminAction(action: string, targetUserId?: string, targetUserName?: string, details?: any) {
+  const entry = {
+    id: `audit_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    action,
+    target_user_id: targetUserId || null,
+    target_user_name: targetUserName || null,
+    details: details || null,
+    admin_id: 'admin',
+    created_at: new Date().toISOString()
+  };
+
+  try {
+    const { error } = await supabase.from('admin_audit_log').insert([entry]);
+    if (error) {
+      await appendSystemAuditLog(entry);
+    }
   } catch (e) {
-    console.warn('[ADMIN] Audit log write failed:', e);
+    await appendSystemAuditLog(entry);
   }
 }
 
@@ -93,6 +114,60 @@ async function notifyUserVipGrantedTelegram(telegramId: string | number, expires
     return result;
   } catch (err) {
     console.error('[VIP NOTIFY] Error notifying user on Telegram:', err);
+  }
+}
+
+async function notifyUserUnlimitedAiGrantedTelegram(telegramId: string | number, userId?: string) {
+  try {
+    const token = process.env.TELEGRAM_BOT_TOKEN || '8955141731:AAGILXzT69Vity8ZFi-H8XeZc_H6_BFaS8Y';
+    if (!token || !telegramId || String(telegramId) === '—') return;
+
+    const text = `🌟 <b>Tabriklaymiz! Sizga Cheksiz AI (Unlimited) imkoniyati taqdim etildi!</b>\n\n` +
+      `✨ Endi hisobingizda hech qanday kunlik AI cheklovi yo'q:\n` +
+      `• 🤖 <b>Cheksiz AI so'rovlar:</b> Istalgancha xarajat tahlili va savollar\n` +
+      `• 🎙️ <b>Cheksiz audio/ovozli yozuvlar</b>\n` +
+      `• 🧾 <b>Chek va rasmlar skaneri</b>\n` +
+      `• ⚡ <b>Ustuvor tezkor AI marshrutlash</b>\n\n` +
+      `📱 <i>Moliya Mini App orqali to'liq foydalanishingiz mumkin!</i>`;
+
+    const appUrl = process.env.APP_URL || 'https://moliya-ai-pi.vercel.app';
+    const keyboard = {
+      inline_keyboard: [
+        [{ text: "🚀 Moliya Mini Appni ochish", web_app: { url: appUrl } }]
+      ]
+    };
+
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: String(telegramId),
+        text,
+        parse_mode: 'HTML',
+        reply_markup: keyboard
+      })
+    });
+    const result = await res.json();
+
+    if (userId) {
+      const { data: curr } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
+      const existingMsgs = Array.isArray(curr?.onboarding?.bot_messages) ? curr.onboarding.bot_messages : [];
+      const newMsg = {
+        id: 'msg_unlimited_' + Date.now(),
+        sender: 'bot',
+        text,
+        timestamp: new Date().toISOString(),
+        messageId: result?.result?.message_id || null
+      };
+      await supabase.from('users').update({
+        onboarding: { ...(curr?.onboarding || {}), bot_messages: [...existingMsgs, newMsg] },
+        updated_at: new Date().toISOString()
+      }).eq('id', userId);
+    }
+
+    return result;
+  } catch (err) {
+    console.error('[UNLIMITED AI NOTIFY] Error notifying user on Telegram:', err);
   }
 }
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -178,21 +253,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const { userId, action, isPremium, aiLimit } = req.body || {};
         if (!userId) return res.status(400).json({ error: 'Missing userId' });
 
-        // Fetch user name for audit log
-        const { data: targetUser } = await supabase.from('users').select('name, telegram, telegram_id').eq('id', userId).maybeSingle();
+        // Fetch user name and existing state for audit log and synchronized updates
+        const { data: targetUser } = await supabase
+          .from('users')
+          .select('name, telegram, telegram_id, onboarding, is_premium, premium_expires_at, unlimited_ai, trial_ends_at')
+          .eq('id', userId)
+          .maybeSingle();
         const userName = targetUser?.name || targetUser?.telegram || userId;
+        const existingOb = targetUser?.onboarding || {};
 
         const effectiveAction = action || (isPremium !== undefined ? (isPremium ? 'grant_vip' : 'revoke_vip') : null);
 
         switch (effectiveAction) {
           case 'grant_vip': {
-            const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+            let expiresAt: string | null = null;
+            if (req.body.lifetime || req.body.days === -1) {
+              expiresAt = null;
+            } else if (req.body.expiresAt || req.body.expiry) {
+              expiresAt = new Date(req.body.expiresAt || req.body.expiry).toISOString();
+            } else {
+              const days = Number(req.body.days) || 30;
+              expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+            }
+
+            const updatedOb = {
+              ...existingOb,
+              is_vip: true,
+              is_premium: true,
+              is_trial: false,
+              trial_ends_at: null,
+              premium_expires_at: expiresAt,
+              unlimited_ai: false
+            };
+
             const { error } = await supabase
               .from('users')
               .update({
                 is_premium: true,
                 premium_expires_at: expiresAt,
+                unlimited_ai: false,
+                trial_ends_at: null,
                 ai_query_count: 0,
+                onboarding: updatedOb,
                 updated_at: nowIso
               })
               .eq('id', userId);
@@ -210,11 +312,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
 
           case 'revoke_vip': {
+            const updatedOb = {
+              ...existingOb,
+              is_vip: false,
+              is_premium: false,
+              premium_expires_at: null
+            };
+
             const { error } = await supabase
               .from('users')
               .update({
                 is_premium: false,
                 premium_expires_at: null,
+                onboarding: updatedOb,
                 updated_at: nowIso
               })
               .eq('id', userId);
@@ -225,26 +335,53 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
 
           case 'grant_unlimited_ai': {
+            const updatedOb = {
+              ...existingOb,
+              unlimited_ai: true,
+              is_vip: true,
+              is_premium: true,
+              is_trial: false,
+              trial_ends_at: null,
+              premium_expires_at: null
+            };
+
             const { error } = await supabase
               .from('users')
               .update({
                 unlimited_ai: true,
+                is_premium: true,
+                premium_expires_at: null,
+                trial_ends_at: null,
                 ai_blocked: false,
                 ai_query_count: 0,
+                onboarding: updatedOb,
                 updated_at: nowIso
               })
               .eq('id', userId);
 
             if (error) return res.status(500).json({ error: 'Failed to grant unlimited AI', details: error.message });
             await logAdminAction('grant_unlimited_ai', userId, userName);
+
+            // Notify user on Telegram
+            const tgTarget = targetUser?.telegram_id || (userId.startsWith('moliya_user_tg_') ? userId.replace('moliya_user_tg_', '') : null);
+            if (tgTarget) {
+              await notifyUserUnlimitedAiGrantedTelegram(tgTarget, userId);
+            }
+
             return res.status(200).json({ success: true, userId, action: 'grant_unlimited_ai', unlimitedAi: true });
           }
 
           case 'revoke_unlimited_ai': {
+            const updatedOb = {
+              ...existingOb,
+              unlimited_ai: false
+            };
+
             const { error } = await supabase
               .from('users')
               .update({
                 unlimited_ai: false,
+                onboarding: updatedOb,
                 updated_at: nowIso
               })
               .eq('id', userId);
@@ -255,9 +392,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
 
           case 'block': {
+            const updatedOb = {
+              ...existingOb,
+              is_blocked: true
+            };
+
             const { error } = await supabase
               .from('users')
-              .update({ is_blocked: true, updated_at: nowIso })
+              .update({ is_blocked: true, onboarding: updatedOb, updated_at: nowIso })
               .eq('id', userId);
 
             if (error) return res.status(500).json({ error: 'Failed to block user', details: error.message });
@@ -266,9 +408,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
 
           case 'unblock': {
+            const updatedOb = {
+              ...existingOb,
+              is_blocked: false
+            };
+
             const { error } = await supabase
               .from('users')
-              .update({ is_blocked: false, updated_at: nowIso })
+              .update({ is_blocked: false, onboarding: updatedOb, updated_at: nowIso })
               .eq('id', userId);
 
             if (error) return res.status(500).json({ error: 'Failed to unblock user', details: error.message });
@@ -277,9 +424,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
 
           case 'block_ai': {
+            const updatedOb = {
+              ...existingOb,
+              ai_blocked: true
+            };
+
             const { error } = await supabase
               .from('users')
-              .update({ ai_blocked: true, updated_at: nowIso })
+              .update({ ai_blocked: true, onboarding: updatedOb, updated_at: nowIso })
               .eq('id', userId);
 
             if (error) return res.status(500).json({ error: 'Failed to block AI', details: error.message });
@@ -288,9 +440,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
 
           case 'unblock_ai': {
+            const updatedOb = {
+              ...existingOb,
+              ai_blocked: false
+            };
+
             const { error } = await supabase
               .from('users')
-              .update({ ai_blocked: false, updated_at: nowIso })
+              .update({ ai_blocked: false, onboarding: updatedOb, updated_at: nowIso })
               .eq('id', userId);
 
             if (error) return res.status(500).json({ error: 'Failed to unblock AI', details: error.message });
@@ -299,9 +456,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
 
           case 'restrict': {
+            const updatedOb = {
+              ...existingOb,
+              is_restricted: true
+            };
+
             const { error } = await supabase
               .from('users')
-              .update({ is_restricted: true, updated_at: nowIso })
+              .update({ is_restricted: true, onboarding: updatedOb, updated_at: nowIso })
               .eq('id', userId);
 
             if (error) return res.status(500).json({ error: 'Failed to restrict user', details: error.message });
@@ -310,9 +472,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
 
           case 'unrestrict': {
+            const updatedOb = {
+              ...existingOb,
+              is_restricted: false
+            };
+
             const { error } = await supabase
               .from('users')
-              .update({ is_restricted: false, updated_at: nowIso })
+              .update({ is_restricted: false, onboarding: updatedOb, updated_at: nowIso })
               .eq('id', userId);
 
             if (error) return res.status(500).json({ error: 'Failed to unrestrict user', details: error.message });
@@ -322,20 +489,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
           case 'reset_trial': {
             const trialEnd = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+            const updatedOb = {
+              ...existingOb,
+              is_trial: true,
+              is_vip: false,
+              is_premium: false,
+              trial_ends_at: trialEnd,
+              premium_expires_at: null
+            };
+
             const { error } = await supabase
               .from('users')
               .update({
-                is_premium: true,
-                premium_expires_at: trialEnd,
+                trial_ends_at: trialEnd,
+                is_premium: false,
+                premium_expires_at: null,
                 ai_query_count: 0,
                 ai_limit: null,
+                onboarding: updatedOb,
                 updated_at: nowIso
               })
               .eq('id', userId);
 
             if (error) return res.status(500).json({ error: 'Failed to reset trial', details: error.message });
             await logAdminAction('reset_trial', userId, userName, { trialEnd });
-            return res.status(200).json({ success: true, userId, action: 'reset_trial', premiumExpiresAt: trialEnd });
+            return res.status(200).json({ success: true, userId, action: 'reset_trial', trialEndsAt: trialEnd });
           }
 
           case 'set_ai_limit': {
@@ -1257,19 +1435,41 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       const filePath = tgData.result.file_path;
-      const downloadUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
+      const tgFileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
 
-      // If direct download or raw stream requested, redirect directly to file
-      if (req.query.download === '1' || req.query.raw === '1') {
-        return res.redirect(302, downloadUrl);
+      // Secure Server-Side Streaming Proxy:
+      // Stream buffer directly through the server so TELEGRAM_BOT_TOKEN is NEVER exposed to the browser
+      if (req.query.download === '1' || req.query.raw === '1' || req.query.stream === '1') {
+        const streamRes = await fetch(tgFileUrl);
+        if (!streamRes.ok) {
+          return res.status(streamRes.status).json({ error: 'Failed to stream file from Telegram servers' });
+        }
+        const arrayBuf = await streamRes.arrayBuffer();
+        const buffer = Buffer.from(arrayBuf);
+        const contentType = streamRes.headers.get('content-type') || 'application/octet-stream';
+        const ext = filePath.split('.').pop() || 'bin';
+        const fileName = `moliya_tg_${fileId.slice(-8)}.${ext}`;
+
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Content-Length', buffer.length);
+        if (req.query.download === '1') {
+          res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+        } else {
+          res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
+        }
+        return res.status(200).send(buffer);
       }
+
+      const safeDownloadUrl = `/api/admin?route=telegram-file&fileId=${encodeURIComponent(fileId)}&download=1`;
+      const safeStreamUrl = `/api/admin?route=telegram-file&fileId=${encodeURIComponent(fileId)}&raw=1`;
 
       return res.status(200).json({
         success: true,
         fileId,
         filePath,
         fileSize: tgData.result.file_size,
-        downloadUrl,
+        downloadUrl: safeDownloadUrl,
+        streamUrl: safeStreamUrl,
         isImage: /\.(jpe?g|png|webp|gif)$/i.test(filePath),
         isAudio: /\.(oga|ogg|mp3|m4a)$/i.test(filePath),
         isVideo: /\.(mp4|mov)$/i.test(filePath)
@@ -1383,6 +1583,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const eligibleUsers: Array<{ id: string; name: string; telegramId: string }> = [];
       let skippedCount = 0;
+      let skippedAlreadyRecorded = 0;
+
+      const todayTashkent = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Tashkent" })).toISOString().slice(0, 10);
 
       (users || []).forEach((u: any) => {
         const id = String(u.id || '');
@@ -1405,6 +1608,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           skippedCount++;
           return;
         }
+
+        // SMART AUDIENCE RULE: Check if user already recorded an expense today
+        const transactions = Array.isArray(u.transactions) ? u.transactions : [];
+        const hasExpenseToday = transactions.some((tx: any) => {
+          if (!tx || String(tx.type || '').toLowerCase() === 'income') return false;
+          const txDate = String(tx.date || '').slice(0, 10);
+          return txDate === todayTashkent;
+        });
+
+        if (hasExpenseToday) {
+          skippedAlreadyRecorded++;
+          return;
+        }
+
         eligibleUsers.push({
           id: u.id,
           name: u.name || u.onboarding?.name || 'Foydalanuvchi',
@@ -1471,7 +1688,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         totalTargeted: uniqueRecipients.length,
         sent: sentCount,
         failed: failedCount,
-        skipped: skippedCount
+        skipped: skippedCount,
+        skippedAlreadyRecorded
       });
     } catch (err: any) {
       return res.status(500).json({ error: 'Auto-broadcast failed', details: err?.message });
@@ -1711,6 +1929,107 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ success: true });
     } catch (e: any) {
       return res.status(500).json({ error: 'Failed to delete message', details: e?.message });
+    }
+  }
+
+  // ==========================================
+  // ROUTE: /api/admin/generate-report
+  // Generate deterministic financial metrics + Gemini advisory report
+  // ==========================================
+  if (route === 'generate-report' && req.method === 'POST') {
+    try {
+      const { userId, type = 'weekly', sendTelegram = false, force = false, startDate, endDate } = req.body || {};
+      if (!userId) return res.status(400).json({ error: 'Missing userId parameter' });
+
+      const result = await generateAndSaveUserReport(userId, type, { sendTelegram, force, startDate, endDate });
+      if (!result.success) {
+        return res.status(500).json({ error: result.error || 'Failed to generate report' });
+      }
+
+      await logAdminAction('generate_report', userId, result.report?.userName, {
+        type,
+        periodLabel: result.report?.periodLabel,
+        totalIncome: result.report?.metrics.totalIncome,
+        totalExpense: result.report?.metrics.totalExpense,
+        sentToTelegram: result.report?.sentToTelegram
+      });
+
+      return res.status(200).json({
+        success: true,
+        report: result.report,
+        alreadyExisted: result.alreadyExisted || false
+      });
+    } catch (e: any) {
+      return res.status(500).json({ error: 'Error generating report', details: e?.message });
+    }
+  }
+
+  // ==========================================
+  // ROUTE: /api/admin/reports
+  // Fetch generated reports (for a single user or globally)
+  // ==========================================
+  if (route === 'reports' && req.method === 'GET') {
+    try {
+      const userId = req.query.userId as string;
+      if (userId) {
+        const { data: user } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
+        const reports = Array.isArray(user?.onboarding?.ai_reports) ? user.onboarding.ai_reports : [];
+        return res.status(200).json({ success: true, reports });
+      }
+
+      // Global: fetch all reports across users
+      const { data: users } = await supabase
+        .from('users')
+        .select('id, name, telegram, onboarding')
+        .not('onboarding->ai_reports', 'is', null)
+        .limit(100);
+
+      const allReports: any[] = [];
+      (users || []).forEach((u: any) => {
+        const repList = Array.isArray(u.onboarding?.ai_reports) ? u.onboarding.ai_reports : [];
+        repList.forEach((r: any) => {
+          allReports.push({
+            ...r,
+            userId: u.id,
+            userName: r.userName || u.name || u.telegram || 'Foydalanuvchi'
+          });
+        });
+      });
+
+      allReports.sort((a, b) => new Date(b.generatedAt || 0).getTime() - new Date(a.generatedAt || 0).getTime());
+      return res.status(200).json({ success: true, reports: allReports.slice(0, 100) });
+    } catch (e: any) {
+      return res.status(500).json({ error: 'Failed to fetch reports', details: e?.message });
+    }
+  }
+
+  // ==========================================
+  // ROUTE: /api/admin/admin-audit-logs
+  // ==========================================
+  if (route === 'admin-audit-logs' && req.method === 'GET') {
+    try {
+      // 1. Try SQL table admin_audit_log
+      const { data, error } = await supabase
+        .from('admin_audit_log')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(100);
+
+      if (!error && data && data.length > 0) {
+        return res.status(200).json({ success: true, logs: data });
+      }
+
+      // 2. Fallback to system state row in users
+      const { data: sysRow } = await supabase
+        .from('users')
+        .select('onboarding')
+        .eq('id', 'moliya_system_audit_logs')
+        .maybeSingle();
+
+      const fallbackLogs = Array.isArray(sysRow?.onboarding?.logs) ? sysRow.onboarding.logs : [];
+      return res.status(200).json({ success: true, logs: fallbackLogs });
+    } catch (e: any) {
+      return res.status(200).json({ success: true, logs: [] });
     }
   }
 

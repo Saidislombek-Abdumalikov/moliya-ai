@@ -238,8 +238,8 @@ export default function Onboarding({ onComplete }: Props) {
   const [selectedGoal, setSelectedGoal] = useState<number>(3000000)
   const [customGoalInput, setCustomGoalInput] = useState('')
   const [isCustomGoal, setIsCustomGoal] = useState(false)
-  const [selectedAiQuestion, setSelectedAiQuestion] = useState<number | null>(null)
   const [showPolicy, setShowPolicy] = useState(false)
+  const [policyTab, setPolicyTab] = useState<'privacy' | 'terms'>('privacy')
 
   const t = translations[language] || translations.uz
 
@@ -837,17 +837,29 @@ export default function Onboarding({ onComplete }: Props) {
 
         {/* Public Offer & Privacy Policy Link */}
         <p
-          onClick={() => setShowPolicy(true)}
           style={{
             textAlign: 'center',
             fontSize: 11,
             color: '#8B82C4',
             margin: '10px 0 0',
-            cursor: 'pointer',
             lineHeight: 1.4
           }}
         >
-          Davom etish orqali siz <span style={{ textDecoration: 'underline', color: '#7C3AED', fontWeight: 600 }}>Ommaviy oferta</span> va <span style={{ textDecoration: 'underline', color: '#7C3AED', fontWeight: 600 }}>Maxfiylik siyosati</span>ga rozilik bildirasiz
+          Davom etish orqali siz{' '}
+          <span
+            onClick={() => { setPolicyTab('terms'); setShowPolicy(true); }}
+            style={{ textDecoration: 'underline', color: '#7C3AED', fontWeight: 600, cursor: 'pointer' }}
+          >
+            Ommaviy oferta
+          </span>{' '}
+          va{' '}
+          <span
+            onClick={() => { setPolicyTab('privacy'); setShowPolicy(true); }}
+            style={{ textDecoration: 'underline', color: '#7C3AED', fontWeight: 600, cursor: 'pointer' }}
+          >
+            Maxfiylik siyosati
+          </span>
+          ga rozilik bildirasiz
         </p>
       </div>
 
@@ -856,6 +868,7 @@ export default function Onboarding({ onComplete }: Props) {
         isOpen={showPolicy}
         onClose={() => setShowPolicy(false)}
         lang={language}
+        initialTab={policyTab}
       />
     </div>
   )

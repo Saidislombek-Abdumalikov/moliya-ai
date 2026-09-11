@@ -1187,6 +1187,80 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           timestamp: new Date().toISOString()
         });
 
+        if (data === 'privacy_accept') {
+          const consentData = {
+            policy_version: '1.0',
+            accepted: true,
+            accepted_at: new Date().toISOString(),
+            source: 'telegram'
+          };
+          const { data: currUser } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
+          const updatedOb = {
+            ...(currUser?.onboarding || {}),
+            privacy_consent: consentData
+          };
+          await supabase.from('users').update({
+            onboarding: updatedOb,
+            updated_at: new Date().toISOString()
+          }).eq('id', userId);
+
+          await answerCallbackQuery(cb.id, "✅ Maxfiylik siyosati qabul qilindi!");
+          await editTelegramMessage(
+            chatId,
+            cb.message.message_id,
+            `✅ <b>Maxfiylik siyosati qabul qilindi.</b> Rahmat!\n\nEndi botdan to'liq foydalanish uchun telefon raqamingizni tasdiqlang:`,
+            undefined,
+            userId
+          );
+
+          // Send phone request keyboard
+          await sendTelegramMessage(
+            chatId,
+            `⚠️ <b>Botdan to'liq foydalanish uchun telefon raqamingizni tasdiqlang:</b>\n\nPastdagi tugmani bosing:`,
+            {
+              keyboard: [[{ text: "📞 Telefon raqamni yuborish", request_contact: true }]],
+              resize_keyboard: true,
+              one_time_keyboard: true
+            },
+            userId
+          );
+          return res.status(200).json({ status: 'ok' });
+        }
+
+        if (data === 'privacy_decline') {
+          await answerCallbackQuery(cb.id, "❌ Rad etildi");
+          await editTelegramMessage(
+            chatId,
+            cb.message.message_id,
+            `❌ <b>Maxfiylik siyosati qabul qilinmadi.</b>\n\nMoliya AI xizmatidan foydalanish va ma'lumotlaringizni xavfsiz boshqarish uchun shartlarga rozilik zarur.\n\nIstalgan vaqtda qayta boshlash uchun /start buyrug'ini yuboring.`,
+            undefined,
+            userId
+          );
+          return res.status(200).json({ status: 'ok' });
+        }
+
+        if (data === 'privacy_read') {
+          await answerCallbackQuery(cb.id);
+          const policySummary =
+            `📄 <b>Moliya AI — Maxfiylik Siyosati (v1.0)</b>\n\n` +
+            `1. <b>Ma'lumotlar to'plami:</b> Biz faqat siz kiritgan xarajatlar, daromadlar va hisobingiz xavfsizligi uchun telefon raqamingizni saqlaymiz.\n` +
+            `2. <b>Xavfsizlik:</b> Barcha ma'lumotlar shifrlangan serverlarda saqlanadi.\n` +
+            `3. <b>Maxfiylik kafolati:</b> Sizning shaxsiy moliyaviy ma'lumotlaringiz hech qachon uchinchi shaxslarga yoki reklama beruvchilarga berilmaydi.\n` +
+            `4. <b>Nazorat:</b> Mini App orqali xohlagan vaqtingizda ma'lumotlaringizni to'liq o'chirib tashlashingiz mumkin.\n\n` +
+            `Rozilik bildirish uchun quyidagi tugmalardan birini bosing:`;
+
+          const readKeyboard = {
+            inline_keyboard: [
+              [
+                { text: "✅ Roziman", callback_data: "privacy_accept" },
+                { text: "❌ Roziman emas", callback_data: "privacy_decline" }
+              ]
+            ]
+          };
+          await sendTelegramMessage(chatId, policySummary, readKeyboard, userId);
+          return res.status(200).json({ status: 'ok' });
+        }
+
         if (data.startsWith('del_')) {
           const txId = data.replace('del_', '');
           const { data: u, error: fetchErr } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
@@ -1429,7 +1503,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ status: 'ok' });
     }
 
-    // ── STRICT PHONE NUMBER REQUIREMENT ─────────────────────────
+    // ── 1. PRIVACY POLICY CONSENT GATE ─────────────────────────
+    // Before registering or providing sensitive data, users must review & accept Privacy Policy
+    const privacyConsent = user?.onboarding?.privacy_consent;
+    const hasAcceptedPrivacy = Boolean(privacyConsent?.accepted);
+
+    if (!hasAcceptedPrivacy) {
+      const consentText =
+        `<b>Assalomu alaykum, ${fromUser.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
+        `Men <b>Moliya AI</b> — shaxsiy moliyaviy aqlli yordamchingizman.\n\n` +
+        `Moliya AI orqali xarajatlaringizni hisoblab borish, cheklarni skanerlash va aqlli tahlillardan foydalanish uchun xizmatning <b>Maxfiylik siyosati va Foydalanish shartlari</b> bilan tanishib, rozilik bildirishingiz kerak.\n\n` +
+        `🔒 <i>Sizning moliyaviy ma'lumotlaringiz to'liq shifrlangan va xavfsiz saqlanadi. Uchinchi shaxslarga berilmaydi.</i>`;
+
+      const consentKeyboard = {
+        inline_keyboard: [
+          [{ text: "📄 Maxfiylik siyosatini o'qish", callback_data: "privacy_read" }],
+          [
+            { text: "✅ Roziman", callback_data: "privacy_accept" },
+            { text: "❌ Roziman emas", callback_data: "privacy_decline" }
+          ]
+        ]
+      };
+
+      await sendTelegramMessage(chatId, consentText, consentKeyboard, userId);
+      return res.status(200).json({ status: 'privacy_consent_required' });
+    }
+
+    // ── 2. STRICT PHONE NUMBER REQUIREMENT ───────────────────────
     // Without a verified phone number, users are strictly blocked from using the bot:
     // Expenses (text, voice, photo), commands, and interactive features are inaccessible until phone is verified.
     const userHasPhone = isValidPhoneNumber(user?.phone) || isValidPhoneNumber(user?.onboarding?.phone);

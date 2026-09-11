@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface PrivacyPolicyModalProps {
@@ -322,13 +322,18 @@ export default function PrivacyPolicyModal({
   const [activeTab, setActiveTab] = useState<'privacy' | 'terms'>(initialTab);
   const data = (PRIVACY_POLICY_DATA as any)[lang] || PRIVACY_POLICY_DATA.uz;
 
-  if (!isOpen) return null;
+  useEffect(() => {
+    if (isOpen && initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [isOpen, initialTab]);
 
   const currentSections = activeTab === 'privacy' ? data.privacySections : data.termsSections;
 
   return (
     <AnimatePresence>
-      <motion.div
+      {isOpen && (
+        <motion.div
         key="privacy_modal_backdrop"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -574,6 +579,7 @@ export default function PrivacyPolicyModal({
           </div>
         </motion.div>
       </motion.div>
+      )}
     </AnimatePresence>
   );
 }

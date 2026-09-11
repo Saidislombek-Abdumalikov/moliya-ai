@@ -58,7 +58,8 @@ export function effectiveAccess(user: any): EffectiveAccessResult {
   const isBlocked = Boolean(
     user.is_blocked ||
     user.onboarding?.is_blocked ||
-    user.device_info?.is_blocked
+    user.device_info?.is_blocked ||
+    String(user.id || '').startsWith('restricted_')
   );
   if (isBlocked) {
     return {
@@ -72,7 +73,7 @@ export function effectiveAccess(user: any): EffectiveAccessResult {
   }
 
   // ── 2. AI blocked (admin-set) ───────────────────────────────
-  const isAiBlocked = Boolean(user.ai_blocked);
+  const isAiBlocked = Boolean(user.ai_blocked || user.onboarding?.ai_blocked);
   if (isAiBlocked) {
     return {
       level: 'AI_BLOCKED',
@@ -84,8 +85,8 @@ export function effectiveAccess(user: any): EffectiveAccessResult {
     };
   }
 
-  // ── 3. Unlimited AI (admin-granted, independent of VIP) ─────
-  const isUnlimitedAi = Boolean(user.unlimited_ai);
+  // ── 3. Unlimited AI (admin-granted, highest privilege) ──────
+  const isUnlimitedAi = Boolean(user.unlimited_ai || user.onboarding?.unlimited_ai || user.onboarding?.unlimitedAi);
   if (isUnlimitedAi) {
     return {
       level: 'UNLIMITED',
@@ -97,12 +98,21 @@ export function effectiveAccess(user: any): EffectiveAccessResult {
     };
   }
 
-  // ── 4. VIP (is_premium with valid expiration or no expiration) ──
-  const isPremium = Boolean(user.is_premium);
-  if (isPremium) {
-    const expiresAt = user.premium_expires_at;
-    // No expiration = lifetime VIP
-    if (!expiresAt) {
+  // ── 4. VIP (active paid or admin-granted premium subscription) ──
+  const isPremiumFlag = Boolean(
+    user.is_premium ||
+    user.onboarding?.is_premium ||
+    user.onboarding?.is_vip ||
+    user.is_vip
+  );
+  const premiumExpiresAt =
+    user.premium_expires_at ||
+    user.onboarding?.premium_expires_at ||
+    user.onboarding?.premiumExpiresAt;
+
+  if (isPremiumFlag) {
+    // If no expiration date is set, this is a lifetime VIP
+    if (!premiumExpiresAt) {
       return {
         level: 'VIP',
         label: ACCESS_LABELS.VIP,
@@ -112,8 +122,7 @@ export function effectiveAccess(user: any): EffectiveAccessResult {
         isPremium: true,
       };
     }
-    // Has expiration — check if still valid
-    const expiresMs = new Date(expiresAt).getTime();
+    const expiresMs = new Date(premiumExpiresAt).getTime();
     if (expiresMs > Date.now()) {
       return {
         level: 'VIP',
@@ -124,32 +133,33 @@ export function effectiveAccess(user: any): EffectiveAccessResult {
         isPremium: true,
       };
     }
-    // VIP expired — fall through to trial/expired check
+    // VIP has expired — do NOT fall through to trial!
   }
 
-  // ── 5. Trial (within 24h of account creation) ───────────────
-  const trialEnd =
-    user.premium_expires_at ||
-    user.trial_ends_at ||
-    user.onboarding?.trial_ends_at ||
-    user.onboarding?.premium_expires_at;
+  // ── 5. Trial (within 24h of registration, only if trial is active) ──
+  const isExplicitlyNotTrial = user.is_trial === false || user.onboarding?.is_trial === false;
+  if (!isExplicitlyNotTrial && !isPremiumFlag) {
+    const trialEnd =
+      user.trial_ends_at ||
+      user.onboarding?.trial_ends_at ||
+      user.onboarding?.trialEndsAt;
 
-  if (trialEnd) {
-    const trialEndMs = new Date(trialEnd).getTime();
-    if (trialEndMs > Date.now()) {
-      return {
-        level: 'TRIAL',
-        label: ACCESS_LABELS.TRIAL,
-        canUseApp: true,
-        canUseAi: true,
-        aiLimit: null,
-        isPremium: true,  // Trial gets unlimited during trial period
-      };
+    if (trialEnd) {
+      const trialEndMs = new Date(trialEnd).getTime();
+      if (trialEndMs > Date.now()) {
+        return {
+          level: 'TRIAL',
+          label: ACCESS_LABELS.TRIAL,
+          canUseApp: true,
+          canUseAi: true,
+          aiLimit: null,
+          isPremium: true,  // Trial gets unlimited during trial period
+        };
+      }
     }
   }
 
   // ── 6. Check for admin-set custom ai_limit ──────────────────
-  // If admin explicitly set ai_limit to 0 or -1, treat as unlimited
   if (user.ai_limit === 0 || user.ai_limit === -1) {
     return {
       level: 'EXPIRED',
