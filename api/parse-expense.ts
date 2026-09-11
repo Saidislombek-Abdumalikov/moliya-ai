@@ -23,13 +23,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Missing text' });
     }
 
+    // Input boundary defense: cap text at 1000 characters and trim
+    const cleanText = text.slice(0, 1000).trim();
+    if (!cleanText) {
+      return res.status(400).json({ error: 'Empty text' });
+    }
+
+    // Sanitize userId if provided
+    const cleanUserId = (typeof userId === 'string' && userId.length <= 128) ? userId.trim() : undefined;
+
     // 1. ROCKET FAST TURBO PATH (<1ms): Local Deterministic NLP Engine
-    const turboRes = parseTurboFinancialText(text);
+    const turboRes = parseTurboFinancialText(cleanText);
     if (turboRes && turboRes.transactions.length > 0 && turboRes.overall_confidence >= 0.85) {
       const tx = turboRes.transactions[0];
       const fmtAmt = Number(tx.amount).toLocaleString('en-US').replace(/,/g, ' ');
-      if (userId) {
-        checkAndRecordAiUsage(userId, 'text', text).catch(() => {});
+      if (cleanUserId) {
+        checkAndRecordAiUsage(cleanUserId, 'text', cleanText, 'mini_app').catch(() => {});
       }
       return res.status(200).json({
         success: true,
@@ -46,11 +55,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    const normalized = normalizeUzbekFinancialText(text);
+    const normalized = normalizeUzbekFinancialText(cleanText);
 
     // Run quota check AND key fetch in PARALLEL for speed
     const [quota, candidateKeys] = await Promise.all([
-      checkAndRecordAiUsage(userId, 'text', text),
+      checkAndRecordAiUsage(cleanUserId, 'text', cleanText, 'mini_app'),
       getCandidateAiKeys()
     ]);
 
@@ -85,7 +94,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Build prompt with normalized financial context
-    const prompt = buildUzbekFinancialPrompt(normalized.normalizedText || text);
+    const prompt = buildUzbekFinancialPrompt(normalized.normalizedText || cleanText);
 
     // Try each key with fastest active Gemini models first
     const activeModels = ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.5-flash'];
@@ -132,8 +141,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 type: parsed.type || 'expense',
                 amount: fmtAmt,
                 category: parsed.category || 'Boshqa',
-                note: parsed.note || text,
-                title: parsed.title || parsed.note || text,
+                note: parsed.note || cleanText,
+                title: parsed.title || parsed.note || cleanText,
                 debtWho: parsed.debtWho || '',
                 date: parsed.date || new Date().toISOString().slice(0, 10)
               });
@@ -156,8 +165,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         type: normalized.inferredType || 'expense',
         amount: fmtAmt,
         category: normalized.inferredCategory || 'Boshqa',
-        note: text,
-        title: text,
+        note: cleanText,
+        title: cleanText,
         debtWho: '',
         date: new Date().toISOString().slice(0, 10)
       });

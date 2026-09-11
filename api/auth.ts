@@ -160,31 +160,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         userDoc = createdUser || newRecord;
       }
 
-      // Dynamic 1-Day Trial Check & Automatic Grant for new users
-      let premiumExpiresAt = userDoc?.premium_expires_at || userDoc?.onboarding?.premium_expires_at;
-      let isPremium = Boolean(userDoc?.is_premium);
+      // ── Effective Access Calculation (replaces destructive trial reset) ──
+      // Import effectiveAccess inline to avoid circular deps at module level
+      const { effectiveAccess } = await import('./_accessHelper.js');
+      const access = effectiveAccess(userDoc);
 
-      if (!premiumExpiresAt) {
-        // First time entering: automatically grant 1-Day Unlimited AI Trial
+      // Only grant a new 1-day trial if ALL of these are true:
+      //   1. User has no premium_expires_at AND no trial_ends_at
+      //   2. User is NOT already VIP or Unlimited (admin-granted)
+      //   3. User was JUST created (within the last 60 seconds) OR has never had any access set
+      const hasAnyExpiry = userDoc?.premium_expires_at || userDoc?.trial_ends_at || userDoc?.onboarding?.trial_ends_at;
+      const isAdminGranted = Boolean(userDoc?.unlimited_ai) || (userDoc?.is_premium && !hasAnyExpiry);
+      const isNewlyCreated = userDoc?.created_at && (Date.now() - new Date(userDoc.created_at).getTime()) < 60000;
+
+      let isPremium = access.isPremium;
+
+      if (!hasAnyExpiry && !isAdminGranted && isNewlyCreated) {
+        // Genuinely new user — grant 1-day trial
         const trialEnd = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
         isPremium = true;
-        premiumExpiresAt = trialEnd;
         await supabase.from('users').update({
           is_premium: true,
           premium_expires_at: trialEnd,
           ai_limit: null,
           updated_at: new Date().toISOString()
         }).eq('id', userId);
-      } else if (isPremium) {
-        // Dynamic expiration check
-        if (new Date(premiumExpiresAt).getTime() < Date.now()) {
-          isPremium = false;
-          await supabase
-            .from('users')
-            .update({ is_premium: false, ai_limit: 5, updated_at: new Date().toISOString() })
-            .eq('id', userId);
-        }
       }
+      // IMPORTANT: We do NOT auto-downgrade here anymore.
+      // The effectiveAccess() function handles expiration logic.
+      // This prevents destroying admin-granted VIP/Unlimited status.
 
       const now = new Date();
       const expiresAt = new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString();
@@ -228,9 +232,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         onboarding: updatedOnboarding,
         cards: userDoc?.cards || [],
         transactions: userDoc?.transactions || [],
-        isPremium,
+        isPremium: access.isPremium,
+        accessLevel: access.level,
+        accessLabel: access.label,
+        canUseAi: access.canUseAi,
         trialEndsAt: userDoc?.trial_ends_at || userDoc?.premium_expires_at,
-        aiLimit: isPremium ? null : (userDoc?.ai_limit || 5)
+        aiLimit: access.aiLimit
       });
     } catch (error: any) {
       console.error('Error in auth telegram:', error);

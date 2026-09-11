@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { supabase, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } from './_supabaseClient.js';
 
 // Anon key for client-side-style sign-in on backend (to get real session tokens)
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFqdW1uanpiZ2psZGJ3d2x1Z2dyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY5Nzc0ODIsImV4cCI6MjEwMjU1MzQ4Mn0.zHMIbL50xmrlhtpkpGdewvcWvsBJUAHyo5lS1hdU910';
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFqdW1uanpiZ2psZGJ3d2x1Z2dyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY5Nzc0ODIsImV4cCI6MjEwMjU1MzQ4Mn0.zHMIbL50xmrlhtpkpGdewvcWvsBJUAHyo5lS1hdU910';
 
 const AUTH_SALT = 'moliya_tg_auth_v1';
 
@@ -12,7 +12,7 @@ function generateAuthEmail(tgId: string): string {
 }
 
 function generateAuthPassword(tgId: string): string {
-  const secret = SUPABASE_SERVICE_ROLE_KEY || 'moliya_master_auth_secret_v1_2026';
+  const secret = process.env.MOLIYA_AUTH_SECRET || SUPABASE_SERVICE_ROLE_KEY || 'moliya_master_auth_secret_v1_2026';
   return crypto.createHmac('sha256', secret).update(`${AUTH_SALT}_${tgId}`).digest('hex');
 }
 

@@ -14,12 +14,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const { base64Image, mimeType, userId } = req.body || {};
-    if (!base64Image) {
-      return res.status(400).json({ error: 'Missing base64Image' });
+    if (!base64Image || typeof base64Image !== 'string') {
+      return res.status(400).json({ error: 'Missing or invalid base64Image' });
     }
 
+    // Safety cap: max 12MB base64 string to prevent memory exhaustion
+    if (base64Image.length > 12 * 1024 * 1024) {
+      return res.status(413).json({ error: 'Image payload too large (max 8MB)' });
+    }
+
+    const cleanUserId = (typeof userId === 'string' && userId.length <= 128) ? userId.trim() : undefined;
+
     // 1. Quota Check & Enforcement
-    const quota = await checkAndRecordAiUsage(userId, 'receipt', 'Receipt OCR Scan');
+    const quota = await checkAndRecordAiUsage(cleanUserId, 'receipt', 'Receipt OCR Scan', 'mini_app');
     if (!quota.allowed) {
       return res.status(429).json({
         success: false,

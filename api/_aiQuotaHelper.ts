@@ -42,7 +42,7 @@ export async function checkAiQuota(
 
     const { data: userRows, error: fetchError } = await supabase
       .from('users')
-      .select('id, is_premium, premium_expires_at, ai_limit, ai_query_count, last_ai_query_at, onboarding, device_info')
+      .select('id, is_premium, premium_expires_at, ai_limit, ai_query_count, last_ai_query_at, onboarding, device_info, unlimited_ai, ai_blocked, is_blocked, is_restricted, trial_ends_at')
       .in('id', idsToFetch);
 
     if (fetchError) {
@@ -81,36 +81,25 @@ export async function checkAiQuota(
       };
     }
 
-    // 2. Check 1-Day Premium Trial & Expiration
-    let isPremium = false;
-    let isTrial = false;
-    const nowMs = Date.now();
+    // 2. Use centralized effectiveAccess for all access decisions
+    const { effectiveAccess } = await import('./_accessHelper.js');
+    const access = effectiveAccess(suUser);
+    const isPremium = access.isPremium;
+    const isTrial = access.level === 'TRIAL';
 
-    if (suUser?.is_premium) {
-      if (suUser.premium_expires_at) {
-        const expiresMs = new Date(suUser.premium_expires_at).getTime();
-        if (nowMs < expiresMs) {
-          isPremium = true;
-          // If trial_ends_at is set, it's the 1-day trial
-          isTrial = Boolean(suUser.trial_ends_at || suUser.onboarding?.trial_ends_at);
-        } else {
-          // Trial / VIP expired -> auto downgrade in database
-          isPremium = false;
-          isTrial = false;
-          supabase
-            .from('users')
-            .update({
-              is_premium: false,
-              ai_limit: 20,
-              updated_at: new Date().toISOString()
-            })
-            .eq('id', userId)
-            .then(() => {});
-        }
-      } else {
-        // Lifetime VIP
-        isPremium = true;
-      }
+    // If access is blocked or AI is blocked, reject immediately
+    if (!access.canUseAi) {
+      return {
+        allowed: false,
+        isPremium: false,
+        isTrial: false,
+        limit: 0,
+        usedCount: Number(suUser?.ai_query_count || 0),
+        remaining: 0,
+        message: access.level === 'BLOCKED'
+          ? "⛔ Hisobingiz ma'muriyat tomonidan bloklangan. Yordam uchun @moliya_admin ga murojaat qiling."
+          : "⛔ AI xizmati ma'muriyat tomonidan cheklangan. Yordam uchun @moliya_admin ga murojaat qiling."
+      };
     }
 
     // 3. Daily Usage & Daily Reset Calculation (UTC boundary)
@@ -125,20 +114,8 @@ export async function checkAiQuota(
       usedCount = 0;
     }
 
-    // 4. Effective AI Limit:
-    // VIP or Active Trial -> Unlimited (null)
-    // Custom limit override -> suUser.ai_limit (if > 0)
-    // Free Tier -> 20 AI operations per day
-    let effectiveLimit: number | null = null;
-    if (isPremium) {
-      effectiveLimit = null; // Unlimited for VIP / 1-day Trial
-    } else if (suUser?.ai_limit === 0 || suUser?.ai_limit === -1) {
-      effectiveLimit = null; // Admin explicit unlimited
-    } else if (suUser?.ai_limit !== undefined && suUser?.ai_limit !== null && suUser.ai_limit > 0) {
-      effectiveLimit = suUser.ai_limit;
-    } else {
-      effectiveLimit = 20; // Standard Free tier limit = 20 ops/day
-    }
+    // 4. Use effectiveAccess aiLimit (single source of truth)
+    const effectiveLimit = access.aiLimit;
 
     // 5. Quota Evaluation
     const hasQuota = (effectiveLimit === null) || (usedCount < effectiveLimit);
@@ -185,10 +162,11 @@ export async function checkAiQuota(
  */
 export async function recordAiUsage(
   userId: string | undefined,
-  queryType: 'text' | 'receipt',
+  queryType: 'text' | 'receipt' | 'voice',
   promptSummary: string,
   isPremium: boolean = false,
-  currentCount?: number
+  currentCount?: number,
+  source?: 'telegram_bot' | 'mini_app' | string
 ): Promise<{ newCount: number }> {
   if (!userId) return { newCount: 0 };
 
@@ -213,6 +191,7 @@ export async function recordAiUsage(
         query_type: queryType || 'text',
         prompt_summary: (promptSummary || '').slice(0, 300),
         is_premium: isPremium,
+        source: source || 'unknown',
         timestamp: nowIso
       }])
   ]).catch(err => {
@@ -230,14 +209,15 @@ export const recordAiUsageBackend = recordAiUsage;
 export async function checkAndRecordAiUsage(
   userId: string | undefined,
   queryType: 'text' | 'receipt' = 'text',
-  promptSummary: string = ''
+  promptSummary: string = '',
+  source: 'telegram_bot' | 'mini_app' | string = 'mini_app'
 ): Promise<QuotaCheckResult> {
   const check = await checkAiQuota(userId);
   if (!check.allowed) {
     return check;
   }
 
-  const usage = await recordAiUsage(userId, queryType, promptSummary, check.isPremium, check.usedCount);
+  const usage = await recordAiUsage(userId, queryType, promptSummary, check.isPremium, check.usedCount, source);
   return {
     allowed: true,
     isPremium: check.isPremium,

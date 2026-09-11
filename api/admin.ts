@@ -1,7 +1,23 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabase } from './_supabaseClient.js';
 import { maskApiKey, testSpecificAiKey, executeAiWithRotation, AiKeyRecord, invalidateAiKeysCache } from './_aiRouter.js';
+import { effectiveAccess, accountStatus } from './_accessHelper.js';
 
+// ── Admin Audit Log Helper ────────────────────────────────────
+async function logAdminAction(action: string, targetUserId?: string, targetUserName?: string, details?: any) {
+  try {
+    await supabase.from('admin_audit_log').insert([{
+      action,
+      target_user_id: targetUserId || null,
+      target_user_name: targetUserName || null,
+      details: details || null,
+      admin_id: 'admin',
+      created_at: new Date().toISOString()
+    }]);
+  } catch (e) {
+    console.warn('[ADMIN] Audit log write failed:', e);
+  }
+}
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -40,25 +56,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           return res.status(500).json({ error: 'Failed to fetch users', details: error.message });
         }
 
-        const formatted = (suUsers || []).map(u => ({
-          id: u.id,
-          name: u.name,
-          phone: u.phone,
-          telegram: u.telegram,
-          telegramId: u.telegram_id,
-          isPremium: u.is_premium,
-          premiumExpiresAt: u.premium_expires_at,
-          isBlocked: u.is_blocked || false,
-          language: u.language,
-          aiLimit: u.ai_limit,
-          aiQueryCount: u.ai_query_count || 0,
-          lastAiQueryAt: u.last_ai_query_at,
-          deviceInfo: u.device_info || null,
-          platform: u.platform || null,
-          onboarding: u.onboarding,
-          createdAt: u.created_at,
-          updatedAt: u.updated_at
-        }));
+        const formatted = (suUsers || []).map(u => {
+          const access = effectiveAccess(u);
+          const status = accountStatus(u);
+          return {
+            id: u.id,
+            name: u.name,
+            phone: u.phone,
+            telegram: u.telegram,
+            telegramId: u.telegram_id,
+            isPremium: u.is_premium,
+            premiumExpiresAt: u.premium_expires_at,
+            isBlocked: u.is_blocked || false,
+            isRestricted: u.is_restricted || false,
+            unlimitedAi: u.unlimited_ai || false,
+            aiBlocked: u.ai_blocked || false,
+            language: u.language,
+            aiLimit: u.ai_limit,
+            aiQueryCount: u.ai_query_count || 0,
+            lastAiQueryAt: u.last_ai_query_at,
+            deviceInfo: u.device_info || null,
+            platform: u.platform || null,
+            onboarding: u.onboarding,
+            createdAt: u.created_at,
+            updatedAt: u.updated_at,
+            effectiveAccess: {
+              level: access.level,
+              label: access.label,
+              canUseAi: access.canUseAi,
+              aiLimit: access.aiLimit,
+              isPremium: access.isPremium
+            },
+            accountStatus: status
+          };
+        });
         return res.status(200).json({ success: true, users: formatted, source: 'supabase' });
       } catch (e: any) {
         return res.status(500).json({ error: 'Failed to fetch users', details: e?.message });
@@ -69,6 +100,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       try {
         const { userId, action, isPremium, aiLimit } = req.body || {};
         if (!userId) return res.status(400).json({ error: 'Missing userId' });
+
+        // Fetch user name for audit log
+        const { data: targetUser } = await supabase.from('users').select('name, telegram, telegram_id').eq('id', userId).maybeSingle();
+        const userName = targetUser?.name || targetUser?.telegram || userId;
 
         const effectiveAction = action || (isPremium !== undefined ? (isPremium ? 'grant_vip' : 'revoke_vip') : null);
 
@@ -86,6 +121,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               .eq('id', userId);
 
             if (error) return res.status(500).json({ error: 'Failed to grant VIP', details: error.message });
+            await logAdminAction('grant_vip', userId, userName, { expiresAt });
             return res.status(200).json({ success: true, userId, action: 'grant_vip', isPremium: true, premiumExpiresAt: expiresAt });
           }
 
@@ -100,7 +136,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               .eq('id', userId);
 
             if (error) return res.status(500).json({ error: 'Failed to revoke VIP', details: error.message });
+            await logAdminAction('revoke_vip', userId, userName);
             return res.status(200).json({ success: true, userId, action: 'revoke_vip', isPremium: false });
+          }
+
+          case 'grant_unlimited_ai': {
+            const { error } = await supabase
+              .from('users')
+              .update({
+                unlimited_ai: true,
+                ai_blocked: false,
+                ai_query_count: 0,
+                updated_at: nowIso
+              })
+              .eq('id', userId);
+
+            if (error) return res.status(500).json({ error: 'Failed to grant unlimited AI', details: error.message });
+            await logAdminAction('grant_unlimited_ai', userId, userName);
+            return res.status(200).json({ success: true, userId, action: 'grant_unlimited_ai', unlimitedAi: true });
+          }
+
+          case 'revoke_unlimited_ai': {
+            const { error } = await supabase
+              .from('users')
+              .update({
+                unlimited_ai: false,
+                updated_at: nowIso
+              })
+              .eq('id', userId);
+
+            if (error) return res.status(500).json({ error: 'Failed to revoke unlimited AI', details: error.message });
+            await logAdminAction('revoke_unlimited_ai', userId, userName);
+            return res.status(200).json({ success: true, userId, action: 'revoke_unlimited_ai', unlimitedAi: false });
           }
 
           case 'block': {
@@ -110,6 +177,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               .eq('id', userId);
 
             if (error) return res.status(500).json({ error: 'Failed to block user', details: error.message });
+            await logAdminAction('block', userId, userName);
             return res.status(200).json({ success: true, userId, action: 'block', isBlocked: true });
           }
 
@@ -120,7 +188,70 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               .eq('id', userId);
 
             if (error) return res.status(500).json({ error: 'Failed to unblock user', details: error.message });
+            await logAdminAction('unblock', userId, userName);
             return res.status(200).json({ success: true, userId, action: 'unblock', isBlocked: false });
+          }
+
+          case 'block_ai': {
+            const { error } = await supabase
+              .from('users')
+              .update({ ai_blocked: true, updated_at: nowIso })
+              .eq('id', userId);
+
+            if (error) return res.status(500).json({ error: 'Failed to block AI', details: error.message });
+            await logAdminAction('block_ai', userId, userName);
+            return res.status(200).json({ success: true, userId, action: 'block_ai', aiBlocked: true });
+          }
+
+          case 'unblock_ai': {
+            const { error } = await supabase
+              .from('users')
+              .update({ ai_blocked: false, updated_at: nowIso })
+              .eq('id', userId);
+
+            if (error) return res.status(500).json({ error: 'Failed to unblock AI', details: error.message });
+            await logAdminAction('unblock_ai', userId, userName);
+            return res.status(200).json({ success: true, userId, action: 'unblock_ai', aiBlocked: false });
+          }
+
+          case 'restrict': {
+            const { error } = await supabase
+              .from('users')
+              .update({ is_restricted: true, updated_at: nowIso })
+              .eq('id', userId);
+
+            if (error) return res.status(500).json({ error: 'Failed to restrict user', details: error.message });
+            await logAdminAction('restrict', userId, userName);
+            return res.status(200).json({ success: true, userId, action: 'restrict', isRestricted: true });
+          }
+
+          case 'unrestrict': {
+            const { error } = await supabase
+              .from('users')
+              .update({ is_restricted: false, updated_at: nowIso })
+              .eq('id', userId);
+
+            if (error) return res.status(500).json({ error: 'Failed to unrestrict user', details: error.message });
+            await logAdminAction('unrestrict', userId, userName);
+            return res.status(200).json({ success: true, userId, action: 'unrestrict', isRestricted: false });
+          }
+
+          case 'reset_trial': {
+            const trialEnd = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+            const { error } = await supabase
+              .from('users')
+              .update({
+                is_premium: true,
+                premium_expires_at: trialEnd,
+                ai_query_count: 0,
+                ai_limit: null,
+                updated_at: nowIso
+              })
+              .eq('id', userId);
+
+            if (error) return res.status(500).json({ error: 'Failed to reset trial', details: error.message });
+            await logAdminAction('reset_trial', userId, userName, { trialEnd });
+            return res.status(200).json({ success: true, userId, action: 'reset_trial', premiumExpiresAt: trialEnd });
           }
 
           case 'set_ai_limit': {
@@ -135,6 +266,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               .eq('id', userId);
 
             if (error) return res.status(500).json({ error: 'Failed to set AI limit', details: error.message });
+            await logAdminAction('set_ai_limit', userId, userName, { aiLimit: limitValue });
             return res.status(200).json({ success: true, userId, action: 'set_ai_limit', aiLimit: limitValue, aiQueryCount: 0 });
           }
 
@@ -149,6 +281,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             if (error) return res.status(500).json({ error: 'Failed to reset AI count', details: error.message });
             return res.status(200).json({ success: true, userId, action: 'reset_ai_count', aiQueryCount: 0 });
+          }
+
+          case 'delete_account': {
+            // Mark as deleted (soft delete)
+            const { error } = await supabase
+              .from('users')
+              .update({
+                is_blocked: true,
+                is_deleted: true,
+                account_status: 'deleted',
+                updated_at: nowIso
+              })
+              .eq('id', userId);
+
+            if (error) return res.status(500).json({ error: 'Failed to delete account', details: error.message });
+            await logAdminAction('delete_account', userId, userName);
+            return res.status(200).json({ success: true, userId, action: 'delete_account' });
           }
 
           default:
@@ -695,7 +844,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     try {
       const { userId, telegramId, allUsers = false, sweepRecent = true } = req.body || {};
-      const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8955141731:AAGILXzT69Vity8ZFi-H8XeZc_H6_BFaS8Y';
+      const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 
       if (!BOT_TOKEN) {
         return res.status(500).json({ error: 'TELEGRAM_BOT_TOKEN is not configured' });
@@ -1242,6 +1391,174 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     } catch (err: any) {
       return res.status(500).json({ error: 'Auto-broadcast failed', details: err?.message });
+    }
+  }
+
+  // ── USER SEARCH ─────────────────────────────────────────────
+  if (route === 'user-search') {
+    const q = (typeof req.query.q === 'string' ? req.query.q : '').trim().toLowerCase();
+    if (!q || q.length < 2) return res.status(400).json({ error: 'Search query too short (min 2 chars)' });
+
+    try {
+      const { data: allUsers, error } = await supabase.from('users').select('*');
+      if (error) return res.status(500).json({ error: 'Search failed', details: error.message });
+
+      const results = (allUsers || []).filter(u => {
+        if (u.id?.startsWith('req_') || u.id?.startsWith('exchange_')) return false;
+        const fields = [
+          u.name, u.phone, u.telegram, u.telegram_id?.toString(),
+          u.onboarding?.name, u.onboarding?.phone, u.onboarding?.telegram,
+          u.onboarding?.telegramId?.toString(), u.id
+        ].filter(Boolean).map(f => String(f).toLowerCase());
+        return fields.some(f => f.includes(q));
+      }).map(u => {
+        const access = effectiveAccess(u);
+        const status = accountStatus(u);
+        return {
+          id: u.id, name: u.name, phone: u.phone, telegram: u.telegram,
+          telegramId: u.telegram_id, isPremium: u.is_premium,
+          premiumExpiresAt: u.premium_expires_at, isBlocked: u.is_blocked || false,
+          isRestricted: u.is_restricted || false, unlimitedAi: u.unlimited_ai || false,
+          aiBlocked: u.ai_blocked || false, aiQueryCount: u.ai_query_count || 0,
+          lastAiQueryAt: u.last_ai_query_at, createdAt: u.created_at,
+          onboarding: u.onboarding,
+          effectiveAccess: { level: access.level, label: access.label, canUseAi: access.canUseAi, aiLimit: access.aiLimit },
+          accountStatus: status
+        };
+      });
+
+      return res.status(200).json({ success: true, results, count: results.length });
+    } catch (e: any) {
+      return res.status(500).json({ error: 'Search failed', details: e?.message });
+    }
+  }
+
+  // ── USER DETAIL ─────────────────────────────────────────────
+  if (route === 'user-detail') {
+    const userId = typeof req.query.userId === 'string' ? req.query.userId : '';
+    if (!userId) return res.status(400).json({ error: 'Missing userId' });
+
+    try {
+      const { data: user, error } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
+      if (error || !user) return res.status(404).json({ error: 'User not found' });
+
+      const access = effectiveAccess(user);
+      const status = accountStatus(user);
+
+      // Fetch AI logs for this user (last 50)
+      const { data: aiLogs } = await supabase.from('ai_logs')
+        .select('*').eq('user_id', userId)
+        .order('timestamp', { ascending: false }).limit(50);
+
+      // Fetch audit log for this user (last 30)
+      const { data: auditLogs } = await supabase.from('admin_audit_log')
+        .select('*').eq('target_user_id', userId)
+        .order('created_at', { ascending: false }).limit(30);
+
+      // Extract files from bot_messages
+      const botMessages = user.onboarding?.bot_messages || [];
+      const files = botMessages.filter((m: any) =>
+        m.metadata?.file_id || ['photo', 'document', 'voice', 'audio', 'video'].includes(m.type)
+      ).map((m: any) => ({
+        type: m.type, caption: m.caption || m.text,
+        fileId: m.metadata?.file_id, fileName: m.metadata?.file_name,
+        fileSize: m.metadata?.file_size, mimeType: m.metadata?.mime_type,
+        timestamp: m.timestamp,
+        downloadUrl: m.metadata?.file_id ? `/api/admin?route=telegram-file&fileId=${m.metadata.file_id}&download=1` : null
+      }));
+
+      // AI usage stats
+      const today = new Date().toISOString().slice(0, 10);
+      const month = new Date().toISOString().slice(0, 7);
+      const todayLogs = (aiLogs || []).filter((l: any) => l.timestamp?.startsWith(today));
+      const monthLogs = (aiLogs || []).filter((l: any) => l.timestamp?.startsWith(month));
+
+      return res.status(200).json({
+        success: true,
+        user: {
+          id: user.id, name: user.name, phone: user.phone, telegram: user.telegram,
+          telegramId: user.telegram_id, language: user.language,
+          isPremium: user.is_premium, premiumExpiresAt: user.premium_expires_at,
+          isBlocked: user.is_blocked || false, isRestricted: user.is_restricted || false,
+          unlimitedAi: user.unlimited_ai || false, aiBlocked: user.ai_blocked || false,
+          aiLimit: user.ai_limit, aiQueryCount: user.ai_query_count || 0,
+          lastAiQueryAt: user.last_ai_query_at,
+          createdAt: user.created_at, updatedAt: user.updated_at,
+          onboarding: user.onboarding, deviceInfo: user.device_info,
+          privacyConsent: user.privacy_consent || null
+        },
+        effectiveAccess: { level: access.level, label: access.label, canUseAi: access.canUseAi, aiLimit: access.aiLimit, isPremium: access.isPremium },
+        accountStatus: status,
+        aiUsage: {
+          total: (aiLogs || []).length,
+          today: todayLogs.length,
+          thisMonth: monthLogs.length,
+          remaining: access.aiLimit === null ? 'Unlimited' : Math.max(0, (access.aiLimit || 20) - (user.ai_query_count || 0)),
+          recentLogs: (aiLogs || []).slice(0, 20)
+        },
+        files,
+        auditLog: auditLogs || [],
+        recentMessages: botMessages.slice(-30).reverse()
+      });
+    } catch (e: any) {
+      return res.status(500).json({ error: 'Failed to get user detail', details: e?.message });
+    }
+  }
+
+  // ── AUDIT LOG ───────────────────────────────────────────────
+  if (route === 'audit-log') {
+    try {
+      const limit = Math.min(Number(req.query.limit) || 100, 500);
+      const { data: logs, error } = await supabase.from('admin_audit_log')
+        .select('*').order('created_at', { ascending: false }).limit(limit);
+
+      if (error) return res.status(500).json({ error: 'Failed to fetch audit log', details: error.message });
+      return res.status(200).json({ success: true, logs: logs || [] });
+    } catch (e: any) {
+      return res.status(500).json({ error: 'Failed to fetch audit log', details: e?.message });
+    }
+  }
+
+  // ── SEND TELEGRAM MESSAGE (admin → user) ────────────────────
+  if (route === 'send-telegram-message' && req.method === 'POST') {
+    try {
+      const { userId, telegramId, message } = req.body || {};
+      if (!message || (!userId && !telegramId)) {
+        return res.status(400).json({ error: 'Missing message, userId or telegramId' });
+      }
+
+      let chatId = telegramId;
+      if (!chatId && userId) {
+        // Extract telegram ID from user record
+        const { data: user } = await supabase.from('users').select('telegram_id, onboarding').eq('id', userId).maybeSingle();
+        chatId = user?.telegram_id || user?.onboarding?.telegramId;
+      }
+
+      if (!chatId) return res.status(400).json({ error: 'Could not determine Telegram chat ID' });
+
+      const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
+      if (!BOT_TOKEN) return res.status(500).json({ error: 'TELEGRAM_BOT_TOKEN is not configured' });
+
+      const sendResp = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: message,
+          parse_mode: 'HTML'
+        })
+      });
+
+      const sendResult = await sendResp.json();
+      if (!sendResult.ok) {
+        return res.status(500).json({ error: 'Failed to send Telegram message', details: sendResult.description });
+      }
+
+      await logAdminAction('send_telegram_message', userId || `tg_${chatId}`, undefined, { chatId, messagePreview: message.slice(0, 100) });
+
+      return res.status(200).json({ success: true, messageId: sendResult.result?.message_id });
+    } catch (e: any) {
+      return res.status(500).json({ error: 'Failed to send message', details: e?.message });
     }
   }
 

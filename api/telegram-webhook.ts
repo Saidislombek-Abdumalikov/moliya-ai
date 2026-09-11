@@ -1107,6 +1107,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  // Verify Telegram Webhook secret token if configured in environment
+  const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
+  if (webhookSecret) {
+    const incomingSecret = req.headers['x-telegram-bot-api-secret-token'];
+    if (incomingSecret !== webhookSecret) {
+      console.warn('[SECURITY] Unauthorized webhook request: invalid secret token');
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+  }
+
   try {
     // Register bot menu commands asynchronously on first traffic
     registerBotCommandsOnce().catch(() => {});
@@ -1589,7 +1599,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       sendChatAction(chatId, 'record_voice').catch(() => {});
       const statusMsg = await sendTelegramMessage(
         chatId,
-        `🎙️ <b>Ovozli xabar qabul qilindi...</b>\n⏳ <i>Ovoz yuklab olinmoqda</i>`,
+        `🎙️ <b>Ovozli xabar qabul qilindi...</b>\n⏳ <i>Ovoz yuklab olinmoqda va tahlil qilinmoqda...</i>`,
         undefined,
         userId
       );
@@ -1602,40 +1612,50 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const arrayBuffer = await audioRes.arrayBuffer();
           const base64Audio = Buffer.from(arrayBuffer).toString('base64');
 
+          if (statusMsgId) {
+            editTelegramMessage(
+              chatId,
+              statusMsgId,
+              `🧠 <b>Moliya AI ovozni eshitmoqda...</b>\n⚡ <i>Xarajat summasi aniqlanmoqda...</i>`,
+              undefined,
+              userId
+            ).catch(() => {});
+          }
+
           const candidateKeys = await getCandidateAiKeys();
           const envKey = process.env.GEMINI_API_KEY;
           const keysToTry = candidateKeys.length > 0
             ? candidateKeys
-            : (envKey ? [{ id: 'env_gemini', api_key: envKey, name: 'ENV Key', model: 'gemini-3.5-flash-lite' }] : []);
+            : (envKey ? [{ id: 'env_gemini', api_key: envKey, name: 'ENV Key', model: 'gemini-3.6-flash' }] : []);
 
-          const activeModels = ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.5-flash'];
+          // gemini-3.6-flash has superior voice/audio capabilities and lower latency
+          const activeModels = ['gemini-3.6-flash', 'gemini-3.5-flash-lite'];
 
           for (const keyObj of keysToTry) {
             const rawApiKey = (keyObj.api_key || '').trim();
             if (!rawApiKey) continue;
 
-            let primary = keyObj.model || 'gemini-3.5-flash-lite';
-            if (primary === 'gemini-flash-latest' || primary.includes('2.0-flash') || primary.includes('3.1-flash')) {
-              primary = 'gemini-3.5-flash-lite';
-            }
-            const modelsToTry = [...new Set([primary, ...activeModels])];
+            const modelsToTry = [...new Set(['gemini-3.6-flash', keyObj.model, ...activeModels])].filter(Boolean);
 
             let parsed: any = null;
             const srvCtx = getServerDateTimeContext();
             for (const modelToUse of modelsToTry) {
               try {
                 const ai = new GoogleGenAI({ apiKey: rawApiKey });
-                const prompt = `Listen to this financial audio in Uzbek/Russian and extract into JSON:
+                const prompt = `Listen to this financial voice audio in Uzbek or Russian.
+Extract the transaction into JSON with these exact fields:
 {"type":"expense"|"income"|"debt"|"lending","amount":number,"category":string,"title":string,"note":string,"date":"YYYY-MM-DD","debtWho":string}
 CRITICAL RULES:
 - Default type is "expense".
-- Spending money (taksi, ovqat, to'ladim, ketdi, sarfladim, xarid, bozorlik) is ALWAYS "expense".
+- Spending money (taksi, ovqat, to'ladim, ketdi, sarfladim, xarid, bozorlik, dori, kiyim) is ALWAYS "expense".
 - Only mark type="income" if words clearly indicate receiving money (maosh, oylik, daromad, stipendiya, tushdi, berishdi, topdim).
-Today: ${srvCtx.currentDate}.`;
+- amount: total integer number in UZS (e.g. 25000, 50000, 14000000).
+- note: Uzbek transcription of what was said in the voice note.
+Today: ${srvCtx.currentDate}. Output valid JSON only.`;
 
                 let timer: any;
                 const timeoutPromise = new Promise((_, reject) => {
-                  timer = setTimeout(() => reject(new Error('AI_TIMEOUT')), 3500);
+                  timer = setTimeout(() => reject(new Error('AI_TIMEOUT')), 12000);
                 });
 
                 const audioPromise = ai.models.generateContent({
@@ -1646,7 +1666,7 @@ Today: ${srvCtx.currentDate}.`;
                       parts: [
                         {
                           inlineData: {
-                            mimeType: 'audio/ogg',
+                            mimeType: message.voice.mime_type || 'audio/ogg',
                             data: base64Audio
                           }
                         },
@@ -1656,7 +1676,7 @@ Today: ${srvCtx.currentDate}.`;
                   ],
                   config: {
                     responseMimeType: "application/json",
-                    maxOutputTokens: 200,
+                    maxOutputTokens: 250,
                     temperature: 0.1
                   }
                 });
@@ -1664,18 +1684,42 @@ Today: ${srvCtx.currentDate}.`;
                 const audioResult: any = await Promise.race([audioPromise, timeoutPromise]);
                 clearTimeout(timer);
 
-                if (audioResult.text) {
+                if (audioResult?.text) {
                   const resJson = JSON.parse(audioResult.text);
-                  const validated = validateAiFinancialOutput(resJson, { originalText: 'Voice note', normalizedText: 'Voice note' }, srvCtx.currentDate);
+                  const validated = validateAiFinancialOutput(resJson, { originalText: resJson.note || 'Voice note', normalizedText: resJson.note || 'Voice note' }, srvCtx.currentDate);
                   if (validated.isValid && validated.amount > 0) {
                     parsed = validated;
                     recordKeyResult(keyObj.id, true).catch(() => {});
                     break;
                   }
+
+                  // Fallback: If amount wasn't extracted directly, run voice note transcription through Local Turbo Engine!
+                  const voiceTranscription = resJson.note || resJson.title || '';
+                  if (voiceTranscription) {
+                    const turboRes = parseTurboFinancialText(voiceTranscription);
+                    if (turboRes && turboRes.transactions.length > 0) {
+                      const first = turboRes.transactions[0];
+                      parsed = {
+                        isValid: true,
+                        type: first.type,
+                        amount: first.amount,
+                        currency: first.currency,
+                        category: first.category,
+                        name: first.description,
+                        note: first.description,
+                        date: first.date || srvCtx.currentDate,
+                        time: first.time,
+                        debtWho: first.counterparty || ''
+                      };
+                      recordKeyResult(keyObj.id, true).catch(() => {});
+                      break;
+                    }
+                  }
                 }
               } catch (voiceErr: any) {
+                console.warn(`[BOT] Voice model ${modelToUse} failed:`, voiceErr?.message);
                 recordKeyResult(keyObj.id, false, voiceErr?.message, 'temporary').catch(() => {});
-                break;
+                // Continue to fallback model
               }
             }
 
@@ -1721,7 +1765,7 @@ Today: ${srvCtx.currentDate}.`;
                 }
 
                 await saveBotTransaction(userId, newTx);
-                await recordAiUsage(userId, 'text', parsed.note || 'Voice expense', quota.isPremium);
+                await recordAiUsage(userId, 'text', parsed.note || 'Voice expense', quota.isPremium, undefined, 'telegram_bot');
 
                 const isInc = newTx.type === 'income';
                 const successCard = buildTransactionSuccessCard(newTx, isInc, txId);
@@ -1912,7 +1956,7 @@ Today: ${srvCtx.currentDate}.`;
                 }
 
                 await saveBotTransaction(userId, newTx);
-                await recordAiUsage(userId, 'receipt', parsed.note || 'Receipt scan', quota.isPremium);
+                await recordAiUsage(userId, 'receipt', parsed.note || 'Receipt scan', quota.isPremium, undefined, 'telegram_bot');
 
                 const successCard = buildTransactionSuccessCard(newTx, false, txId);
 
@@ -2042,19 +2086,30 @@ Today: ${srvCtx.currentDate}.`;
       }
 
       sendChatAction(chatId, 'typing').catch(() => {});
+      const statusMsg = await sendTelegramMessage(
+        chatId,
+        `⚡ <b>Moliya AI tahlil qilmoqda...</b>\n⏳ <i>Xarajat hisob-kitobi amalga oshirilmoqda...</i>`,
+        undefined,
+        userId
+      );
+      const statusMsgId = statusMsg?.result?.message_id;
+
       const parsed = await parseTextWithAi(text);
 
       // 1. Intent: query_finances (e.g. "balansim qancha?", "oylik xarajatim qancha bo'ldi?")
       if (parsed?.intent === 'query_finances') {
         const { text: statsText, keyboard: statsKeyboard } = await renderStatsMessage(userId);
-        await sendTelegramMessage(chatId, statsText, statsKeyboard, userId, 'bot_response');
+        if (statusMsgId) {
+          await editTelegramMessage(chatId, statusMsgId, statsText, statsKeyboard, userId, 'bot_response');
+        } else {
+          await sendTelegramMessage(chatId, statsText, statsKeyboard, userId, 'bot_response');
+        }
         return res.status(200).json({ status: 'ok' });
       }
 
       // 2. Intent: general_question
       if (parsed?.intent === 'general_question') {
-        await sendTelegramMessage(
-          chatId,
+        const helpMsg =
           `💡 <b>Moliya AI yordamchisi</b>\n\n` +
           `Men daromad va xarajatlaringizni avtomatik hisoblab boraman.\n\n` +
           `📝 <b>Qanday ishlatish mumkin?</b>\n` +
@@ -2063,16 +2118,18 @@ Today: ${srvCtx.currentDate}.`;
           `• <b>Ko'p operatsiya:</b> <i>"50k taksiga va 120 ming bozorlikka"</i>\n` +
           `• <b>Ovozli xabar:</b> Ovoz bilan aytib yuboring 🎙\n` +
           `• <b>Chek:</b> Xarid cheki rasmini yuboring 📸\n\n` +
-          `👇 <i>Barcha hisobotlar va tahlillar uchun Mini Appni oching:</i>`,
-          {
-            inline_keyboard: [
-              [{ text: "📱 Moliya Mini Appni ochish", web_app: { url: appUrl } }],
-              [{ text: "👤 Profilim", callback_data: "menu_profile" }, { text: "💳 Kartalarim", callback_data: "menu_cards" }]
-            ]
-          },
-          userId,
-          'bot_response'
-        );
+          `👇 <i>Barcha hisobotlar va tahlillar uchun Mini Appni oching:</i>`;
+        const helpKb = {
+          inline_keyboard: [
+            [{ text: "📱 Moliya Mini Appni ochish", web_app: { url: appUrl } }],
+            [{ text: "👤 Profilim", callback_data: "menu_profile" }, { text: "💳 Kartalarim", callback_data: "menu_cards" }]
+          ]
+        };
+        if (statusMsgId) {
+          await editTelegramMessage(chatId, statusMsgId, helpMsg, helpKb, userId, 'bot_response');
+        } else {
+          await sendTelegramMessage(chatId, helpMsg, helpKb, userId, 'bot_response');
+        }
         return res.status(200).json({ status: 'ok' });
       }
 
@@ -2080,14 +2137,22 @@ Today: ${srvCtx.currentDate}.`;
       if (parsed?.transactions && parsed.transactions.length > 1) {
         try {
           const savedTxs = await saveBotTransactions(userId, parsed.transactions);
-          await recordAiUsage(userId, 'text', text, quota.isPremium);
+          await recordAiUsage(userId, 'text', text, quota.isPremium, undefined, 'telegram_bot');
 
           const multiCard = buildMultiTransactionSuccessCard(savedTxs);
-          await sendTelegramMessage(chatId, multiCard.text, multiCard.keyboard, userId, 'ai_response');
+          if (statusMsgId) {
+            await editTelegramMessage(chatId, statusMsgId, multiCard.text, multiCard.keyboard, userId, 'ai_response');
+          } else {
+            await sendTelegramMessage(chatId, multiCard.text, multiCard.keyboard, userId, 'ai_response');
+          }
           return res.status(200).json({ status: 'ok' });
         } catch (saveErr) {
           console.error('[BOT] Error saving multi-transactions to Supabase:', saveErr);
-          await sendTelegramMessage(chatId, "❌ Xatolik: Operatsiyalarni saqlab bo'lmadi. Iltimos, qayta urinib ko'ring.", undefined, userId);
+          if (statusMsgId) {
+            await editTelegramMessage(chatId, statusMsgId, "❌ Xatolik: Operatsiyalarni saqlab bo'lmadi. Iltimos, qayta urinib ko'ring.", undefined, userId);
+          } else {
+            await sendTelegramMessage(chatId, "❌ Xatolik: Operatsiyalarni saqlab bo'lmadi. Iltimos, qayta urinib ko'ring.", undefined, userId);
+          }
           return res.status(500).json({ error: 'DB_SAVE_FAILED' });
         }
       }
@@ -2115,22 +2180,29 @@ Today: ${srvCtx.currentDate}.`;
 
         try {
           await saveBotTransaction(userId, newTx);
-          await recordAiUsage(userId, 'text', text, quota.isPremium);
+          await recordAiUsage(userId, 'text', text, quota.isPremium, undefined, 'telegram_bot');
 
           const isInc = newTx.type === 'income';
           const successCard = buildTransactionSuccessCard(newTx, isInc, txId);
 
-          await sendTelegramMessage(chatId, successCard.text, successCard.keyboard, userId, 'ai_response');
+          if (statusMsgId) {
+            await editTelegramMessage(chatId, statusMsgId, successCard.text, successCard.keyboard, userId, 'ai_response');
+          } else {
+            await sendTelegramMessage(chatId, successCard.text, successCard.keyboard, userId, 'ai_response');
+          }
           return res.status(200).json({ status: 'ok' });
         } catch (saveErr) {
           console.error('[BOT] Error saving text transaction to Supabase:', saveErr);
-          await sendTelegramMessage(chatId, "❌ Xatolik: Operatsiyani saqlab bo'lmadi. Iltimos, qayta urinib ko'ring.", undefined, userId);
+          if (statusMsgId) {
+            await editTelegramMessage(chatId, statusMsgId, "❌ Xatolik: Operatsiyani saqlab bo'lmadi. Iltimos, qayta urinib ko'ring.", undefined, userId);
+          } else {
+            await sendTelegramMessage(chatId, "❌ Xatolik: Operatsiyani saqlab bo'lmadi. Iltimos, qayta urinib ko'ring.", undefined, userId);
+          }
           return res.status(500).json({ error: 'DB_SAVE_FAILED' });
         }
       } else {
         // Helpful response for general questions, greetings, and guidance
-        await sendTelegramMessage(
-          chatId,
+        const fallbackHelp =
           `💡 <b>Moliya AI yordamchisi</b>\n\n` +
           `Men daromad va xarajatlaringizni avtomatik hisoblab boraman.\n\n` +
           `📝 <b>Qanday ishlatish mumkin?</b>\n` +
@@ -2139,16 +2211,18 @@ Today: ${srvCtx.currentDate}.`;
           `• <b>Ko'p operatsiya:</b> <i>"50k taksiga va 120 ming bozorlikka"</i>\n` +
           `• <b>Ovozli xabar:</b> Ovoz bilan aytib yuboring 🎙\n` +
           `• <b>Chek:</b> Xarid cheki rasmini yuboring 📸\n\n` +
-          `👇 <i>Barcha hisobotlar va tahlillar uchun Mini Appni oching:</i>`,
-          {
-            inline_keyboard: [
-              [{ text: "📱 Moliya Mini Appni ochish", web_app: { url: appUrl } }],
-              [{ text: "👤 Profilim", callback_data: "menu_profile" }, { text: "💳 Kartalarim", callback_data: "menu_cards" }]
-            ]
-          },
-          userId,
-          'bot_response'
-        );
+          `👇 <i>Barcha hisobotlar va tahlillar uchun Mini Appni oching:</i>`;
+        const fallbackKb = {
+          inline_keyboard: [
+            [{ text: "📱 Moliya Mini Appni ochish", web_app: { url: appUrl } }],
+            [{ text: "👤 Profilim", callback_data: "menu_profile" }, { text: "💳 Kartalarim", callback_data: "menu_cards" }]
+          ]
+        };
+        if (statusMsgId) {
+          await editTelegramMessage(chatId, statusMsgId, fallbackHelp, fallbackKb, userId, 'bot_response');
+        } else {
+          await sendTelegramMessage(chatId, fallbackHelp, fallbackKb, userId, 'bot_response');
+        }
         return res.status(200).json({ status: 'ok' });
       }
     }
