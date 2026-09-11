@@ -18,6 +18,83 @@ async function logAdminAction(action: string, targetUserId?: string, targetUserN
     console.warn('[ADMIN] Audit log write failed:', e);
   }
 }
+
+function formatUzbekExpiryDate(isoDate?: string | null): string {
+  if (!isoDate) return "Cheksiz / Doimiy (Lifetime)";
+  try {
+    const d = new Date(isoDate);
+    if (isNaN(d.getTime())) return String(isoDate);
+    const months = [
+      'yanvar', 'fevral', 'mart', 'aprel', 'may', 'iyun',
+      'iyul', 'avgust', 'sentabr', 'oktabr', 'noyabr', 'dekabr'
+    ];
+    const day = d.getDate();
+    const month = months[d.getMonth()];
+    const year = d.getFullYear();
+    const hours = String(d.getHours()).padStart(2, '0');
+    const mins = String(d.getMinutes()).padStart(2, '0');
+    return `${day}-${month}, ${year} ${hours}:${mins}`;
+  } catch {
+    return String(isoDate);
+  }
+}
+
+async function notifyUserVipGrantedTelegram(telegramId: string | number, expiresAt?: string | null, userId?: string) {
+  try {
+    const token = process.env.TELEGRAM_BOT_TOKEN || '8955141731:AAGILXzT69Vity8ZFi-H8XeZc_H6_BFaS8Y';
+    if (!token || !telegramId || String(telegramId) === '—') return;
+
+    const formattedExpiry = formatUzbekExpiryDate(expiresAt);
+    const text = `🎉 <b>Tabriklaymiz! Sizga Moliya AI Premium (VIP) obunasi taqdim etildi!</b>\n\n` +
+      `✨ Endi siz barcha imkoniyatlardan cheklovlarsiz foydalanishingiz mumkin:\n` +
+      `• 🤖 <b>Cheksiz AI tahlil:</b> Kunlik savollar va cheklovlar yo'q\n` +
+      `• 🎙️ <b>Cheksiz ovozli xabarlar:</b> Ovozli xarajatlarni 1 zumda kiritish\n` +
+      `• 🧾 <b>Chek skaneri:</b> Rasmdan avtomatik xarajat aniqlash\n` +
+      `• 📊 <b>Barcha hisobotlar:</b> Excel va PDF formatida to'liq eksport\n` +
+      `• ⚡ <b>24/7 ustuvor va tezkor AI yordamchi</b>\n\n` +
+      `⏳ <b>Amal qilish muddati:</b> <b>${formattedExpiry}</b> gacha\n\n` +
+      `📱 <i>Moliya Mini App ga kiring va barcha qulayliklardan bahramand bo'ling!</i>`;
+
+    const appUrl = process.env.APP_URL || 'https://moliya-ai-pi.vercel.app';
+    const keyboard = {
+      inline_keyboard: [
+        [{ text: "🚀 Moliya Mini Appni ochish", web_app: { url: appUrl } }]
+      ]
+    };
+
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: String(telegramId),
+        text,
+        parse_mode: 'HTML',
+        reply_markup: keyboard
+      })
+    });
+    const result = await res.json();
+
+    if (userId) {
+      const { data: curr } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
+      const existingMsgs = Array.isArray(curr?.onboarding?.bot_messages) ? curr.onboarding.bot_messages : [];
+      const newMsg = {
+        id: 'msg_vip_' + Date.now(),
+        sender: 'bot',
+        text,
+        timestamp: new Date().toISOString(),
+        messageId: result?.result?.message_id || null
+      };
+      await supabase.from('users').update({
+        onboarding: { ...(curr?.onboarding || {}), bot_messages: [...existingMsgs, newMsg] },
+        updated_at: new Date().toISOString()
+      }).eq('id', userId);
+    }
+
+    return result;
+  } catch (err) {
+    console.error('[VIP NOTIFY] Error notifying user on Telegram:', err);
+  }
+}
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -122,6 +199,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             if (error) return res.status(500).json({ error: 'Failed to grant VIP', details: error.message });
             await logAdminAction('grant_vip', userId, userName, { expiresAt });
+
+            // Instantly notify user on Telegram with Uzbek expiration date
+            const tgTarget = targetUser?.telegram_id || (userId.startsWith('moliya_user_tg_') ? userId.replace('moliya_user_tg_', '') : null);
+            if (tgTarget) {
+              await notifyUserVipGrantedTelegram(tgTarget, expiresAt, userId);
+            }
+
             return res.status(200).json({ success: true, userId, action: 'grant_vip', isPremium: true, premiumExpiresAt: expiresAt });
           }
 

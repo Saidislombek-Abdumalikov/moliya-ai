@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react'
 import type { OnboardingResult } from './Onboarding'
 import { useFinance, Transaction } from '../FinanceContext'
 import BankCard from './BankCard'
+import { PremiumCountdownBanner, PremiumCountdownTimer } from './PremiumCountdown'
 
 interface Props {
   onLogout: () => void
@@ -469,9 +470,6 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
   const lang = (initialLang in translations) ? initialLang : 'uz'
   const t = translations[lang as keyof typeof translations]
 
-  // Global premium state (can read from onboarding, default false)
-  const isPremium = onboarding?.monthlyIncome === undefined && onboarding?.monthlyGoal === 999999 ? true : (onboarding as any)?.isPremium || false
-
   // Profile data from Telegram WebApp and onboarding
   const tgUser = (typeof window !== 'undefined' && (window as any).Telegram?.WebApp?.initDataUnsafe?.user) || null
   const tgPhotoUrl = tgUser?.photo_url || null
@@ -503,8 +501,11 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
     if (userTelegram) setEditTelegram(userTelegram)
   }, [userName, userPhone, userTelegram])
 
-  const { cards: rawCards, saveCards, clearAllData, clearOnlyFinancialData, customTransactions, addTransaction } = useFinance()
+  const { cards: rawCards, saveCards, clearAllData, clearOnlyFinancialData, customTransactions, addTransaction, isPremium: ctxIsPremium, isVip, premiumExpiresAt, unlimitedAi } = useFinance()
   const cards = Array.isArray(rawCards) ? rawCards : []
+
+  // Global premium state (authoritative from context or fallback)
+  const isPremium = Boolean(ctxIsPremium || isVip || (onboarding as any)?.isPremium || (onboarding as any)?.isVip || (onboarding?.monthlyIncome === undefined && onboarding?.monthlyGoal === 999999))
 
   const getCardBalance = (cardId: string) => {
     const c = cards.find(x => x.id === cardId)
@@ -1030,39 +1031,47 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
         transition={{ duration: 0.4, delay: 0.2 }}
         style={{ padding: '0 20px 20px' }}
       >
-        <div 
-          onClick={() => setActiveModal('premium')}
-          style={{
-            background: isPremium ? 'linear-gradient(135deg, #F59E0B 0%, #D97706 100%)' : 'linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%)', 
-            borderRadius: 20, padding: '18px 20px',
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            position: 'relative', overflow: 'hidden', cursor: 'pointer',
-            boxShadow: '0 6px 18px rgba(124, 58, 237, 0.15)',
-            transition: 'transform 0.2s'
-          }}
-        >
-          <div style={{
-            position: 'absolute', top: -24, right: -24, width: 100, height: 100,
-            borderRadius: '50%', background: 'rgba(255,255,255,0.07)',
-          }} />
-          <div style={{ position: 'relative', zIndex: 2 }}>
-            <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.75)', marginBottom: 3, fontWeight: 500 }}>{t.premium.planLabel}</p>
-            <p style={{ fontSize: 17, fontWeight: 800, color: '#fff', marginBottom: 2 }}>
-              {isPremium ? t.premium.planPremium : t.premium.planName}
-            </p>
-            <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.75)' }}>
-              {isPremium ? t.premium.usagePremium : t.premium.usage}
-            </p>
+        {isPremium ? (
+          <PremiumCountdownBanner
+            expiresAt={premiumExpiresAt}
+            isLifetime={unlimitedAi || !premiumExpiresAt}
+            onClick={() => setActiveModal('premium')}
+          />
+        ) : (
+          <div 
+            onClick={() => setActiveModal('premium')}
+            style={{
+              background: 'linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%)', 
+              borderRadius: 20, padding: '18px 20px',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              position: 'relative', overflow: 'hidden', cursor: 'pointer',
+              boxShadow: '0 6px 18px rgba(124, 58, 237, 0.15)',
+              transition: 'transform 0.2s'
+            }}
+          >
+            <div style={{
+              position: 'absolute', top: -24, right: -24, width: 100, height: 100,
+              borderRadius: '50%', background: 'rgba(255,255,255,0.07)',
+            }} />
+            <div style={{ position: 'relative', zIndex: 2 }}>
+              <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.75)', marginBottom: 3, fontWeight: 500 }}>{t.premium.planLabel}</p>
+              <p style={{ fontSize: 17, fontWeight: 800, color: '#fff', marginBottom: 2 }}>
+                {t.premium.planName}
+              </p>
+              <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.75)' }}>
+                {t.premium.usage}
+              </p>
+            </div>
+            <button style={{
+              padding: '10px 16px', borderRadius: 12, border: 'none',
+              background: 'rgba(255,255,255,0.18)', color: '#fff',
+              fontSize: 13, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
+              boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
+            }}>
+              {t.premium.action}
+            </button>
           </div>
-          <button style={{
-            padding: '10px 16px', borderRadius: 12, border: 'none',
-            background: 'rgba(255,255,255,0.18)', color: '#fff',
-            fontSize: 13, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
-            boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
-          }}>
-            {isPremium ? t.premium.actionPremium : t.premium.action}
-          </button>
-        </div>
+        )}
       </motion.div>
 
       {/* Menu Sections list */}
@@ -1491,6 +1500,13 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                   {t.premiumModal.sub}
                 </p>
               </div>
+
+              {isPremium && (
+                <PremiumCountdownTimer
+                  expiresAt={premiumExpiresAt}
+                  isLifetime={unlimitedAi || !premiumExpiresAt}
+                />
+              )}
 
               {/* What Premium gives */}
               <div style={{

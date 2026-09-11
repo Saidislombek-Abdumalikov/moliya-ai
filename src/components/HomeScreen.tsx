@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'motion/react'
 import type { OnboardingResult } from './Onboarding'
 import { useFinance, baseTransactions, Transaction } from '../FinanceContext'
 import BankCard from './BankCard'
+import { PremiumCountdownBadge, PremiumCountdownTimer } from './PremiumCountdown'
 
 interface Props {
   onboarding?: OnboardingResult | null
@@ -322,7 +323,7 @@ function fmtFull(n: number) {
 }
 
 export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
-  const { onboarding: contextOnboarding, customTransactions, cards, saveCards, deleteTransaction, addTransaction, deletedTxIds, hasSampleData } = useFinance()
+  const { onboarding: contextOnboarding, customTransactions, cards, saveCards, deleteTransaction, addTransaction, deletedTxIds, hasSampleData, isPremium, isVip, premiumExpiresAt, unlimitedAi } = useFinance()
   const currentOnboarding = onboarding || contextOnboarding
   const initialLang = currentOnboarding?.language || 'uz'
   const lang = (initialLang in translations) ? initialLang : 'uz'
@@ -605,28 +606,36 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
           <span style={{ fontSize: 19, fontWeight: 800, color: '#1E1A3C', letterSpacing: -0.4 }}>Moliya AI</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <button
-            onClick={() => setShowPremium(true)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              background: 'linear-gradient(135deg, #FDF4FF 0%, #F5F3FF 100%)',
-              border: '1.5px solid #F3E8FF',
-              borderRadius: 14,
-              padding: '8px 12px',
-              cursor: 'pointer',
-              fontWeight: 700,
-              color: '#7C3AED',
-              fontSize: 12,
-              fontFamily: 'inherit',
-              boxShadow: '0 2px 8px rgba(124, 58, 237, 0.04)',
-              transition: 'all 0.2s ease',
-            }}
-          >
-            <span>👑</span>
-            <span>Premium</span>
-          </button>
+          {isPremium ? (
+            <PremiumCountdownBadge
+              expiresAt={premiumExpiresAt}
+              isLifetime={unlimitedAi || !premiumExpiresAt}
+              onClick={() => setShowPremium(true)}
+            />
+          ) : (
+            <button
+              onClick={() => setShowPremium(true)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                background: 'linear-gradient(135deg, #FDF4FF 0%, #F5F3FF 100%)',
+                border: '1.5px solid #F3E8FF',
+                borderRadius: 14,
+                padding: '8px 12px',
+                cursor: 'pointer',
+                fontWeight: 700,
+                color: '#7C3AED',
+                fontSize: 12,
+                fontFamily: 'inherit',
+                boxShadow: '0 2px 8px rgba(124, 58, 237, 0.04)',
+                transition: 'all 0.2s ease',
+              }}
+            >
+              <span>👑</span>
+              <span>Premium</span>
+            </button>
+          )}
           <div style={{ position: 'relative' }}>
             <button
               onClick={async () => {
@@ -1075,11 +1084,18 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                 {t.premiumTitle}
               </h3>
 
+              {isPremium && (
+                <PremiumCountdownTimer
+                  expiresAt={premiumExpiresAt}
+                  isLifetime={unlimitedAi || !premiumExpiresAt}
+                />
+              )}
+
               <div style={{
-                background: 'linear-gradient(135deg, #7C3AED 0%, #C084FC 100%)',
+                background: isPremium ? 'linear-gradient(135deg, #F59E0B 0%, #D97706 100%)' : 'linear-gradient(135deg, #7C3AED 0%, #C084FC 100%)',
                 borderRadius: 20, padding: '22px 20px', color: '#FFFFFF',
                 position: 'relative', overflow: 'hidden', marginBottom: 24,
-                boxShadow: '0 8px 24px rgba(124, 58, 237, 0.2)'
+                boxShadow: isPremium ? '0 8px 24px rgba(245, 158, 11, 0.2)' : '0 8px 24px rgba(124, 58, 237, 0.2)'
               }}>
                 <div style={{
                   position: 'absolute', top: -30, right: -30, width: 120, height: 120,
@@ -1090,9 +1106,11 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                   padding: '4px 8px', borderRadius: 20, display: 'inline-block', marginBottom: 12,
                   textTransform: 'uppercase', letterSpacing: 0.5
                 }}>
-                  {t.premiumStatus}
+                  {isPremium ? (isVip ? "👑 VIP Status Faol" : t.premiumStatus) : t.premiumStatus}
                 </span>
-                <h4 style={{ fontSize: 22, fontWeight: 800, marginBottom: 4 }}>{t.premiumSubtitle}</h4>
+                <h4 style={{ fontSize: 22, fontWeight: 800, marginBottom: 4 }}>
+                  {isPremium ? (isVip ? "Sizda barcha imkoniyatlar cheksiz!" : t.premiumSubtitle) : t.premiumSubtitle}
+                </h4>
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 30 }}>

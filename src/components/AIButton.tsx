@@ -60,7 +60,7 @@ async function parseAIText(text: string, cardsList: any[] = [], userId?: string)
 }
 
 export default function AIButton({ visible = true, language = 'uz' }: { visible?: boolean; language?: 'uz' | 'uz_cyrl' | 'ru' | 'en' }) {
-  const { addTransaction, hasSampleData, setHasSampleData, cards, onboarding, userId } = useFinance()
+  const { addTransaction, hasSampleData, setHasSampleData, cards, onboarding, userId, isPremium, isVip, unlimitedAi } = useFinance()
   const [open, setOpen] = useState(false)
   const [step, setStep] = useState<'type' | 'form' | 'voice' | 'done' | 'removeSamples'>('type')
   const [selectedType, setSelectedType] = useState<EntryType>('expense')
@@ -178,7 +178,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
   const AI_FREE_LIMIT = 20
 
   const checkAndDeductAIQuery = (): boolean => {
-    if (onboarding?.isPremium) return true
+    if (isPremium || isVip || unlimitedAi || onboarding?.isPremium || (onboarding as any)?.isVip) return true
     
     // Check if daily quota reached in onboarding state
     const obAny = onboarding as any

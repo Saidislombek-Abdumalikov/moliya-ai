@@ -36,6 +36,105 @@ export interface Transaction {
 
 export const baseTransactions: Transaction[] = []
 
+export interface UserAccessState {
+  isPremium: boolean
+  isVip: boolean
+  premiumExpiresAt: string | null
+  unlimitedAi: boolean
+  isTrial: boolean
+}
+
+export function computeAccessState(raw: any): UserAccessState {
+  if (!raw) {
+    return {
+      isPremium: false,
+      isVip: false,
+      premiumExpiresAt: null,
+      unlimitedAi: false,
+      isTrial: false,
+    }
+  }
+
+  // 1. Account blocked
+  const isBlocked = Boolean(
+    raw.is_blocked ||
+    raw.isBlocked ||
+    raw.onboarding?.is_blocked ||
+    raw.device_info?.is_blocked ||
+    String(raw.id || '').startsWith('restricted_')
+  )
+  if (isBlocked) {
+    return {
+      isPremium: false,
+      isVip: false,
+      premiumExpiresAt: null,
+      unlimitedAi: false,
+      isTrial: false,
+    }
+  }
+
+  // 2. Unlimited AI
+  const unlimitedAi = Boolean(raw.unlimited_ai ?? raw.unlimitedAi ?? raw.onboarding?.unlimitedAi)
+  if (unlimitedAi) {
+    return {
+      isPremium: true,
+      isVip: true,
+      premiumExpiresAt: null,
+      unlimitedAi: true,
+      isTrial: false,
+    }
+  }
+
+  // 3. VIP / Premium
+  const rawIsPremium = Boolean(raw.is_premium ?? raw.isPremium ?? raw.onboarding?.isPremium ?? raw.onboarding?.isVip)
+  const expiresAt = raw.premium_expires_at || raw.premiumExpiresAt || raw.onboarding?.premium_expires_at || raw.onboarding?.premiumExpiresAt || null
+
+  if (rawIsPremium) {
+    if (!expiresAt) {
+      return {
+        isPremium: true,
+        isVip: true,
+        premiumExpiresAt: null,
+        unlimitedAi: false,
+        isTrial: false,
+      }
+    }
+    const expiresMs = new Date(expiresAt).getTime()
+    if (expiresMs > Date.now()) {
+      return {
+        isPremium: true,
+        isVip: true,
+        premiumExpiresAt: expiresAt,
+        unlimitedAi: false,
+        isTrial: false,
+      }
+    }
+  }
+
+  // 4. Free Trial
+  const trialEnd = raw.trial_ends_at || raw.trialEndsAt || raw.onboarding?.trial_ends_at || raw.onboarding?.trialEndsAt || expiresAt
+  if (trialEnd) {
+    const trialMs = new Date(trialEnd).getTime()
+    if (trialMs > Date.now()) {
+      return {
+        isPremium: true,
+        isVip: false,
+        premiumExpiresAt: trialEnd,
+        unlimitedAi: false,
+        isTrial: true,
+      }
+    }
+  }
+
+  return {
+    isPremium: false,
+    isVip: false,
+    premiumExpiresAt: null,
+    unlimitedAi: false,
+    isTrial: false,
+  }
+}
+
 interface FinanceContextType {
   userId: string | null
   onboarding: OnboardingResult | null
@@ -48,6 +147,10 @@ interface FinanceContextType {
   loading: boolean
   isAuthReady: boolean
   authError: string | null
+  isPremium: boolean
+  isVip: boolean
+  premiumExpiresAt: string | null
+  unlimitedAi: boolean
   updateOnboarding: (newData: Partial<OnboardingResult>) => Promise<any>
   saveCards: (updated: Card[]) => Promise<any>
   updateSecurity: (updated: SecurityOpts) => Promise<any>
@@ -163,6 +266,17 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return null
   })
 
+  const [accessState, setAccessState] = useState<UserAccessState>(() => {
+    if (!isTg) return { isPremium: false, isVip: false, premiumExpiresAt: null, unlimitedAi: false, isTrial: false }
+    try {
+      const saved = localStorage.getItem('user_onboarding_v1')
+      if (saved) {
+        return computeAccessState(JSON.parse(saved))
+      }
+    } catch {}
+    return { isPremium: true, isVip: true, premiumExpiresAt: null, unlimitedAi: false, isTrial: false }
+  })
+
   const [cards, setCards] = useState<Card[]>(() => {
     if (!isTg) return []
     try {
@@ -253,9 +367,19 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     if (data.onboarding?.completed === true) {
       localStorage.setItem('user_onboarding_completed_v1', 'true')
     }
+    const acc = computeAccessState({ ...data, ...(data.onboarding || {}) })
+    setAccessState(acc)
+
     if (data.onboarding) {
-      setOnboarding(data.onboarding)
-      localStorage.setItem('user_onboarding_v1', JSON.stringify(data.onboarding))
+      const enhancedOnboarding = {
+        ...data.onboarding,
+        isPremium: acc.isPremium,
+        isVip: acc.isVip,
+        premiumExpiresAt: acc.premiumExpiresAt,
+        unlimitedAi: acc.unlimitedAi,
+      }
+      setOnboarding(enhancedOnboarding)
+      localStorage.setItem('user_onboarding_v1', JSON.stringify(enhancedOnboarding))
     }
     const userCards = Array.isArray(data.cards) ? data.cards : []
     setCards(userCards)
@@ -702,13 +826,20 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         .maybeSingle();
 
       if (!error && data) {
-        if (data.onboarding) {
-          setOnboarding(prev => {
-            const merged = { ...(prev || {}), ...data.onboarding };
-            localStorage.setItem('user_onboarding_v1', JSON.stringify(merged));
-            return merged;
-          });
-        }
+        const acc = computeAccessState(data);
+        setAccessState(acc);
+        setOnboarding(prev => {
+          const merged = {
+            ...(prev || {}),
+            ...(data.onboarding || {}),
+            isPremium: acc.isPremium,
+            isVip: acc.isVip,
+            premiumExpiresAt: acc.premiumExpiresAt,
+            unlimitedAi: acc.unlimitedAi,
+          };
+          localStorage.setItem('user_onboarding_v1', JSON.stringify(merged));
+          return merged;
+        });
         if (Array.isArray(data.cards)) {
           setCards(data.cards);
           localStorage.setItem('user_cards_v1', JSON.stringify(data.cards));
@@ -760,10 +891,20 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         (payload: any) => {
           const newData = payload.new;
           if (newData) {
-            if (newData.onboarding) {
-              setOnboarding(newData.onboarding);
-              localStorage.setItem('user_onboarding_v1', JSON.stringify(newData.onboarding));
-            }
+            const acc = computeAccessState(newData);
+            setAccessState(acc);
+            setOnboarding(prev => {
+              const merged = {
+                ...(prev || {}),
+                ...(newData.onboarding || {}),
+                isPremium: acc.isPremium,
+                isVip: acc.isVip,
+                premiumExpiresAt: acc.premiumExpiresAt,
+                unlimitedAi: acc.unlimitedAi,
+              };
+              localStorage.setItem('user_onboarding_v1', JSON.stringify(merged));
+              return merged;
+            });
             if (Array.isArray(newData.cards)) {
               setCards(newData.cards);
               localStorage.setItem('user_cards_v1', JSON.stringify(newData.cards));
@@ -806,12 +947,17 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     try {
       const { data: dbUser } = await supabase
         .from('users')
-        .select('phone, telegram_id, onboarding, name, language, is_premium')
+        .select('phone, telegram_id, onboarding, name, language, is_premium, premium_expires_at, unlimited_ai, trial_ends_at')
         .eq('id', targetUserId)
         .maybeSingle();
 
       const existingPhone = dbUser?.phone || updated.phone || null;
       const existingTgId = dbUser?.telegram_id || updated.telegramId || null;
+
+      const isDbVipActive = Boolean(
+        dbUser?.unlimited_ai ||
+        (dbUser?.is_premium && (!dbUser.premium_expires_at || new Date(dbUser.premium_expires_at).getTime() > Date.now()))
+      );
 
       const nowIso = new Date().toISOString();
       const payload: any = {
@@ -820,7 +966,17 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       };
       if (updated.name && updated.name !== '—') payload.name = updated.name;
       if (updated.language) payload.language = updated.language;
-      if (updated.isPremium !== undefined) payload.is_premium = updated.isPremium;
+
+      if (isDbVipActive) {
+        // Protect active VIP from being wiped by client onboarding
+        payload.is_premium = true;
+        payload.premium_expires_at = dbUser.premium_expires_at;
+        updated.isPremium = true;
+        updated.isVip = true;
+        updated.premiumExpiresAt = dbUser.premium_expires_at;
+      } else if (newData.isPremium !== undefined) {
+        payload.is_premium = newData.isPremium;
+      }
       if (existingPhone) payload.phone = existingPhone;
       if (existingTgId) payload.telegram_id = existingTgId;
 
@@ -1085,6 +1241,10 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         loading,
         isAuthReady,
         authError,
+        isPremium: accessState.isPremium,
+        isVip: accessState.isVip,
+        premiumExpiresAt: accessState.premiumExpiresAt,
+        unlimitedAi: accessState.unlimitedAi,
         updateOnboarding,
         saveCards,
         updateSecurity,
