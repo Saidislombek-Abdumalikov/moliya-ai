@@ -283,6 +283,13 @@ async function registerBotCommandsOnce() {
   }
 }
 
+// ── Phone Verification Helpers ──────────────────────────────
+export function isValidPhoneNumber(phone: any): boolean {
+  if (!phone) return false;
+  const s = String(phone).trim();
+  return s.length >= 7 && s !== '—' && s !== '-' && s !== 'null' && s !== 'undefined';
+}
+
 // ── Canonical User Resolution & Identity Model ───────────────
 async function resolveCanonicalUser(fromUser: any) {
   const tgId = String(fromUser.id);
@@ -299,7 +306,7 @@ async function resolveCanonicalUser(fromUser: any) {
     .maybeSingle();
 
   if (blockedIdentity && blockedIdentity.onboarding?.is_blocked !== false) {
-    return { user: blockedIdentity, userId, isBlocked: true, isRegistered: false, isNew: false };
+    return { user: blockedIdentity, userId, isBlocked: true, isRegistered: false, isNew: false, hasPhone: false };
   }
 
   // 2. Fetch existing active canonical user
@@ -318,11 +325,13 @@ async function resolveCanonicalUser(fromUser: any) {
       existing.device_info?.restricted
     );
 
+    const hasPhone = isValidPhoneNumber(existing.phone) || isValidPhoneNumber(existing.onboarding?.phone);
+
     if (isBlocked) {
-      return { user: existing, userId, isBlocked: true, isRegistered: false, isNew: false };
+      return { user: existing, userId, isBlocked: true, isRegistered: false, isNew: false, hasPhone };
     }
 
-    return { user: existing, userId, isBlocked: false, isRegistered: true, isNew: false };
+    return { user: existing, userId, isBlocked: false, isRegistered: hasPhone, isNew: false, hasPhone };
   }
 
   // 3. User was deleted or is first-time visitor -> Create clean active user record with trial
@@ -363,7 +372,7 @@ async function resolveCanonicalUser(fromUser: any) {
     console.error('[BOT] Error creating initial user record:', upErr.message);
   }
 
-  return { user: newPayload, userId, isBlocked: false, isRegistered: true, isNew: true };
+  return { user: newPayload, userId, isBlocked: false, isRegistered: false, isNew: true, hasPhone: false };
 }
 
 // ── Complete Phone Registration & Grant 1-Day Trial ─────────
@@ -1144,6 +1153,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ status: 'blocked' });
       }
 
+      // Phone verification gate for inline buttons
+      const userHasPhone = isValidPhoneNumber(userRow?.phone) || isValidPhoneNumber(userRow?.onboarding?.phone);
+      if (!userHasPhone) {
+        await answerCallbackQuery(cb.id, "⚠️ Botdan foydalanish uchun telefon raqamingizni tasdiqlang!");
+        if (chatId) {
+          await sendTelegramMessage(
+            chatId,
+            `⚠️ <b>Botdan to'liq foydalanish uchun avval telefon raqamingizni tasdiqlang:</b>\n\nPastdagi tugmani bosing:`,
+            {
+              keyboard: [[{ text: "📞 Telefon raqamni yuborish", request_contact: true }]],
+              resize_keyboard: true,
+              one_time_keyboard: true
+            },
+            userId
+          );
+        }
+        return res.status(200).json({ status: 'phone_required' });
+      }
+
       if (chatId && cb.message?.message_id && data) {
         // Log user callback interaction
         await logBotMessage(userId, {
@@ -1401,6 +1429,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ status: 'ok' });
     }
 
+    // ── STRICT PHONE NUMBER REQUIREMENT ─────────────────────────
+    // Without a verified phone number, users are strictly blocked from using the bot:
+    // Expenses (text, voice, photo), commands, and interactive features are inaccessible until phone is verified.
+    const userHasPhone = isValidPhoneNumber(user?.phone) || isValidPhoneNumber(user?.onboarding?.phone);
+
+    if (!userHasPhone) {
+      const phoneRequestText =
+        `<b>Assalomu alaykum, ${fromUser.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
+        `Men <b>Moliya AI</b> — shaxsiy moliyaviy yordamchingizman.\n\n` +
+        `⚠️ <b>Botdan foydalanish uchun telefon raqamingizni tasdiqlashingiz shart.</b>\n` +
+        `Raqamingiz tasdiqlangach, sizga darhol <b>1 kunlik CHEKSIZ VIP PREMIUM</b> sinov muddati taqdim etiladi! 💎\n\n` +
+        `👇 <i>Pastdagi tugmani bosing va telefon raqamingizni yuboring:</i>`;
+
+      await sendTelegramMessage(
+        chatId,
+        phoneRequestText,
+        {
+          keyboard: [[{ text: "📞 Telefon raqamni yuborish", request_contact: true }]],
+          resize_keyboard: true,
+          one_time_keyboard: true
+        },
+        userId
+      );
+      return res.status(200).json({ status: 'phone_required' });
+    }
+
     // ── Command: /start or 👤 Profile / 👤 Profil / 👤 Hisobim / /profile ──
     if (text.startsWith('/start') || text === '👤 Profile' || text === '👤 Profil' || text === '👤 Hisobim' || text.startsWith('/profile')) {
       // Only check login request if explicitly /start with an argument (e.g. /start req_xxxx)
@@ -1429,27 +1483,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           );
           return res.status(200).json({ status: 'ok' });
         }
-      }
-
-      // Check if user is a NEW unverified user needing phone verification
-      const hasPhone = Boolean(user?.phone || user?.onboarding?.phone);
-      if (!hasPhone) {
-        const phoneRequestText =
-          `<b>Assalomu alaykum, ${fromUser.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
-          `Men <b>Moliya AI</b> — shaxsiy moliyaviy yordamchingizman.\n\n` +
-          `Botdan to'liq foydalanish va <b>1 kunlik CHEKSIZ PREMIUM</b> sinovini faollashtirish uchun pastdagi tugma orqali telefon raqamingizni tasdiqlang:`;
-
-        await sendTelegramMessage(
-          chatId,
-          phoneRequestText,
-          {
-            keyboard: [[{ text: "📞 Telefon raqamni yuborish", request_contact: true }]],
-            resize_keyboard: true,
-            one_time_keyboard: true
-          },
-          userId
-        );
-        return res.status(200).json({ status: 'phone_requested' });
       }
 
       // If user tapped 👤 Profile, 👤 Profil, 👤 Hisobim or /profile

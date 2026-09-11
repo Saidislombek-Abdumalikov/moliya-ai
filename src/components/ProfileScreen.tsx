@@ -4,6 +4,7 @@ import type { OnboardingResult } from './Onboarding'
 import { useFinance, Transaction } from '../FinanceContext'
 import BankCard from './BankCard'
 import { PremiumCountdownBanner, PremiumCountdownTimer } from './PremiumCountdown'
+import PrivacyPolicyModal from './PrivacyPolicyModal'
 
 interface Props {
   onLogout: () => void
@@ -47,6 +48,8 @@ const translations = {
         exportSub: 'Excel',
         help: 'Yordam',
         helpSub: '24/7 tezkor xizmat',
+        privacyPolicy: 'Maxfiylik siyosati va Oferta',
+        privacyPolicySub: 'Ommaviy oferta va ma\'lumotlar xavfsizligi',
         clearData: 'Ma\'lumotlarimni tozalash',
         clearDataSub: 'Moliyaviy yozuvlarni tozalash (Hisob faol qoladi)',
         deleteAccount: 'Hisobni o\'chirish',
@@ -159,6 +162,8 @@ const translations = {
         exportSub: 'Excel',
         help: 'Ёрдам',
         helpSub: '24/7 тезкор хизмат',
+        privacyPolicy: 'Махфийлик сиёсати ва Оферта',
+        privacyPolicySub: 'Оммавий оферта ва маълумотлар хавфсизлиги',
         clearData: 'Маълумотларимни тозалаш',
         clearDataSub: 'Молиявий ёзувларни тозалаш (Ҳисоб фаол қолади)',
         deleteAccount: 'Ҳисобни ўчириш',
@@ -271,6 +276,8 @@ const translations = {
         exportSub: 'Excel',
         help: 'Помощь',
         helpSub: 'Поддержка 24/7',
+        privacyPolicy: 'Политика конфиденциальности и Оферта',
+        privacyPolicySub: 'Публичная оферта и защита данных',
         clearData: 'Очистить мои данные',
         clearDataSub: 'Очистить финансовые записи (Аккаунт останется активен)',
         deleteAccount: 'Удалить аккаунт',
@@ -383,6 +390,8 @@ const translations = {
         exportSub: 'Excel',
         help: 'Help',
         helpSub: '24/7 live support',
+        privacyPolicy: 'Privacy Policy & Terms',
+        privacyPolicySub: 'Public offer and data protection',
         clearData: 'Clear My Data',
         clearDataSub: 'Delete financial records (Your account stays active)',
         deleteAccount: 'Delete Account',
@@ -484,7 +493,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
 
   // Modal States
   const [activeModal, setActiveModal] = useState<
-    'edit' | 'premium' | 'notifications' | 'security' | 'payments' | 'lang' | 'export' | 'help' | 'clearConfirm' | 'clearDataOnly' | 'logout_confirm' | null
+    'edit' | 'premium' | 'notifications' | 'security' | 'payments' | 'lang' | 'export' | 'help' | 'clearConfirm' | 'clearDataOnly' | 'logout_confirm' | 'privacy_policy' | null
   >(null)
 
   // Transient Toast state
@@ -1224,6 +1233,25 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
             <div style={{ flex: 1 }}>
               <p style={{ fontSize: 14, fontWeight: 600, color: '#1E1A3C' }}>{t.menu.items.help}</p>
               <p style={{ fontSize: 11.5, color: '#8B82C4' }}>{t.menu.items.helpSub}</p>
+            </div>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M5 3L9 7L5 11" stroke="#C4BDE8" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+
+          {/* Privacy Policy & Public Offer (Maxfiylik siyosati va Oferta) */}
+          <div 
+            id="menu_item_privacy_policy"
+            onClick={() => setActiveModal('privacy_policy')}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px',
+              borderBottom: '1px solid #E4E1F4', cursor: 'pointer',
+            }}
+          >
+            <span style={{ fontSize: 18, width: 28, textAlign: 'center' }}>📜</span>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: 14, fontWeight: 600, color: '#1E1A3C' }}>{t.menu.items.privacyPolicy}</p>
+              <p style={{ fontSize: 11.5, color: '#8B82C4' }}>{t.menu.items.privacyPolicySub}</p>
             </div>
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
               <path d="M5 3L9 7L5 11" stroke="#C4BDE8" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
@@ -2900,6 +2928,13 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
         </div>
       </div>
     )}
+
+    {/* Privacy Policy and Terms Modal (Maxfiylik siyosati va Ommaviy oferta) */}
+    <PrivacyPolicyModal
+      isOpen={activeModal === 'privacy_policy'}
+      onClose={() => setActiveModal(null)}
+      lang={lang}
+    />
 
       {/* Embedded CSS animations */}
       <style>{`

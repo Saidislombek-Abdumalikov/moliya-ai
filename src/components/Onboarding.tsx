@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 import { useFinance } from '../FinanceContext'
+import PrivacyPolicyModal from './PrivacyPolicyModal'
 
 export interface OnboardingResult {
   language: 'uz' | 'uz_cyrl' | 'ru' | 'en'
@@ -238,6 +239,7 @@ export default function Onboarding({ onComplete }: Props) {
   const [customGoalInput, setCustomGoalInput] = useState('')
   const [isCustomGoal, setIsCustomGoal] = useState(false)
   const [selectedAiQuestion, setSelectedAiQuestion] = useState<number | null>(null)
+  const [showPolicy, setShowPolicy] = useState(false)
 
   const t = translations[language] || translations.uz
 
@@ -832,7 +834,29 @@ export default function Onboarding({ onComplete }: Props) {
         >
           <span>{step === 'ready' ? t.readyAction : (step === 'goal' ? t.saveGoalBtn : t.continueBtn)}</span>
         </button>
+
+        {/* Public Offer & Privacy Policy Link */}
+        <p
+          onClick={() => setShowPolicy(true)}
+          style={{
+            textAlign: 'center',
+            fontSize: 11,
+            color: '#8B82C4',
+            margin: '10px 0 0',
+            cursor: 'pointer',
+            lineHeight: 1.4
+          }}
+        >
+          Davom etish orqali siz <span style={{ textDecoration: 'underline', color: '#7C3AED', fontWeight: 600 }}>Ommaviy oferta</span> va <span style={{ textDecoration: 'underline', color: '#7C3AED', fontWeight: 600 }}>Maxfiylik siyosati</span>ga rozilik bildirasiz
+        </p>
       </div>
+
+      {/* Privacy Policy and Oferta Modal */}
+      <PrivacyPolicyModal
+        isOpen={showPolicy}
+        onClose={() => setShowPolicy(false)}
+        lang={language}
+      />
     </div>
   )
 }
