@@ -257,25 +257,22 @@ export default function AppTour({ isOpen, onClose, language = 'uz', onNavigateSc
   const [currentStep, setCurrentStep] = useState(0)
   const [targetRect, setTargetRect] = useState<DOMRect | null>(null)
 
-  const steps = tourSteps[language] || tourSteps.uz
-  const step = steps[currentStep]
+  const steps = tourSteps[language] || tourSteps.uz || tourSteps.en || []
+  const safeStepIndex = Math.min(Math.max(0, currentStep), Math.max(0, steps.length - 1))
+  const step = steps[safeStepIndex] || null
 
   // Automatically switch active screen if step requires it
   useEffect(() => {
-    if (isOpen && step.targetScreen && onNavigateScreen) {
-      onNavigateScreen(step.targetScreen)
-    }
-  }, [isOpen, currentStep, step.targetScreen, onNavigateScreen])
+    if (!isOpen || !step?.targetScreen || !onNavigateScreen) return
+    onNavigateScreen(step.targetScreen)
+  }, [isOpen, currentStep, step?.targetScreen])
 
   // Update bounding rect & smooth scroll into view
   useEffect(() => {
-    if (!isOpen) return
-
-    if (step.targetScreen && onNavigateScreen) {
-      onNavigateScreen(step.targetScreen)
-    }
+    if (!isOpen || !step) return
 
     const updateRect = () => {
+      if (!step?.targetId) return
       const el = document.getElementById(step.targetId)
       if (el) {
         setTargetRect(el.getBoundingClientRect())
@@ -284,27 +281,34 @@ export default function AppTour({ isOpen, onClose, language = 'uz', onNavigateSc
       }
     }
 
-    const timer = setTimeout(() => {
-      const el = document.getElementById(step.targetId)
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      }
-      updateRect()
-    }, 120)
+    updateRect()
 
-    const interval = setInterval(updateRect, 250)
+    const timer = setTimeout(() => {
+      try {
+        if (!step?.targetId) return
+        const el = document.getElementById(step.targetId)
+        if (el && typeof el.scrollIntoView === 'function') {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        }
+        updateRect()
+      } catch (err) {
+        console.warn('AppTour scroll error:', err)
+      }
+    }, 150)
+
+    const interval = setInterval(updateRect, 300)
     window.addEventListener('resize', updateRect)
     return () => {
       clearTimeout(timer)
       clearInterval(interval)
       window.removeEventListener('resize', updateRect)
     }
-  }, [isOpen, currentStep, step.targetId, step.targetScreen])
+  }, [isOpen, currentStep, step?.targetId])
 
-  if (!isOpen) return null
+  if (!isOpen || !step) return null
 
   const handleNext = () => {
-    if (currentStep < steps.length - 1) {
+    if (safeStepIndex < steps.length - 1) {
       setCurrentStep(prev => prev + 1)
     } else {
       localStorage.setItem('user_tour_completed_v2', 'true')
@@ -350,7 +354,7 @@ export default function AppTour({ isOpen, onClose, language = 'uz', onNavigateSc
 
   // Position tooltip outside the target box so it NEVER obscures the feature
   let tooltipTop = 100
-  if (targetRect) {
+  if (targetRect && step) {
     if (step.tooltipPosition === 'bottom') {
       tooltipTop = Math.min(window.innerHeight - 230, targetRect.bottom + 20)
     } else {
@@ -415,7 +419,7 @@ export default function AppTour({ isOpen, onClose, language = 'uz', onNavigateSc
               fontSize: 11, fontWeight: 700, background: '#EDE9FE', color: '#7C3AED',
               padding: '4px 10px', borderRadius: 10, letterSpacing: 0.3
             }}>
-              {language === 'uz' ? `QADAM ${currentStep + 1} / ${steps.length} — ✋ Siljitish mumkin` : language === 'uz_cyrl' ? `ҚАДАМ ${currentStep + 1} / ${steps.length} — ✋ Силжитиш мумкин` : language === 'ru' ? `ШАГ ${currentStep + 1} / ${steps.length} — ✋ Можно перемещать` : `STEP ${currentStep + 1} / ${steps.length} — ✋ Draggable`}
+              {language === 'uz' ? `QADAM ${safeStepIndex + 1} / ${steps.length} — ✋ Siljitish mumkin` : language === 'uz_cyrl' ? `ҚАДАМ ${safeStepIndex + 1} / ${steps.length} — ✋ Силжитиш мумкин` : language === 'ru' ? `ШАГ ${safeStepIndex + 1} / ${steps.length} — ✋ Можно перемещать` : `STEP ${safeStepIndex + 1} / ${steps.length} — ✋ Draggable`}
             </span>
             <button
               onClick={handleClose}

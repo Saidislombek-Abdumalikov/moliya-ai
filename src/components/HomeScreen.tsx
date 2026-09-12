@@ -729,12 +729,13 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
 
       {/* Goal card (from onboarding) */}
       {onboarding && (() => {
-        const isDirect = !onboarding.monthlyIncome;
+        const isDirect = !onboarding?.monthlyIncome;
         const spendLimit = isDirect 
-          ? (onboarding.monthlyGoal || 7000000) 
-          : ((onboarding.monthlyIncome || 10000000) - (onboarding.monthlyGoal || 3000000));
+          ? (onboarding?.monthlyGoal || 7000000) 
+          : ((onboarding?.monthlyIncome || 10000000) - (onboarding?.monthlyGoal || 3000000));
+        const safeSpendLimit = Math.max(1, spendLimit);
         const remainingLimit = spendLimit - totalExpense;
-        const limitPct = Math.min(100, Math.max(0, Math.round((totalExpense / spendLimit) * 100)));
+        const limitPct = Math.min(100, Math.max(0, Math.round((totalExpense / safeSpendLimit) * 100)));
         const isOverLimit = remainingLimit < 0;
 
         return (

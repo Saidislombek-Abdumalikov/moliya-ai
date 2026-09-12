@@ -21,9 +21,6 @@ export default function App() {
 
   const getInitialStage = (): Stage => {
     try {
-      if (!isTelegramMiniApp()) {
-        return 'onboarding';
-      }
       const isOnboarded = localStorage.getItem('user_onboarding_completed_v1') === 'true';
       if (isOnboarded) {
         return 'app';
@@ -47,11 +44,6 @@ export default function App() {
   // Determine stage ONLY after auth check completes
   useEffect(() => {
     if (!isAuthReady) return;
-    if (!isTelegramMiniApp()) {
-      setStage('onboarding');
-      return;
-    }
-
     const isOnboarded = localStorage.getItem('user_onboarding_completed_v1') === 'true' || onboarding?.completed === true;
 
     if (isOnboarded) {
@@ -79,10 +71,6 @@ export default function App() {
   // Auto-transition to app/onboarding when user gets authenticated or logs out
   useEffect(() => {
     const checkLoggedIn = () => {
-      if (!isTelegramMiniApp()) {
-        setStage('onboarding');
-        return;
-      }
       const isOnboarded = localStorage.getItem('user_onboarding_completed_v1') === 'true' || onboarding?.completed === true;
       if (isOnboarded) {
         setStage('app');
@@ -199,10 +187,9 @@ export default function App() {
     return (
       <Onboarding
         onComplete={(result) => {
+          localStorage.setItem('user_onboarding_completed_v1', 'true')
           updateOnboarding(result)
           setHasSampleData(false)
-          localStorage.setItem('user_onboarding_completed_v1', 'true')
-          window.dispatchEvent(new Event('user_logged_in_updated'))
           setStage('app')
           setShowTour(true)
         }}

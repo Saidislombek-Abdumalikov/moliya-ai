@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { supabase } from '../supabase';
 
 interface PrivacyPolicyModalProps {
   isOpen: boolean;
@@ -313,6 +314,53 @@ export const PRIVACY_POLICY_DATA = {
   }
 };
 
+function parseCustomPolicy(text: string) {
+  const lines = text.split('\n');
+  const sections: { num: string; title: string; content: string; bullets?: string[]; icon?: string }[] = [];
+  let currentSection: any = null;
+
+  const getIcon = (idx: number) => {
+    const icons = ['🛡️', '📱', '🎯', '🤖', '🔒', '🗑️', '⚖️', '📋', '💎', '🔄'];
+    return icons[idx % icons.length];
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    if (trimmed.startsWith('### ') || trimmed.startsWith('## ') || trimmed.startsWith('# ')) {
+      if (currentSection) sections.push(currentSection);
+      const titleRaw = trimmed.replace(/^#+\s*/, '');
+      const matchNum = titleRaw.match(/^(\d+[\.\)]?\s*)(.*)/);
+      const num = matchNum ? matchNum[1].replace(/[\.\)]\s*$/, '') : String(sections.length + 1);
+      const title = matchNum ? matchNum[2] : titleRaw;
+      currentSection = {
+        icon: getIcon(sections.length),
+        num,
+        title,
+        content: '',
+        bullets: []
+      };
+    } else if (trimmed.startsWith('* ') || trimmed.startsWith('- ')) {
+      const b = trimmed.replace(/^[\*\-]\s*/, '').replace(/\*\*(.*?)\*\*/g, '$1');
+      if (currentSection) {
+        currentSection.bullets.push(b);
+      } else {
+        currentSection = { icon: '📄', num: '1', title: 'Umumiy', content: '', bullets: [b] };
+      }
+    } else {
+      if (currentSection) {
+        currentSection.content = currentSection.content ? `${currentSection.content}\n${trimmed}` : trimmed;
+      } else {
+        currentSection = { icon: '📄', num: '1', title: 'Umumiy', content: trimmed, bullets: [] };
+      }
+    }
+  }
+
+  if (currentSection) sections.push(currentSection);
+  return sections.length > 0 ? sections : null;
+}
+
 export default function PrivacyPolicyModal({
   isOpen,
   onClose,
@@ -320,6 +368,14 @@ export default function PrivacyPolicyModal({
   initialTab = 'privacy'
 }: PrivacyPolicyModalProps) {
   const [activeTab, setActiveTab] = useState<'privacy' | 'terms'>(initialTab);
+  const [customPolicyText, setCustomPolicyText] = useState<string>(() => {
+    try {
+      return localStorage.getItem('moliya_custom_privacy_policy') || '';
+    } catch {
+      return '';
+    }
+  });
+
   const data = (PRIVACY_POLICY_DATA as any)[lang] || PRIVACY_POLICY_DATA.uz;
 
   useEffect(() => {
@@ -328,7 +384,39 @@ export default function PrivacyPolicyModal({
     }
   }, [isOpen, initialTab]);
 
-  const currentSections = activeTab === 'privacy' ? data.privacySections : data.termsSections;
+  // Dynamically load updated policy from Supabase whenever modal is opened
+  useEffect(() => {
+    if (!isOpen) return;
+
+    let isMounted = true;
+    const fetchLatestPolicy = async () => {
+      try {
+        const { data: dbData, error } = await supabase
+          .from('users')
+          .select('onboarding')
+          .eq('id', 'system_app_settings')
+          .maybeSingle();
+
+        if (!error && dbData?.onboarding?.privacy_policy && isMounted) {
+          const freshText = String(dbData.onboarding.privacy_policy);
+          setCustomPolicyText(freshText);
+          localStorage.setItem('moliya_custom_privacy_policy', freshText);
+        }
+      } catch (err) {
+        console.warn('Failed to load custom privacy policy:', err);
+      }
+    };
+
+    fetchLatestPolicy();
+    return () => {
+      isMounted = false;
+    };
+  }, [isOpen]);
+
+  const parsedCustomSections = customPolicyText ? parseCustomPolicy(customPolicyText) : null;
+  const currentSections = activeTab === 'privacy' 
+    ? (parsedCustomSections || data.privacySections) 
+    : data.termsSections;
 
   return (
     <AnimatePresence>

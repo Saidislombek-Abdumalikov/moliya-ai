@@ -1584,6 +1584,69 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // ==========================================
+  // ROUTE: /api/admin/app-settings
+  // ==========================================
+  if (route === 'app-settings') {
+    if (req.method === 'GET') {
+      try {
+        const { data, error } = await supabase
+          .from('users')
+          .select('onboarding')
+          .eq('id', 'system_app_settings')
+          .maybeSingle();
+
+        if (error) return res.status(500).json({ error: error.message });
+        return res.status(200).json({
+          privacy_policy: data?.onboarding?.privacy_policy || null,
+          terms_of_service: data?.onboarding?.terms_of_service || null,
+          updated_at: data?.onboarding?.updated_at || null
+        });
+      } catch (err: any) {
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    if (req.method === 'POST') {
+      try {
+        const { privacy_policy, terms_of_service } = req.body || {};
+        const nowIso = new Date().toISOString();
+
+        const { data: existing } = await supabase
+          .from('users')
+          .select('onboarding')
+          .eq('id', 'system_app_settings')
+          .maybeSingle();
+
+        const updatedOnboarding = {
+          ...(existing?.onboarding || {}),
+          updated_at: nowIso
+        };
+        if (privacy_policy !== undefined) (updatedOnboarding as any).privacy_policy = privacy_policy;
+        if (terms_of_service !== undefined) (updatedOnboarding as any).terms_of_service = terms_of_service;
+
+        const { error } = await supabase.from('users').upsert({
+          id: 'system_app_settings',
+          name: '[SYSTEM_APP_SETTINGS]',
+          onboarding: updatedOnboarding,
+          updated_at: nowIso
+        }, { onConflict: 'id' });
+
+        if (error) return res.status(500).json({ error: error.message });
+
+        await logAdminAction('UPDATE_APP_SETTINGS', undefined, undefined, {
+          updated_keys: Object.keys(req.body || {})
+        });
+
+        return res.status(200).json({ success: true, onboarding: updatedOnboarding });
+      } catch (err: any) {
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    return res.status(405).json({ error: 'Method Not Allowed' });
+  }
+
+  // ==========================================
   // 6. ROUTE: /api/admin/notifications
   // ==========================================
   if (route === 'notifications') {

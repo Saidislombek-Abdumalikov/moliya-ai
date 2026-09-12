@@ -179,38 +179,34 @@ export function isTelegramMiniApp(): boolean {
   if (typeof window === 'undefined') return false
 
   const tg = (window as any).Telegram?.WebApp
+
+  // 1. Valid Telegram HMAC initData or Telegram user object (authoritative Telegram proof)
+  if (tg && typeof tg.initData === 'string' && tg.initData.trim().length > 0) return true
+  if (tg?.initDataUnsafe?.user?.id) return true
+
+  // 2. Native mobile Telegram client proxy (Android / iOS)
   const hasNativeProxy = Boolean(
     (window as any).TelegramWebviewProxy ||
     (window as any).webkit?.messageHandlers?.TelegramWebviewProxy
   )
-
-  // 1. Native mobile Telegram client (Android / iOS)
   if (hasNativeProxy) return true
 
-  // 2. Telegram Desktop / Native platforms (tdesktop, macos, unigram, ios, android)
+  // 3. Telegram Desktop / Web / Native platforms
   const platform = tg?.platform
-  const isNativePlatform = Boolean(
-    platform &&
-    platform !== 'unknown' &&
-    ['ios', 'android', 'tdesktop', 'macos', 'unigram'].includes(platform)
-  )
-  if (isNativePlatform) return true
+  const knownPlatforms = ['ios', 'android', 'tdesktop', 'macos', 'unigram', 'weba', 'webz', 'web', 'browser']
+  if (platform && platform !== 'unknown' && knownPlatforms.includes(platform)) return true
 
-  // 3. Telegram Web (runs inside an iframe on web.telegram.org)
+  // 4. Telegram Web running inside iframe or window
   const isInsideIframe = window.self !== window.top
-  if (isInsideIframe) {
-    const hasInitData = Boolean(tg && typeof tg.initData === 'string' && tg.initData.trim().length > 0)
-    if (hasInitData) return true
-  }
+  if (isInsideIframe && tg) return true
 
-  // 4. URL explicitly carries fresh Telegram WebApp data hash from Telegram launch
+  // 5. URL explicitly carries Telegram WebApp data hash
   const hash = window.location.hash || ''
-  if (hash.includes('tgWebAppData=') && hash.includes('hash=')) {
-    const hasInitData = Boolean(tg && typeof tg.initData === 'string' && tg.initData.trim().length > 0)
-    if (hasInitData) return true
-  }
+  if (hash.includes('tgWebAppData=') || hash.includes('tgWebAppVersion=')) return true
 
-  // Normal browser outside Telegram: window.self === window.top, platform === 'unknown', no native proxy
+  // 6. If user is already authenticated via Telegram session in this window
+  if (localStorage.getItem('user_id_v1')?.startsWith('moliya_user_tg_')) return true
+
   return false
 }
 
@@ -812,11 +808,11 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   // Context Functions with Supabase Persistence & Instant Sync
   // ═══════════════════════════════════════════════════════════
   const getEffectiveUserId = (): string | null => {
-    if (!isTelegramMiniApp()) return null;
     if (userId) return userId;
     const stored = localStorage.getItem('user_id_v1');
     if (stored) return stored;
     if (defaultTgUserId) return defaultTgUserId;
+    if (!isTelegramMiniApp()) return null;
     return null;
   };
 
