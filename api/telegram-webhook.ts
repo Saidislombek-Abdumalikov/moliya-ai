@@ -18,49 +18,16 @@ import {
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8955141731:AAGILXzT69Vity8ZFi-H8XeZc_H6_BFaS8Y';
 const appUrl = process.env.APP_URL || "https://moliya-ai-pi.vercel.app";
 
-// ── Telegram Bot Message Logging & Types ─────────────────────────
-export interface BotMessageEntry {
-  id: string; // msg_{chatId}_{messageId} or bot_{chatId}_{messageId}
-  update_id?: number;
-  chat_id: string | number;
-  message_id: number;
-  direction: 'user_to_bot' | 'bot_to_user';
-  sender: 'user' | 'bot';
-  type: string; // 'text' | 'command' | 'voice' | 'photo' | 'document' | 'audio' | 'video' | 'sticker' | 'contact' | 'location' | 'bot_response' | 'ai_response' | 'callback_query' | 'system'
-  text?: string;
-  caption?: string;
-  metadata?: Record<string, any>;
-  timestamp: string;
-}
+import {
+  saveTransactions,
+  saveTransaction,
+  deleteTransaction,
+  wipeFinancialData,
+  logBotMessage,
+  BotMessageEntry
+} from './services/index.js';
 
-export async function logBotMessage(userId: string, entry: BotMessageEntry) {
-  if (!userId || !entry.message_id) return;
-  try {
-    const { data: u } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
-    const ob = u?.onboarding || {};
-    const existingMsgs: BotMessageEntry[] = Array.isArray(ob.bot_messages) ? ob.bot_messages : [];
-
-    // Idempotency: skip if already logged
-    const isDuplicate = existingMsgs.some(m =>
-      (entry.update_id && m.update_id === entry.update_id) ||
-      (m.message_id === entry.message_id && m.direction === entry.direction && String(m.chat_id) === String(entry.chat_id))
-    );
-    if (isDuplicate) return;
-
-    // Keep last 500 entries to prevent unbounded JSONB growth while retaining deep history
-    const updatedMsgs = [...existingMsgs, entry].slice(-500);
-    const numMsgId = Number(entry.message_id) || 0;
-    const currentLastId = Number(ob.last_message_id) || 0;
-    const updatedOb = {
-      ...ob,
-      bot_messages: updatedMsgs,
-      last_message_id: Math.max(currentLastId, numMsgId)
-    };
-    await supabase.from('users').update({ onboarding: updatedOb, updated_at: new Date().toISOString() }).eq('id', userId);
-  } catch (err) {
-    console.warn('[BOT] logBotMessage note:', err);
-  }
-}
+export { logBotMessage, BotMessageEntry };
 
 // ── Telegram API Helpers ─────────────────────────────────────
 async function sendTelegramMessage(
@@ -273,6 +240,7 @@ async function registerBotCommandsOnce() {
           { command: 'limit', description: '📊 Oylik limitni ko\'rish/o\'zgartirish' },
           { command: 'premium', description: '⭐ VIP Premium imkoniyatlari' },
           { command: 'stats', description: '📈 Oylik statistika va balans' },
+          { command: 'tozalash', description: '🗑 Xarajatlar tarixini tozalash' },
           { command: 'help', description: '❓ Yo\'riqnoma va yordam' }
         ]
       })
@@ -491,93 +459,14 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any) {
   }
 }
 
-// ── Transaction Helper ───────────────────────────────────────
-async function saveBotTransactions(userId: string, txItems: Array<{
-  id?: string;
-  type?: string;
-  name?: string;
-  title?: string;
-  category?: string;
-  amount: number;
-  date?: string;
-  day?: number;
-  month?: number;
-  year?: number;
-  time?: string;
-  note?: string;
-  debtWho?: string;
-  cardId?: string;
-  counterparty?: string | null;
-  description?: string;
-}>) {
-  if (!txItems || txItems.length === 0) return [];
-  const { data: user, error: fetchErr } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
-  if (fetchErr) {
-    console.error('[BOT] Error fetching user transactions:', fetchErr);
-    throw fetchErr;
-  }
-  const currentTxs = Array.isArray(user?.transactions) ? user.transactions : [];
-
-  const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-
-  const cleanTxs = txItems.map((txItem, idx) => {
-    const finalDate = txItem.date || `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-    const finalDay = txItem.day || now.getDate();
-    const finalMonth = txItem.month || (now.getMonth() + 1);
-    const finalYear = txItem.year || now.getFullYear();
-    const finalTime = txItem.time || `${pad(now.getHours())}:${pad(now.getMinutes())}`;
-    const txId = txItem.id || `tx_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`;
-
-    const rawAmt = Math.abs(Number(txItem.amount) || 0);
-    const isIncome = txItem.type === 'income';
-    const signedAmount = isIncome ? rawAmt : -rawAmt;
-
-    return {
-      id: txId,
-      type: txItem.type || 'expense',
-      amount: signedAmount,
-      category: txItem.category || 'Boshqa',
-      note: txItem.note || txItem.description || txItem.name || txItem.title || txItem.category || '',
-      title: txItem.title || txItem.description || txItem.name || txItem.note || '',
-      cardId: txItem.cardId || 'cash',
-      date: finalDate,
-      day: finalDay,
-      month: finalMonth,
-      year: finalYear,
-      time: finalTime,
-      debtWho: txItem.debtWho || txItem.counterparty || ''
-    };
-  });
-
-  const newTxIds = new Set(cleanTxs.map(t => String(t.id)));
-  const updated = [...cleanTxs, ...currentTxs.filter((t: any) => !newTxIds.has(String(t.id)))];
-  const { error: updateErr } = await supabase.from('users').update({ transactions: updated, updated_at: new Date().toISOString() }).eq('id', userId);
-  if (updateErr) {
-    console.error('[BOT] Error updating transactions column in Supabase:', updateErr);
-    throw updateErr;
-  }
-  return cleanTxs;
+// ── Transaction Helper (Delegates to FinancialDataService) ───
+async function saveBotTransactions(userId: string, txItems: Array<any>) {
+  return saveTransactions(userId, txItems);
 }
 
-async function saveBotTransaction(userId: string, txItem: {
-  id?: string;
-  type?: string;
-  name?: string;
-  title?: string;
-  category?: string;
-  amount: number;
-  date?: string;
-  day?: number;
-  month?: number;
-  year?: number;
-  time?: string;
-  note?: string;
-  debtWho?: string;
-  cardId?: string;
-}) {
-  const saved = await saveBotTransactions(userId, [txItem]);
-  return saved.length > 0;
+async function saveBotTransaction(userId: string, txItem: any) {
+  const saved = await saveTransaction(userId, txItem);
+  return saved !== null;
 }
 
 // ── Category Emoji Map ───────────────────────────────────────
@@ -1067,18 +956,52 @@ async function renderPremiumMessage(userId: string) {
   return { text, keyboard };
 }
 
-async function renderStatsMessage(userId: string) {
+async function renderStatsMessage(userId: string, period: 'today' | 'month' | 'all' = 'month', page: number = 1) {
   const { data: u } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
   const txs = Array.isArray(u?.transactions) ? u.transactions : [];
 
-  const currentMonth = new Date().getMonth() + 1;
-  const currentYear = new Date().getFullYear();
+  const srv = getServerDateTimeContext();
+  const todayStr = srv.currentDate; // 'YYYY-MM-DD'
+  const [curY, curM, curD] = todayStr.split('-').map(Number);
+
+  let filteredTxs = txs;
+  let periodTitle = "Joriy Oy (Sentabr 2026)";
+
+  if (period === 'today') {
+    periodTitle = `Bugun (${todayStr})`;
+    filteredTxs = txs.filter((t: any) => {
+      if (t.date === todayStr) return true;
+      if (t.day === curD && t.month === curM && t.year === curY) return true;
+      if (typeof t.date === 'string' && t.date.startsWith(todayStr)) return true;
+      return false;
+    });
+  } else if (period === 'month') {
+    const monthNames = ['', 'Yanvar', 'Fevral', 'Mart', 'Aprel', 'May', 'Iyun', 'Iyul', 'Avgust', 'Sentabr', 'Oktabr', 'Noyabr', 'Dekabr'];
+    periodTitle = `${monthNames[curM] || curM} ${curY}`;
+    filteredTxs = txs.filter((t: any) => {
+      if (t.year && t.month) return Number(t.year) === curY && Number(t.month) === curM;
+      if (typeof t.date === 'string') {
+        const parts = t.date.split('-');
+        if (parts.length >= 2) return Number(parts[0]) === curY && Number(parts[1]) === curM;
+      }
+      return true;
+    });
+  } else {
+    periodTitle = "Barcha vaqtlar";
+  }
+
+  // Sort newest transactions first
+  const sortedTxs = [...filteredTxs].sort((a: any, b: any) => {
+    const timeA = a.date ? new Date(`${a.date}T${a.time || '00:00'}:00Z`).getTime() : (Number(a.id) || 0);
+    const timeB = b.date ? new Date(`${b.date}T${b.time || '00:00'}:00Z`).getTime() : (Number(b.id) || 0);
+    return timeB - timeA;
+  });
 
   let totalExpense = 0;
   let totalIncome = 0;
   const catTotals: Record<string, number> = {};
 
-  for (const t of txs) {
+  for (const t of sortedTxs) {
     const amt = Math.abs(Number(t.amount || 0));
     if (t.type === 'income') {
       totalIncome += amt;
@@ -1092,43 +1015,98 @@ async function renderStatsMessage(userId: string) {
   }
 
   const balance = totalIncome - totalExpense;
-  const sortedCats = Object.entries(catTotals).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const netSign = balance >= 0 ? '+' : '';
 
-  let breakdownText = '';
-  for (const [cat, sum] of sortedCats) {
-    const emoji = CATEGORY_EMOJIS[cat] || '📦';
-    breakdownText += `${emoji} <b>${cat}:</b> ${sum.toLocaleString()} so'm\n`;
+  // Pagination for records list
+  const pageSize = 8;
+  const totalPages = Math.max(1, Math.ceil(sortedTxs.length / pageSize));
+  const currentPage = Math.max(1, Math.min(page, totalPages));
+  const startIndex = (currentPage - 1) * pageSize;
+  const pageTxs = sortedTxs.slice(startIndex, startIndex + pageSize);
+
+  let recordsListText = '';
+  if (sortedTxs.length === 0) {
+    recordsListText = `<i>Ushbu davrda hech qanday operatsiya kiritilmagan.</i>\n`;
+  } else {
+    recordsListText = pageTxs.map((t: any, idx: number) => {
+      const globalNum = startIndex + idx + 1;
+      const isInc = t.type === 'income';
+      const typeEmoji = isInc ? '🟢' : '🔴';
+      const amt = Math.abs(Number(t.amount || 0)).toLocaleString('uz-UZ').replace(/,/g, ' ');
+      const sign = isInc ? '+' : '-';
+      const name = (t.title || t.note || t.name || 'Xarajat').trim();
+      const catEmoji = CATEGORY_EMOJIS[t.category] || (isInc ? '💰' : '📦');
+      const catName = t.category || 'Boshqa';
+      const dateDisplay = t.date ? t.date : 'Bugun';
+      const timeDisplay = t.time ? ` ${t.time}` : '';
+      const paymentType = t.cardId === 'cash' || !t.cardId ? '💵 Naqd' : '💳 Karta';
+
+      return `${globalNum}. ${typeEmoji} <b>${name}</b>: <code>${sign}${amt} so'm</code>\n` +
+             `   └ ${catEmoji} <i>${catName}</i> • 📅 ${dateDisplay}${timeDisplay} • ${paymentType}`;
+    }).join('\n\n');
+  }
+
+  // Top category summary
+  const topCats = Object.entries(catTotals).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  let topCatStr = '';
+  if (topCats.length > 0) {
+    topCatStr = topCats.map(([cat, sum]) => {
+      const em = CATEGORY_EMOJIS[cat] || '📦';
+      return `${em} ${cat}: <b>${sum.toLocaleString('uz-UZ').replace(/,/g, ' ')}</b>`;
+    }).join('  |  ');
   }
 
   const quota = await checkAiQuota(userId);
   const planLabel = quota.isTrial
-    ? '💎 1-Kunlik Cheksiz Premium Sinovi'
+    ? '💎 1-Kunlik Premium Sinov'
     : quota.isPremium
-      ? '⭐ VIP Premium (Cheksiz)'
+      ? '⭐ VIP Premium'
       : '🆓 Bepul Tarif';
 
-  const quotaStatus = quota.limit === null
-    ? '♾️ Cheksiz'
-    : `${quota.usedCount} / ${quota.limit} (${quota.remaining} ta qoldi)`;
-
   const statsText =
-    `📊 <b>Moliyaviy hisobot (${currentMonth}/${currentYear})</b>\n\n` +
-    `🔴 <b>Jami xarajat:</b> ${totalExpense.toLocaleString()} so'm\n` +
-    `🟢 <b>Jami daromad:</b> ${totalIncome.toLocaleString()} so'm\n` +
-    `💰 <b>Sof balans:</b> ${balance.toLocaleString()} so'm\n\n` +
-    (breakdownText ? `<b>Top xarajatlar:</b>\n${breakdownText}\n` : '') +
+    `📊 <b>Moliyaviy hisobot: ${periodTitle}</b>\n\n` +
+    `🔴 <b>Xarajat:</b> ${totalExpense.toLocaleString('uz-UZ').replace(/,/g, ' ')} so'm\n` +
+    `🟢 <b>Daromad:</b> ${totalIncome.toLocaleString('uz-UZ').replace(/,/g, ' ')} so'm\n` +
+    `⚖️ <b>Sof qoldiq:</b> ${netSign}${balance.toLocaleString('uz-UZ').replace(/,/g, ' ')} so'm\n` +
+    `📋 <b>Jami operatsiyalar:</b> ${sortedTxs.length} ta\n` +
+    (topCatStr ? `🏆 <b>Top xarajatlar:</b> ${topCatStr}\n` : '') +
     `🏷 <b>Tarif:</b> ${planLabel}\n` +
-    `⚡ <b>Bugungi AI so'rovlar:</b> ${quotaStatus}\n\n` +
-    `👇 <i>Batafsil tahlil uchun Mini Appni oching:</i>`;
+    `\n──────────────────\n` +
+    `📝 <b>Kiritilgan yozuvlar (${sortedTxs.length > 0 ? `${startIndex + 1}-${Math.min(startIndex + pageSize, sortedTxs.length)} / ${sortedTxs.length}` : '0'}):</b>\n\n` +
+    recordsListText +
+    (totalPages > 1 ? `\n\n📄 <i>Sahifa: ${currentPage} / ${totalPages}</i>` : '') +
+    `\n\n👇 <i>Barcha xarajatlar tahlili va grafiklar Mini Appda!</i>`;
 
-  const keyboard = {
-    inline_keyboard: [
-      [{ text: "📱 Mini Appda to'liq ko'rish", web_app: { url: appUrl } }],
-      [{ text: "🔙 Profilga qaytish", callback_data: "view_profile" }]
-    ]
-  };
+  // Dynamic Navigation & Filter Keyboard
+  const periodRow = [
+    { text: period === 'today' ? "🔘 Bugun" : "📅 Bugun", callback_data: `stats_today_1` },
+    { text: period === 'month' ? "🔘 Shu oy" : "🗓️ Shu oy", callback_data: `stats_month_1` },
+    { text: period === 'all' ? "🔘 Barchasi" : "📋 Barchasi", callback_data: `stats_all_1` },
+  ];
 
-  return { text: statsText, keyboard };
+  const inline_keyboard: any[] = [periodRow];
+
+  // Pagination row if multiple pages exist
+  if (totalPages > 1) {
+    const pageRow: any[] = [];
+    if (currentPage > 1) {
+      pageRow.push({ text: `⬅️ Oldingi`, callback_data: `stats_${period}_${currentPage - 1}` });
+    }
+    pageRow.push({ text: `• ${currentPage} / ${totalPages} •`, callback_data: `noop` });
+    if (currentPage < totalPages) {
+      pageRow.push({ text: `Keyingi ➡️`, callback_data: `stats_${period}_${currentPage + 1}` });
+    }
+    inline_keyboard.push(pageRow);
+  }
+
+  inline_keyboard.push([
+    { text: "📱 Mini Appda to'liq ko'rish 🚀", web_app: { url: appUrl } }
+  ]);
+  inline_keyboard.push([
+    { text: "🔙 Asosiy Profil", callback_data: "view_profile" }
+  ]);
+
+  return { text: statsText, keyboard: { inline_keyboard } };
 }
 
 // ── Main Webhook Handler ─────────────────────────────────────
@@ -1306,21 +1284,51 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (data.startsWith('del_')) {
           const txId = data.replace('del_', '');
-          const { data: u, error: fetchErr } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
-          if (fetchErr) {
-            await answerCallbackQuery(cb.id, "❌ Xatolik yuz berdi");
-            return res.status(500).json({ error: 'DB_FETCH_FAILED' });
-          }
-          const txs = Array.isArray(u?.transactions) ? u.transactions : [];
-          const updated = txs.filter((t: any) => String(t.id) !== String(txId));
-          const { error: updateErr } = await supabase.from('users').update({ transactions: updated, updated_at: new Date().toISOString() }).eq('id', userId);
-          if (updateErr) {
+          try {
+            await deleteTransaction(userId, txId);
+            await answerCallbackQuery(cb.id, "🗑 Operatsiya o'chirildi!");
+            await editTelegramMessage(chatId, cb.message.message_id, "🗑 <b>Operatsiya o'chirildi.</b> ✅", undefined, userId);
+            return res.status(200).json({ status: 'ok' });
+          } catch (delErr) {
+            console.error(`[BOT] Error deleting transaction ${txId}:`, delErr);
             await answerCallbackQuery(cb.id, "❌ O'chirishda xatolik yuz berdi");
             return res.status(500).json({ error: 'DB_UPDATE_FAILED' });
           }
+        }
 
-          await answerCallbackQuery(cb.id, "🗑 Operatsiya o'chirildi!");
-          await editTelegramMessage(chatId, cb.message.message_id, "🗑 <b>Operatsiya o'chirildi.</b> ✅", undefined, userId);
+        if (data === 'confirm_wipe_financial') {
+          try {
+            await wipeFinancialData(userId);
+            await answerCallbackQuery(cb.id, "✅ Ma'lumotlar tozalandi!");
+            await editTelegramMessage(
+              chatId,
+              cb.message.message_id,
+              `✅ <b>Barcha xarajat va daromad ma'lumotlaringiz muvaffaqiyatli tozalandi!</b>\n\n` +
+              `Profilingiz, telefon raqamingiz va VIP Premium obunangiz to'liq saqlanib qoldi. Yangi xarajat kiritish uchun oddiy matn yoki ovozli xabar yuborishingiz mumkin.`,
+              {
+                inline_keyboard: [
+                  [{ text: "📱 Moliya Mini Appni ochish", web_app: { url: appUrl } }]
+                ]
+              },
+              userId
+            );
+            return res.status(200).json({ status: 'ok' });
+          } catch (wipeErr) {
+            console.error('[BOT] Error wiping financial data via callback:', wipeErr);
+            await answerCallbackQuery(cb.id, "❌ Xatolik yuz berdi");
+            return res.status(500).json({ error: 'WIPE_FAILED' });
+          }
+        }
+
+        if (data === 'cancel_wipe_financial') {
+          await answerCallbackQuery(cb.id, "Bekor qilindi");
+          await editTelegramMessage(
+            chatId,
+            cb.message.message_id,
+            `❌ <b>Tozalash bekor qilindi.</b>\n\nBarcha ma'lumotlaringiz xavfsiz saqlanmoqda.`,
+            undefined,
+            userId
+          );
           return res.status(200).json({ status: 'ok' });
         }
 
@@ -1352,53 +1360,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           return res.status(200).json({ status: 'ok' });
         }
 
+        if (data.startsWith('stats_')) {
+          const parts = data.split('_'); // ['stats', period, page]
+          const periodParam = (parts[1] === 'today' || parts[1] === 'all') ? parts[1] : 'month';
+          const pageParam = Math.max(1, parseInt(parts[2], 10) || 1);
+
+          const { text: statsText, keyboard: statsKeyboard } = await renderStatsMessage(userId, periodParam, pageParam);
+          await editTelegramMessage(chatId, cb.message.message_id, statsText, statsKeyboard, userId);
+          await answerCallbackQuery(cb.id);
+          return res.status(200).json({ status: 'ok' });
+        }
+
+        if (data === 'menu_stats' || data === 'view_stats') {
+          const { text: statsText, keyboard: statsKeyboard } = await renderStatsMessage(userId, 'month', 1);
+          await editTelegramMessage(chatId, cb.message.message_id, statsText, statsKeyboard, userId);
+          await answerCallbackQuery(cb.id);
+          return res.status(200).json({ status: 'ok' });
+        }
+
         if (data === 'today_stats') {
-          const { data: u } = await supabase.from('users').select('transactions').eq('id', userId).maybeSingle();
-          const txs = Array.isArray(u?.transactions) ? u.transactions : [];
+          const { text: statsText, keyboard: statsKeyboard } = await renderStatsMessage(userId, 'today', 1);
+          await editTelegramMessage(chatId, cb.message.message_id, statsText, statsKeyboard, userId);
+          await answerCallbackQuery(cb.id);
+          return res.status(200).json({ status: 'ok' });
+        }
 
-          const srv = getServerDateTimeContext();
-          const todayStr = srv.currentDate;
-          const [tY, tM, tD] = todayStr.split('-').map(Number);
-
-          const todayTxs = txs.filter((t: any) => {
-            if (t.date === todayStr) return true;
-            if (t.day === tD && t.month === tM && t.year === tY) return true;
-            if (t.date && typeof t.date === 'string' && t.date.startsWith(todayStr)) return true;
-            return false;
-          });
-
-          let todayExpense = 0;
-          let todayIncome = 0;
-          let expenseCount = 0;
-
-          for (const t of todayTxs) {
-            const amt = Math.abs(Number(t.amount) || 0);
-            if (t.type === 'income') {
-              todayIncome += amt;
-            } else {
-              todayExpense += amt;
-              expenseCount++;
-            }
-          }
-
-          const netToday = todayIncome - todayExpense;
-          const netSign = netToday >= 0 ? '+' : '';
-
-          const reportText =
-            `📊 <b>Bugungi Moliyaviy Hisobot (${todayStr})</b>\n\n` +
-            `🔴 <b>Bugungi xarajatlar:</b> ${todayExpense.toLocaleString('uz-UZ').replace(/,/g, ' ')} so'm (${expenseCount} ta)\n` +
-            `🟢 <b>Bugungi daromadlar:</b> ${todayIncome.toLocaleString('uz-UZ').replace(/,/g, ' ')} so'm\n` +
-            `⚖️ <b>Kunlik qoldiq:</b> ${netSign}${netToday.toLocaleString('uz-UZ').replace(/,/g, ' ')} so'm\n\n` +
-            `💡 <i>Barcha xarajatlar tahlili, toifalar taqsimoti va chiroyli grafiklar uchun Mini Appni oching!</i>`;
-
-          const reportKeyboard = {
-            inline_keyboard: [
-              [{ text: "📱 Mini Appda to'liq ko'rish 🚀", web_app: { url: appUrl } }],
-              [{ text: "💳 Kartalarim", callback_data: "menu_cards" }, { text: "📈 Oylik statistika", callback_data: "menu_stats" }]
-            ]
-          };
-
-          await editTelegramMessage(chatId, cb.message.message_id, reportText, reportKeyboard, userId);
+        if (data === 'noop') {
           await answerCallbackQuery(cb.id);
           return res.status(200).json({ status: 'ok' });
         }
@@ -1746,11 +1733,52 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ status: 'ok' });
     }
 
-    // ── Command: /stats or /hisobot or 📈 Stats / 📈 Statistika ────
-    if (text.startsWith('/stats') || text.startsWith('/hisobot') || text === '📈 Stats' || text === '📈 Statistika') {
+    // ── Command: /stats or /hisobot or 📈 Stats / 📈 Statistika / 📊 Statistika ────
+    const lowerText = text.toLowerCase().trim();
+    if (
+      lowerText.startsWith('/stats') ||
+      lowerText.startsWith('/stat') ||
+      lowerText.startsWith('/hisobot') ||
+      lowerText === '📈 stats' ||
+      lowerText === '📈 statistika' ||
+      lowerText === '📊 stats' ||
+      lowerText === '📊 statistika' ||
+      lowerText === 'statistika' ||
+      lowerText === 'hisobot'
+    ) {
       deleteTelegramMessage(chatId, message.message_id).catch(() => {});
-      const { text: statsText, keyboard: statsKeyboard } = await renderStatsMessage(userId);
+      const { text: statsText, keyboard: statsKeyboard } = await renderStatsMessage(userId, 'month', 1);
       await sendOrEditMenuMessage(chatId, userId, statsText, statsKeyboard);
+      return res.status(200).json({ status: 'ok' });
+    }
+
+    // ── Command: /tozalash or /wipe or /reset ───────────────────
+    if (
+      lowerText.startsWith('/tozalash') ||
+      lowerText.startsWith('/wipe') ||
+      lowerText.startsWith('/reset') ||
+      lowerText === '🗑 tozalash' ||
+      lowerText === "ma'lumotlarni tozalash"
+    ) {
+      deleteTelegramMessage(chatId, message.message_id).catch(() => {});
+      const wipeCardText =
+        `⚠️ <b>Moliyaviy ma'lumotlarni tozalash</b>\n\n` +
+        `Haqiqatan ham barcha kiritilgan xarajat va daromad operatsiyalaringizni tozalashni xohlaysizmi?\n\n` +
+        `ℹ️ <b>Diqqat:</b>\n` +
+        `• Faqat kiritilgan xarajatlar va daromadlar o'chiriladi.\n` +
+        `• Sizning profilingiz, telefon raqamingiz va VIP Premium statusi saqlanib qoladi.\n` +
+        `• Boshqa foydalanuvchilar hisobiga mutlaqo daxl qilmaydi.`;
+      const wipeCardKb = {
+        inline_keyboard: [
+          [
+            { text: "🗑 Ha, barcha xarajatlarni tozalash", callback_data: "confirm_wipe_financial" }
+          ],
+          [
+            { text: "❌ Bekor qilish", callback_data: "cancel_wipe_financial" }
+          ]
+        ]
+      };
+      await sendTelegramMessage(chatId, wipeCardText, wipeCardKb, userId);
       return res.status(200).json({ status: 'ok' });
     }
 
@@ -1758,16 +1786,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (message.voice) {
       const quota = await checkAiQuota(userId);
       if (!quota.allowed) {
-        const quotaNotice =
-          `⚠️ <b>Bugungi bepul AI limitingiz tugadi!</b>\n\n` +
-          `📝 <i>Xarajat va daromadlarni <b>Moliya Mini App</b> orqali qo'lda kiritish mutlaqo bepul va cheksiz!</i>\n\n` +
-          `⭐ Cheksiz AI ovozli va chek tahlili uchun <b>VIP Premium</b> tarifiga o'tishingiz mumkin.`;
+        const quotaNotice = quota.isPremium
+          ? (quota.message || `⚠️ <b>AI ovozli tahlil xizmatida vaqtinchalik cheklov yuz berdi.</b>\n\nIltimos, ilova orqali qayta urinib ko'ring.`)
+          : `⚠️ <b>Bugungi bepul AI limitingiz tugadi!</b>\n\n` +
+            `📝 <i>Xarajat va daromadlarni <b>Moliya Mini App</b> orqali qo'lda kiritish mutlaqo bepul va cheksiz!</i>\n\n` +
+            `⭐ Cheksiz AI ovozli va chek tahlili uchun <b>VIP Premium</b> tarifiga o'tishingiz mumkin.`;
+
+        const buttons: any[] = [
+          [{ text: "📱 Mini App (Qo'lda kiritish)", web_app: { url: appUrl } }]
+        ];
+        if (!quota.isPremium) {
+          buttons.push([{ text: "⭐ VIP Premium olish", callback_data: "view_premium" }]);
+        }
 
         await sendTelegramMessage(chatId, quotaNotice, {
-          inline_keyboard: [
-            [{ text: "📱 Mini App (Qo'lda kiritish)", web_app: { url: appUrl } }],
-            [{ text: "⭐ VIP Premium olish", callback_data: "view_premium" }]
-          ]
+          inline_keyboard: buttons
         }, userId);
         return res.status(200).json({ status: 'quota_exceeded' });
       }
@@ -1986,16 +2019,21 @@ Today: ${srvCtx.currentDate}. Output valid JSON only.`;
     if (message.photo && message.photo.length > 0) {
       const quota = await checkAiQuota(userId);
       if (!quota.allowed) {
-        const quotaNotice =
-          `⚠️ <b>Bugungi bepul AI chek skanerlash limitingiz tugadi!</b>\n\n` +
-          `📝 <i>Xarajatlarni <b>Moliya Mini App</b> orqali qo'lda kiritish mutlaqo bepul va cheksiz!</i>\n\n` +
-          `⭐ Cheksiz AI chek va ovozli tahlil uchun <b>VIP Premium</b> tarifiga o'tishingiz mumkin.`;
+        const quotaNotice = quota.isPremium
+          ? (quota.message || `⚠️ <b>AI chek skanerlash xizmatida vaqtinchalik cheklov yuz berdi.</b>\n\nIltimos, ilova orqali qayta urinib ko'ring.`)
+          : `⚠️ <b>Bugungi bepul AI chek skanerlash limitingiz tugadi!</b>\n\n` +
+            `📝 <i>Xarajatlarni <b>Moliya Mini App</b> orqali qo'lda kiritish mutlaqo bepul va cheksiz!</i>\n\n` +
+            `⭐ Cheksiz AI chek va ovozli tahlil uchun <b>VIP Premium</b> tarifiga o'tishingiz mumkin.`;
+
+        const buttons: any[] = [
+          [{ text: "📱 Mini App (Qo'lda kiritish)", web_app: { url: appUrl } }]
+        ];
+        if (!quota.isPremium) {
+          buttons.push([{ text: "⭐ VIP Premium olish", callback_data: "view_premium" }]);
+        }
 
         await sendTelegramMessage(chatId, quotaNotice, {
-          inline_keyboard: [
-            [{ text: "📱 Mini App (Qo'lda kiritish)", web_app: { url: appUrl } }],
-            [{ text: "⭐ VIP Premium olish", callback_data: "view_premium" }]
-          ]
+          inline_keyboard: buttons
         }, userId);
         return res.status(200).json({ status: 'quota_exceeded' });
       }
@@ -2247,16 +2285,21 @@ Today: ${srvCtx.currentDate}. Output valid JSON only.`;
     if (text && !text.startsWith('/')) {
       const quota = await checkAiQuota(userId);
       if (!quota.allowed) {
-        const quotaNotice =
-          `⚠️ <b>Bugungi bepul AI limitingiz tugadi!</b>\n\n` +
-          `📝 <i>Xarajat va daromadlarni <b>Moliya Mini App</b> orqali qo'lda kiritish mutlaqo bepul va cheksiz!</i>\n\n` +
-          `⭐ Cheksiz AI tahlil va ovozli kiritish uchun <b>VIP Premium</b> tarifiga o'tishingiz mumkin.`;
+        const quotaNotice = quota.isPremium
+          ? (quota.message || `⚠️ <b>AI tahlil xizmatida vaqtinchalik cheklov yuz berdi.</b>\n\nIltimos, ilova orqali qayta urinib ko'ring.`)
+          : `⚠️ <b>Bugungi bepul AI limitingiz tugadi!</b>\n\n` +
+            `📝 <i>Xarajat va daromadlarni <b>Moliya Mini App</b> orqali qo'lda kiritish mutlaqo bepul va cheksiz!</i>\n\n` +
+            `⭐ Cheksiz AI tahlil va ovozli kiritish uchun <b>VIP Premium</b> tarifiga o'tishingiz mumkin.`;
+
+        const buttons: any[] = [
+          [{ text: "📱 Mini App (Qo'lda kiritish)", web_app: { url: appUrl } }]
+        ];
+        if (!quota.isPremium) {
+          buttons.push([{ text: "⭐ VIP Premium olish", callback_data: "view_premium" }]);
+        }
 
         await sendTelegramMessage(chatId, quotaNotice, {
-          inline_keyboard: [
-            [{ text: "📱 Mini App (Qo'lda kiritish)", web_app: { url: appUrl } }],
-            [{ text: "⭐ VIP Premium olish", callback_data: "view_premium" }]
-          ]
+          inline_keyboard: buttons
         }, userId);
         return res.status(200).json({ status: 'quota_exceeded' });
       }

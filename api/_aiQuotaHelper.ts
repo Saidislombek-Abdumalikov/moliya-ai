@@ -42,7 +42,7 @@ export async function checkAiQuota(
 
     const { data: userRows, error: fetchError } = await supabase
       .from('users')
-      .select('id, is_premium, premium_expires_at, ai_limit, ai_query_count, last_ai_query_at, onboarding, device_info, unlimited_ai, ai_blocked, is_blocked, is_restricted, trial_ends_at')
+      .select('id, name, is_premium, premium_expires_at, ai_limit, ai_query_count, last_ai_query_at, onboarding, device_info')
       .in('id', idsToFetch);
 
     if (fetchError) {

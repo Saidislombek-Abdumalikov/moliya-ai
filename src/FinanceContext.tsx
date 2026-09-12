@@ -950,7 +950,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     try {
       const { data: dbUser } = await supabase
         .from('users')
-        .select('phone, telegram_id, onboarding, name, language, is_premium, premium_expires_at, unlimited_ai, trial_ends_at')
+        .select('phone, telegram_id, onboarding, name, language, is_premium, premium_expires_at')
         .eq('id', targetUserId)
         .maybeSingle();
 
@@ -958,7 +958,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const existingTgId = dbUser?.telegram_id || updated.telegramId || null;
 
       const isDbVipActive = Boolean(
-        dbUser?.unlimited_ai ||
+        dbUser?.onboarding?.unlimited_ai ||
         (dbUser?.is_premium && (!dbUser.premium_expires_at || new Date(dbUser.premium_expires_at).getTime() > Date.now()))
       );
 

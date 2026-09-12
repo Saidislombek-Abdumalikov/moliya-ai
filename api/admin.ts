@@ -3,41 +3,23 @@ import { supabase } from './_supabaseClient.js';
 import { maskApiKey, testSpecificAiKey, executeAiWithRotation, AiKeyRecord, invalidateAiKeysCache } from './_aiRouter.js';
 import { effectiveAccess, accountStatus } from './_accessHelper.js';
 import { generateAndSaveUserReport } from './_financialReportEngine.js';
+import {
+  adminWipeUserData,
+  adminToggleUserBlock,
+  adminGrantFullPremium,
+  adminResetDailyQueries,
+  logAdminAudit
+} from './services/index.js';
 
-// ── Admin Audit Log Helper ────────────────────────────────────
-async function appendSystemAuditLog(entry: any) {
-  try {
-    const { data: sysRow } = await supabase.from('users').select('onboarding').eq('id', 'moliya_system_audit_logs').maybeSingle();
-    const existing = Array.isArray(sysRow?.onboarding?.logs) ? sysRow.onboarding.logs : [];
-    const updated = [entry, ...existing].slice(0, 200);
-    await supabase.from('users').upsert({
-      id: 'moliya_system_audit_logs',
-      name: 'System Audit Logs',
-      onboarding: { logs: updated },
-      updated_at: new Date().toISOString()
-    }, { onConflict: 'id' });
-  } catch {}
-}
-
+// ── Admin Audit Log Helper (Delegates to AuditLogService) ─────
 async function logAdminAction(action: string, targetUserId?: string, targetUserName?: string, details?: any) {
-  const entry = {
-    id: `audit_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+  return logAdminAudit({
     action,
-    target_user_id: targetUserId || null,
-    target_user_name: targetUserName || null,
-    details: details || null,
+    target_user_id: targetUserId,
+    target_user_name: targetUserName,
     admin_id: 'admin',
-    created_at: new Date().toISOString()
-  };
-
-  try {
-    const { error } = await supabase.from('admin_audit_log').insert([entry]);
-    if (error) {
-      await appendSystemAuditLog(entry);
-    }
-  } catch (e) {
-    await appendSystemAuditLog(entry);
-  }
+    details
+  });
 }
 
 function formatUzbekExpiryDate(isoDate?: string | null): string {
@@ -256,7 +238,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Fetch user name and existing state for audit log and synchronized updates
         const { data: targetUser } = await supabase
           .from('users')
-          .select('name, telegram, telegram_id, onboarding, is_premium, premium_expires_at, unlimited_ai, trial_ends_at')
+          .select('name, telegram, telegram_id, onboarding, is_premium, premium_expires_at')
           .eq('id', userId)
           .maybeSingle();
         const userName = targetUser?.name || targetUser?.telegram || userId;
@@ -533,33 +515,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
 
           case 'reset_ai_count': {
-            const { error } = await supabase
-              .from('users')
-              .update({
-                ai_query_count: 0,
-                updated_at: nowIso
-              })
-              .eq('id', userId);
+            const resData = await adminResetDailyQueries(userId, 'admin', userName);
+            return res.status(200).json({ success: true, userId, action: 'reset_ai_count', aiQueryCount: resData.aiQueryCount });
+          }
 
-            if (error) return res.status(500).json({ error: 'Failed to reset AI count', details: error.message });
-            return res.status(200).json({ success: true, userId, action: 'reset_ai_count', aiQueryCount: 0 });
+          case 'wipe_financial': {
+            const result = await adminWipeUserData(userId, 'financial', 'admin', userName);
+            return res.status(200).json({ success: true, userId, action: 'wipe_financial', result });
           }
 
           case 'delete_account': {
-            // Mark as deleted (soft delete)
-            const { error } = await supabase
-              .from('users')
-              .update({
-                is_blocked: true,
-                is_deleted: true,
-                account_status: 'deleted',
-                updated_at: nowIso
-              })
-              .eq('id', userId);
-
-            if (error) return res.status(500).json({ error: 'Failed to delete account', details: error.message });
-            await logAdminAction('delete_account', userId, userName);
-            return res.status(200).json({ success: true, userId, action: 'delete_account' });
+            const result = await adminWipeUserData(userId, 'account', 'admin', userName);
+            return res.status(200).json({ success: true, userId, action: 'delete_account', result });
           }
 
           default:
