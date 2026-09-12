@@ -5,6 +5,11 @@ import path from "path";
 import { createClient } from '@supabase/supabase-js';
 import crypto from "crypto";
 import { createSupabaseAuthSession } from "./api/_authHelper.js";
+import {
+  parseTurboFinancialText,
+  normalizeUzbekFinancialText,
+  correctAiMultiplierHallucination
+} from "./api/_uzbekFinancialNormalizer.js";
 
 // Supabase client for local dev server (replaces Firebase)
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://qjumnjzbgjldbwwluggr.supabase.co';
@@ -457,6 +462,60 @@ async function startServer() {
       }
 
       const cleanText = text.replace(/[\r\n\t]/g, ' ').slice(0, 500);
+
+      // 1. TURBO NLP PATH (<0.5ms): Deterministic Local Engine
+      const turboRes = parseTurboFinancialText(cleanText);
+      if (turboRes && turboRes.transactions.length > 0 && turboRes.overall_confidence >= 0.85) {
+        const tx = turboRes.transactions[0];
+        const fmtAmt = Number(tx.amount).toLocaleString('en-US').replace(/,/g, ' ');
+        return res.json({
+          success: true,
+          type: tx.type || 'expense',
+          amount: fmtAmt,
+          category: tx.category,
+          note: tx.description,
+          title: tx.description.slice(0, 80),
+          debtWho: tx.counterparty || '',
+          date: tx.date || new Date().toISOString().slice(0, 16),
+          cardId: 'cash',
+          is_local_turbo: true
+        });
+      }
+
+      const normalized = normalizeUzbekFinancialText(cleanText);
+      if (normalized.extractedAmount && normalized.extractedAmount > 0 && normalized.inferredCategory) {
+        const fmtAmt = Number(normalized.extractedAmount).toLocaleString('en-US').replace(/,/g, ' ');
+        return res.json({
+          success: true,
+          type: normalized.inferredType || 'expense',
+          amount: fmtAmt,
+          category: normalized.inferredCategory,
+          note: cleanText,
+          title: cleanText.slice(0, 80),
+          debtWho: '',
+          date: new Date().toISOString().slice(0, 16),
+          cardId: 'cash',
+          is_local_turbo: true
+        });
+      }
+
+      if (!process.env.GEMINI_API_KEY) {
+        if (normalized.extractedAmount && normalized.extractedAmount > 0) {
+          const fmtAmt = Number(normalized.extractedAmount).toLocaleString('en-US').replace(/,/g, ' ');
+          return res.json({
+            success: true,
+            type: normalized.inferredType || 'expense',
+            amount: fmtAmt,
+            category: normalized.inferredCategory || 'Boshqa',
+            note: cleanText,
+            title: cleanText.slice(0, 80),
+            debtWho: '',
+            date: new Date().toISOString().slice(0, 16),
+            cardId: 'cash'
+          });
+        }
+      }
+
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
       
       const now = new Date();
@@ -483,21 +542,19 @@ ${cardsContext}
 Sana aniqlash qoidalari (Date Parsing Rules):
 1. O'zbekcha oylar: yanvar=01, fevral=02, mart=03, aprel=04, may=05, iyun=06, iyul=07, avgust=08, sentabr/sentiyabr=09, oktabr/oktyabr=10, noyabr=11, dekabr=12.
 2. Agar foydalanuvchi "kecha" (yesterday) deb aytsa, bugungi kundan 1 kun oldingi sanani ("YYYY-MM-DDTHH:mm") yozing (soatni saqlagan holda).
-3. Agar foydalanuvchi "27 -iyul", "27-iyul", "27 iyul" yoki shunga o'xshash sana aytsa, aniq shu oyni raqamga o'girib, joriy yil (${currentYear}) bilan birga "YYYY-MM-DDTHH:mm" formatiga o'tkazing (masalan: "2026-07-27T12:00").
+3. Agar foydalanuvchi "27 -iyul", "27-iyul", "27 iyul" yoki shunga o'xshash sana aytsa, aniq shu oyni raqamga o'girib, joriy yil (${currentYear}) bilan birga "YYYY-MM-DDTHH:mm" formatiga o'tkazing.
 4. Agar foydalanuvchi umuman hech qanday sana tilga olmagan bo'lsa, "date" maydoniga joriy vaqtni ("${currentIso}") yozing.
 5. "date" har doim qaytarilishi shart.
 
-JSON output must have:
-- type: 'expense' | 'income' | 'debt' | 'lending'
-- amount: string (number formatted with spaces, e.g., '5 000 000' or '45 000')
-- category: string (the category, e.g., 'Oila', 'Oziq-ovqat', 'Transport', "Do'st", 'Boshqa')
-- note: string (a short note, typically a very clean summary of the transaction without messy raw text)
-- title: string (a short clean title of the transaction, e.g., "Dadamdan o'tkazma", "Ovqat", etc.)
-- debtWho: string (the name of the person involved in a debt or lending transaction, if applicable)
-- date: string ("YYYY-MM-DDTHH:mm" format. STRICTLY resolve this using the rules above.)
-- cardId: string (optional, the matching card ID if a specific card/bank is mentioned, otherwise 'cash')
+CRITICAL UZBEK NUMBER RULES:
+- "ming" / "минг" / "k" = THOUSAND (1,000 UZS). E.g. "500 ming" = 500000 (500 thousand, NEVER 500 million!). E.g. "30 ming" = 30000.
+- "million" / "млн" / "mln" = MILLION (1,000,000 UZS). E.g. "14 mln" = 14000000.
+- NEVER confuse "ming" with "million"!
 
-Strict Rules:
+Categories: 'Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\'liq', 'Ta\'lim', 'Ko\'ngil ochar', 'Boshqa', 'Maosh'
+
+Strict Category & Type Rules:
+- "kurs", "o'qish", "kontrakt", "maktab", "repetitor", "dars", "kitob" -> ALWAYS category="Ta'lim", type="expense"
 - "qarz olindi" or "qarz oldim" means borrowing money -> STRICTLY evaluate to type="income" (do NOT use debt)
 - "qarz berildi" or "qarz berdim" means lending money -> STRICTLY evaluate to type="expense" (do NOT use lending)
 - "dedomla" means father -> likely income from father, type="income", category="Oila", title="Dadamdan", debtWho="Dadam"
@@ -505,7 +562,7 @@ Strict Rules:
 - ALWAYS map local slang like "dedomla", "akam", "o'rtog'im" correctly to debtWho if it's a debt/lending.
 - Backpack, sumka, ryukzak, clothes, shoes -> category="Kiyim"
 - Only use "Oziq-ovqat" if food, groceries, meal, cafe, or restaurant is explicitly mentioned.
-- If the item is not food or transport or clothes, use category="Boshqa".
+- If the item is not food or transport or clothes or education, use category="Boshqa".
 - Do not put raw messy text in title. Make the title very short and clean.
 
 Input text: "${cleanText}"
@@ -534,9 +591,32 @@ Input text: "${cleanText}"
       });
       
       const data = JSON.parse(response.text || '{}');
+      if (data.amount) {
+        let rawNum = parseInt(String(data.amount).replace(/\s+/g, ''), 10);
+        if (!isNaN(rawNum) && rawNum > 0) {
+          rawNum = correctAiMultiplierHallucination(rawNum, cleanText, data.note);
+          data.amount = rawNum.toLocaleString('en-US').replace(/,/g, ' ');
+        }
+      }
       res.json(data);
     } catch (e: any) {
-      console.error(e);
+      console.warn("Express /api/parse-expense Gemini error, running local fallback:", e?.message);
+      const cleanText = (req.body?.text || '').slice(0, 500);
+      const normalized = normalizeUzbekFinancialText(cleanText);
+      if (normalized.extractedAmount && normalized.extractedAmount > 0) {
+        const fmtAmt = Number(normalized.extractedAmount).toLocaleString('en-US').replace(/,/g, ' ');
+        return res.json({
+          success: true,
+          type: normalized.inferredType || 'expense',
+          amount: fmtAmt,
+          category: normalized.inferredCategory || 'Boshqa',
+          note: cleanText,
+          title: cleanText.slice(0, 80),
+          debtWho: '',
+          date: new Date().toISOString().slice(0, 16),
+          cardId: 'cash'
+        });
+      }
       res.status(500).json({ error: e.message });
     }
   });

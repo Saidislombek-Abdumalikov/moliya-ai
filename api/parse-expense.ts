@@ -5,7 +5,8 @@ import { getCandidateAiKeys, recordKeyResult } from './_aiRouter.js';
 import {
   normalizeUzbekFinancialText,
   buildUzbekFinancialPrompt,
-  parseTurboFinancialText
+  parseTurboFinancialText,
+  validateAiFinancialOutput
 } from './_uzbekFinancialNormalizer.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -135,16 +136,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const parsed = JSON.parse(response.text);
             if (parsed.amount) {
               recordKeyResult(key.id, true).catch(() => {});
-              const fmtAmt = Number(parsed.amount).toLocaleString('en-US').replace(/,/g, ' ');
+              const validated = validateAiFinancialOutput(parsed, normalized);
+              const fmtAmt = Number(validated.amount).toLocaleString('en-US').replace(/,/g, ' ');
               return res.status(200).json({
                 success: true,
-                type: parsed.type || 'expense',
+                type: validated.type || 'expense',
                 amount: fmtAmt,
-                category: parsed.category || 'Boshqa',
-                note: parsed.note || cleanText,
-                title: parsed.title || parsed.note || cleanText,
-                debtWho: parsed.debtWho || '',
-                date: parsed.date || new Date().toISOString().slice(0, 10)
+                category: validated.category || 'Boshqa',
+                note: validated.note || cleanText,
+                title: validated.name || cleanText,
+                debtWho: validated.debtWho || '',
+                date: validated.date || new Date().toISOString().slice(0, 10)
               });
             }
           }

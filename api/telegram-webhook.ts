@@ -8,6 +8,7 @@ import {
   normalizeUzbekFinancialText,
   buildUzbekFinancialAiPrompt,
   validateAiFinancialOutput,
+  correctAiMultiplierHallucination,
   getServerDateTimeContext,
   parseSafeDate,
   parseTurboFinancialText,
@@ -2020,9 +2021,14 @@ Extract the transaction into JSON with these exact fields:
 {"type":"expense"|"income"|"debt"|"lending","amount":number,"category":string,"title":string,"note":string,"date":"YYYY-MM-DD","debtWho":string}
 CRITICAL RULES:
 - Default type is "expense".
-- Spending money (taksi, ovqat, to'ladim, ketdi, sarfladim, xarid, bozorlik, dori, kiyim) is ALWAYS "expense".
+- Spending money (taksi, ovqat, to'ladim, to'lov qildim, kurs, kontrakt, ketdi, sarfladim, xarid, bozorlik, dori, kiyim) is ALWAYS "expense".
+- "kurs", "o'qish", "kontrakt", "maktab", "repetitor", "dars" is ALWAYS category "Ta'lim", type "expense".
 - Only mark type="income" if words clearly indicate receiving money (maosh, oylik, daromad, stipendiya, tushdi, berishdi, topdim).
-- amount: total integer number in UZS (e.g. 25000, 50000, 14000000).
+- CRITICAL FOR UZBEK NUMBERS:
+  * "ming" / "минг" / "k" = THOUSAND (1,000 UZS). E.g. "500 ming" = 500000 (500 thousand, NEVER 500 million!). E.g. "30 ming" = 30000.
+  * "million" / "млн" / "mln" = MILLION (1,000,000 UZS). E.g. "14 mln" = 14000000.
+  * NEVER confuse "ming" with "million"!
+- amount: total integer number in UZS (e.g. 500000, 25000, 50000, 14000000).
 - note: Uzbek transcription of what was said in the voice note.
 Today: ${srvCtx.currentDate}. Output valid JSON only.`;
 
@@ -2059,15 +2065,38 @@ Today: ${srvCtx.currentDate}. Output valid JSON only.`;
 
                 if (audioResult?.text) {
                   const resJson = JSON.parse(audioResult.text);
-                  const validated = validateAiFinancialOutput(resJson, { originalText: resJson.note || 'Voice note', normalizedText: resJson.note || 'Voice note' }, srvCtx.currentDate);
+                  const voiceTranscription = resJson.note || resJson.title || '';
+
+                  // Authoritative Check: If voice note transcription parses cleanly with Local Turbo Engine, use it!
+                  if (voiceTranscription) {
+                    const turboRes = parseTurboFinancialText(voiceTranscription);
+                    if (turboRes && turboRes.transactions.length > 0 && turboRes.overall_confidence >= 0.85) {
+                      const first = turboRes.transactions[0];
+                      parsed = {
+                        isValid: true,
+                        type: first.type,
+                        amount: first.amount,
+                        currency: first.currency,
+                        category: first.category,
+                        name: first.description,
+                        note: voiceTranscription,
+                        date: first.date || srvCtx.currentDate,
+                        time: first.time,
+                        debtWho: first.counterparty || ''
+                      };
+                      recordKeyResult(keyObj.id, true).catch(() => {});
+                      break;
+                    }
+                  }
+
+                  const validated = validateAiFinancialOutput(resJson, { originalText: voiceTranscription || 'Voice note', normalizedText: voiceTranscription || 'Voice note' }, srvCtx.currentDate);
                   if (validated.isValid && validated.amount > 0) {
                     parsed = validated;
                     recordKeyResult(keyObj.id, true).catch(() => {});
                     break;
                   }
 
-                  // Fallback: If amount wasn't extracted directly, run voice note transcription through Local Turbo Engine!
-                  const voiceTranscription = resJson.note || resJson.title || '';
+                  // Fallback: If amount wasn't extracted directly, run voice note transcription through Local Turbo Engine with lower confidence threshold
                   if (voiceTranscription) {
                     const turboRes = parseTurboFinancialText(voiceTranscription);
                     if (turboRes && turboRes.transactions.length > 0) {

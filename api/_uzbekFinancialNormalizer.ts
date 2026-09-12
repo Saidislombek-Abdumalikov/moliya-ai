@@ -311,6 +311,11 @@ export const PRIMARY_CATEGORY_KEYWORDS: Array<{ keyword: string; category: strin
 // Category Dictionary with stems
 export const TURBO_CATEGORY_MAP = [
   {
+    category: "Ta'lim",
+    type: 'expense' as const,
+    regex: /\b(o'qish\w*|oqish\w*|kurs\w*|repetitor\w*|repititor\w*|kontrakt\w*|kantrakt\w*|kitob\w*|maktab\w*|maktap\w*|universitet\w*|institut\w*|kollej\w*|dars\w*|daftar\w*|ruchka\w*|talim\w*|ta'lim\w*|ucheba\w*)\b/i
+  },
+  {
     category: 'Transport',
     type: 'expense' as const,
     regex: /\b(taxi\w*|taksi\w*|taxsi\w*|yandex\w*|yandeks\w*|benzin\w*|benzn\w*|binzin\w*|metan\w*|propan\w*|zapravka\w*|avtobus\w*|metro\w*|yo'?lkira\w*|yolkira\w*|mashina\w*|moy\w*|zapchast\w*|parkovka\w*|stoyanka\w*|radar\w*|shtraf\w*|moyka\w*)\b/i
@@ -318,7 +323,7 @@ export const TURBO_CATEGORY_MAP = [
   {
     category: 'Oziq-ovqat',
     type: 'expense' as const,
-    regex: /\b(ovqat\w*|avqat\w*|non\w*|go'?sht\w*|gosht\w*|bozor\w*|bozrlik\w*|bazar\w*|korzinka\w*|makro\w*|havas\w*|supermarket\w*|supermark\w*|osh\w*|choyxona\w*|lunch\w*|obed\w*|tushlik\w*|kechki\s+ovqat|kafe\w*|restoran\w*|kofe\w*|lavash\w*|shashlik\w*|somsa\w*|shirinlik\w*|suv\w*|ichimlik\w*|pechenye\w*|meva\w*|sabzavot\w*|kartoshka\w*|piyoz\w*|guruch\w*|un\w*|yog'?\w*|magazin\w*|magaz\w*)\b/i
+    regex: /\b(ovqat\w*|avqat\w*|non\w*|go'?sht\w*|gosht\w*|bozor\w*|bozrlik\w*|bazar\w*|korzinka\w*|makro\w*|havas\w*|supermarket\w*|supermark\w*|osh\w*|choyxona\w*|lunch\w*|obed\w*|tushlik\w*|kechki\s+ovqat|kafe\w*|restoran\w*|kofe\w*|lavash\w*|shashlik\w*|somsa\w*|shirinlik\w*|suv\w*|ichimlik\w*|pechenye\w*|meva\w*|sabzavot\w*|kartoshka\w*|piyoz\w*|guruch\w*|un\b|unga\b|undan\b|yog'?\w*|magazin\w*|magaz\w*)\b/i
   },
   {
     category: 'Kommunal',
@@ -334,11 +339,6 @@ export const TURBO_CATEGORY_MAP = [
     category: 'Kiyim',
     type: 'expense' as const,
     regex: /\b(kiyim\w*|poyafzal\w*|kurtka\w*|shim\w*|ko'ylak\w*|koylak\w*|oyoq\s+kiyim|futbolka\w*|kostyum\w*|palto\w*|etik\w*|krossovka\w*|paypoq\w*|shapka\w*|sumka\w*|tufli\w*)\b/i
-  },
-  {
-    category: 'Ta\'lim',
-    type: 'expense' as const,
-    regex: /\b(o'qish\w*|oqish\w*|kurs\w*|repetitor\w*|repititor\w*|kontrakt\w*|kitob\w*|maktab\w*|maktap\w*|universitet\w*|institut\w*|kollej\w*|dars\w*|daftar\w*|ruchka\w*|talim\w*|ta'lim\w*|ucheba\w*)\b/i
   },
   {
     category: 'Ko\'ngil ochar',
@@ -623,6 +623,12 @@ Categories: 'Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\\'liq', 'Ta\\'l
 Types: 'expense', 'income', 'debt', 'lending'.
 Currency: Assume Uzbek So'm (UZS). Extract amount as integer.
 
+CRITICAL UZBEK NUMBER & CATEGORY RULES:
+- "ming" / "минг" / "k" = THOUSAND (1,000 UZS). E.g. "500 ming" = 500000 (500 thousand, NEVER 500 million!). E.g. "30 ming" = 30000.
+- "million" / "млн" / "mln" = MILLION (1,000,000 UZS). E.g. "14 mln" = 14000000.
+- NEVER confuse "ming" with "million"!
+- Courses and study ("kurs", "o'qish", "kontrakt", "maktab", "repetitor", "dars", "kitob") are ALWAYS category: "Ta'lim", type: "expense".
+
 Rules:
 - If relative date (e.g. "kecha", "bugun"), calculate YYYY-MM-DD from ${ctx.currentDate}. If no date, use ${ctx.currentDate}.
 - 'debt' = borrowed money from someone; 'lending' = lent money to someone. Fill 'debtWho' with the person's name if present.
@@ -756,6 +762,50 @@ export function parseSafeDate(dateVal: any, fallbackDate?: string): SafeParsedDa
 }
 
 /**
+ * Multiplier Guard & Sanity Correction
+ * Protects against LLM hallucinations where Uzbek "ming" (1,000) is mistaken for "million" (1,000,000).
+ * E.g., user says "kursga to'lov qildim 500 ming", AI returns 500 000 000 instead of 500 000.
+ */
+export function correctAiMultiplierHallucination(aiAmount: number, rawText: string, extraNote?: string): number {
+  if (!aiAmount || isNaN(aiAmount) || aiAmount <= 0) return aiAmount;
+
+  const combinedText = `${rawText || ''} ${extraNote || ''}`.trim();
+  if (!combinedText) return aiAmount;
+
+  const localAmount = extractUzbekNumber(combinedText);
+  if (localAmount && localAmount > 0) {
+    // Exact 1000x or 1000000x hallucination check (e.g. AI returned 500M when text says 500 ming = 500k)
+    if (aiAmount === localAmount * 1000 || aiAmount === localAmount * 1000000) {
+      console.log(`[MULTIPLIER_GUARD] Corrected 1000x hallucination: ${aiAmount} -> ${localAmount} for "${combinedText}"`);
+      return localAmount;
+    }
+  }
+
+  // Check if text clearly has a thousand suffix (ming, минг, k, к) and NO million keywords,
+  // but AI returned an astronomically large number (>= 100,000,000)
+  const hasThousandKeyword = /\b(\d+(?:[.,]\d+)?)\s*(?:ming|минг|k|к)\b/i.test(combinedText);
+  const hasMillionKeyword = /\b(\d+(?:[.,]\d+)?)\s*(?:million|миллион|mln|млн)\b/i.test(combinedText);
+
+  if (hasThousandKeyword && !hasMillionKeyword && aiAmount >= 100000000) {
+    const corrected = Math.round(aiAmount / 1000);
+    console.log(`[MULTIPLIER_GUARD] Corrected ming-to-million mixup: ${aiAmount} -> ${corrected} for "${combinedText}"`);
+    return corrected;
+  }
+
+  // Also check if local turbo parsed a high-confidence amount
+  const turbo = parseTurboFinancialText(combinedText);
+  if (turbo && turbo.transactions.length > 0 && turbo.overall_confidence >= 0.85) {
+    const turboAmt = turbo.transactions[0].amount;
+    if (turboAmt > 0 && (aiAmount === turboAmt * 1000 || (aiAmount >= 100000000 && turboAmt < 10000000))) {
+      console.log(`[MULTIPLIER_GUARD] Replaced AI ${aiAmount} with authoritative Turbo amount ${turboAmt}`);
+      return turboAmt;
+    }
+  }
+
+  return aiAmount;
+}
+
+/**
  * Validates structured AI output before writing to database
  */
 export function validateAiFinancialOutput(rawJson: any, normalizedInput: NormalizedFinancialInput, fallbackDate?: string): {
@@ -814,6 +864,13 @@ export function validateAiFinancialOutput(rawJson: any, normalizedInput: Normali
       };
     }
   }
+
+  // Multiplier Guard: Verify and correct any 1000x multiplier hallucinations (e.g. 500 ming -> 500,000,000)
+  amount = correctAiMultiplierHallucination(
+    amount,
+    normalizedInput.originalText || normalizedInput.normalizedText || '',
+    rawJson.note || rawJson.title || ''
+  );
 
   const validTypes = ['expense', 'income', 'debt', 'lending'];
   const type = validTypes.includes(rawJson.type) ? rawJson.type : (normalizedInput.inferredType || 'expense');

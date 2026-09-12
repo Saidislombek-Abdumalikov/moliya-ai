@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 import { useFinance } from '../FinanceContext'
+import { parseLocalAIText, correctAiMultiplierHallucination } from '../utils/aiParser'
 
 type EntryType = 'expense' | 'income' | 'debt' | 'lending'
 
@@ -38,22 +39,79 @@ const voicePrompts: Record<EntryType, string> = {
 }
 
 async function parseAIText(text: string, cardsList: any[] = [], userId?: string): Promise<{ type: EntryType; amount: string; category: string; note: string; title?: string; debtWho?: string; date?: string; cardId?: string }> {
-  const res = await fetch('/api/parse-expense', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, cards: cardsList, userId })
-  });
-  
-  if (res.status === 429) {
-    const errData = await res.json().catch(() => ({}));
-    throw new Error(errData.message || '⚠️ Bugungi bepul AI limitingiz tugadi. Xarajatlarni ilovada qo\'lda kiritish mutlaqo bepul va cheksiz!');
+  // 1. Fast local turbo parse (<0.5ms)
+  const localResult = parseLocalAIText(text, cardsList);
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3500);
+
+    const res = await fetch('/api/parse-expense', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, cards: cardsList, userId }),
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    
+    if (res.status === 429) {
+      // If daily quota was reached, but local parser understood the text, return local result gracefully!
+      if (localResult && localResult.amount) {
+        return {
+          type: localResult.type,
+          amount: localResult.amount,
+          category: localResult.category,
+          note: localResult.note || text,
+          title: localResult.title || text.slice(0, 80),
+          debtWho: localResult.debtWho,
+          date: localResult.date,
+          cardId: localResult.cardId || 'cash'
+        };
+      }
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.message || '⚠️ Bugungi bepul AI limitingiz tugadi. Xarajatlarni ilovada qo\'lda kiritish mutlaqo bepul va cheksiz!');
+    }
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.amount && data.category) {
+        // Multiplier Guard: Verify and correct 1000x multiplier hallucinations from server LLM (e.g. 500 ming -> 500,000,000)
+        let rawNum = parseInt(String(data.amount).replace(/\s+/g, ''), 10);
+        if (!isNaN(rawNum) && rawNum > 0) {
+          rawNum = correctAiMultiplierHallucination(rawNum, text, data.note || data.title);
+          data.amount = rawNum.toLocaleString('en-US').replace(/,/g, ' ');
+        }
+        return {
+          type: data.type || localResult?.type || 'expense',
+          amount: data.amount,
+          category: data.category || localResult?.category || 'Boshqa',
+          note: data.note || localResult?.note || text,
+          title: data.title || localResult?.title || text.slice(0, 80),
+          debtWho: data.debtWho || localResult?.debtWho,
+          date: data.date || localResult?.date,
+          cardId: data.cardId || localResult?.cardId || 'cash'
+        };
+      }
+    }
+  } catch (err: any) {
+    console.warn('[AIButton] Server parsing fetch error, evaluating local turbo parser:', err?.message);
+    if (err?.message?.includes('bepul AI limitingiz tugadi') && !localResult) {
+      throw err;
+    }
   }
 
-  if (res.ok) {
-    const data = await res.json();
-    if (data.amount && data.category) {
-      return { type: data.type || 'expense', amount: data.amount, category: data.category, note: data.note || text, title: data.title, debtWho: data.debtWho, date: data.date, cardId: data.cardId };
-    }
+  // 2. Resilient Offline-First Fallback: If server failed, returned 500, or timed out, use localResult!
+  if (localResult && localResult.amount) {
+    return {
+      type: localResult.type,
+      amount: localResult.amount,
+      category: localResult.category,
+      note: localResult.note || text,
+      title: localResult.title || text.slice(0, 80),
+      debtWho: localResult.debtWho,
+      date: localResult.date,
+      cardId: localResult.cardId || 'cash'
+    };
   }
 
   throw new Error('AI orqali tahlil qilib bo\'lmadi. Iltimos, pastdagi maydonlarni qo\'lda to\'ldiring.');
