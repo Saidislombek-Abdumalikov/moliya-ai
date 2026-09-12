@@ -30,6 +30,84 @@ import {
 export { logBotMessage, BotMessageEntry };
 
 // ── Telegram API Helpers ─────────────────────────────────────
+function hasLinkButton(replyMarkup: any): boolean {
+  if (!replyMarkup || !Array.isArray(replyMarkup.inline_keyboard)) return false;
+  for (const row of replyMarkup.inline_keyboard) {
+    if (Array.isArray(row)) {
+      for (const btn of row) {
+        if (btn && (btn.web_app || btn.url)) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+async function editTelegramMessageReplyMarkup(chatId: number | string, messageId: number | string, replyMarkup: any) {
+  if (!BOT_TOKEN || !messageId) return null;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageReplyMarkup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: String(chatId),
+        message_id: Number(messageId),
+        reply_markup: replyMarkup
+      })
+    });
+    return await res.json();
+  } catch (err) {
+    console.warn('[BOT] Failed to edit reply markup:', err);
+    return null;
+  }
+}
+
+// In-memory cache for single active link button per chat
+const lastLinkMessageByUser = new Map<string, number>();
+
+async function cleanPreviousLinkButton(chatId: number | string, userId?: string, newMsgIdWithLink?: number) {
+  const chatKey = String(chatId);
+  let prevMsgId = lastLinkMessageByUser.get(chatKey);
+
+  if (!prevMsgId && userId) {
+    try {
+      const { data: u } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
+      const dbId = Number(u?.onboarding?.last_link_message_id);
+      if (Number.isInteger(dbId) && dbId > 0) {
+        prevMsgId = dbId;
+      }
+    } catch {}
+  }
+
+  if (prevMsgId && prevMsgId !== newMsgIdWithLink) {
+    const delRes = await deleteTelegramMessage(chatId, prevMsgId);
+    if (!delRes || !delRes.ok) {
+      await editTelegramMessageReplyMarkup(chatId, prevMsgId, { inline_keyboard: [] });
+    }
+  }
+
+  if (newMsgIdWithLink && newMsgIdWithLink > 0) {
+    lastLinkMessageByUser.set(chatKey, newMsgIdWithLink);
+    if (userId) {
+      try {
+        const { data: curr } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
+        const updatedOb = { ...(curr?.onboarding || {}), last_link_message_id: newMsgIdWithLink };
+        await supabase.from('users').update({ onboarding: updatedOb }).eq('id', userId);
+      } catch {}
+    }
+  } else if (!newMsgIdWithLink && prevMsgId) {
+    lastLinkMessageByUser.delete(chatKey);
+    if (userId) {
+      try {
+        const { data: curr } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
+        const updatedOb = { ...(curr?.onboarding || {}), last_link_message_id: null };
+        await supabase.from('users').update({ onboarding: updatedOb }).eq('id', userId);
+      } catch {}
+    }
+  }
+}
+
 async function sendTelegramMessage(
   chatId: number | string,
   text: string,
@@ -42,6 +120,11 @@ async function sendTelegramMessage(
     return null;
   }
   try {
+    const isLinkMsg = hasLinkButton(replyMarkup);
+    if (isLinkMsg) {
+      await cleanPreviousLinkButton(chatId, userId);
+    }
+
     const payload: any = {
       chat_id: String(chatId),
       text,
@@ -56,17 +139,23 @@ async function sendTelegramMessage(
       body: JSON.stringify(payload)
     });
     const data = await res.json();
-    if (data?.ok && data?.result?.message_id && userId) {
-      await logBotMessage(userId, {
-        id: `bot_${chatId}_${data.result.message_id}`,
-        chat_id: chatId,
-        message_id: data.result.message_id,
-        direction: 'bot_to_user',
-        sender: 'bot',
-        type: customType,
-        text,
-        timestamp: new Date().toISOString()
-      });
+    if (data?.ok && data?.result?.message_id) {
+      const msgId = data.result.message_id;
+      if (isLinkMsg) {
+        cleanPreviousLinkButton(chatId, userId, msgId).catch(() => {});
+      }
+      if (userId) {
+        await logBotMessage(userId, {
+          id: `bot_${chatId}_${msgId}`,
+          chat_id: chatId,
+          message_id: msgId,
+          direction: 'bot_to_user',
+          sender: 'bot',
+          type: customType,
+          text,
+          timestamp: new Date().toISOString()
+        });
+      }
     }
     return data;
   } catch (err) {
@@ -85,6 +174,11 @@ async function editTelegramMessage(
 ) {
   if (!BOT_TOKEN) return null;
   try {
+    const isLinkMsg = hasLinkButton(replyMarkup);
+    if (isLinkMsg) {
+      await cleanPreviousLinkButton(chatId, userId, messageId);
+    }
+
     const payload: any = {
       chat_id: String(chatId),
       message_id: messageId,
@@ -100,17 +194,22 @@ async function editTelegramMessage(
       body: JSON.stringify(payload)
     });
     const data = await res.json();
-    if (data?.ok && userId) {
-      await logBotMessage(userId, {
-        id: `bot_${chatId}_${messageId}`,
-        chat_id: chatId,
-        message_id: messageId,
-        direction: 'bot_to_user',
-        sender: 'bot',
-        type: customType,
-        text,
-        timestamp: new Date().toISOString()
-      });
+    if (data?.ok) {
+      if (isLinkMsg) {
+        cleanPreviousLinkButton(chatId, userId, messageId).catch(() => {});
+      }
+      if (userId) {
+        await logBotMessage(userId, {
+          id: `bot_${chatId}_${messageId}`,
+          chat_id: chatId,
+          message_id: messageId,
+          direction: 'bot_to_user',
+          sender: 'bot',
+          type: customType,
+          text,
+          timestamp: new Date().toISOString()
+        });
+      }
     }
     return data;
   } catch (err) {
@@ -1458,6 +1557,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Canonical Identity Resolution & Restriction Check
     const { user, userId, isBlocked, isRegistered } = await resolveCanonicalUser(fromUser);
 
+    // Auto-clean previous link button message so only 1 link button message stays in the chat
+    cleanPreviousLinkButton(chatId, userId).catch(() => {});
+
     // ── Record Incoming User Activity (Idempotent by update_id & message_id) ──
     let userMsgType = 'text';
     let userMsgText = text;
@@ -1838,6 +1940,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ── Voice & Audio Message (Audio Parsing) ───────────────────
     const audioMsg = message.voice || message.audio;
     if (audioMsg) {
+      // 1. Immediately send chat action and active acknowledgement status before any heavy operations
+      sendChatAction(chatId, 'record_voice').catch(() => {});
+      const isVoice = Boolean(message.voice);
+      const statusMsg = await sendTelegramMessage(
+        chatId,
+        isVoice
+          ? `🎙️ <b>Ovozli xabar qabul qilindi!</b>\n⚡ <i>Moliya AI ma'lumotlarni bir zumda tahlil qilmoqda...</i>`
+          : `🎵 <b>Audio qabul qilindi!</b>\n⚡ <i>Moliya AI ma'lumotlarni bir zumda tahlil qilmoqda...</i>`,
+        undefined,
+        userId
+      );
+      const statusMsgId = statusMsg?.result?.message_id;
+
+      // 2. Check AI Quota
       const quota = await checkAiQuota(userId);
       if (!quota.allowed) {
         const quotaNotice = quota.isPremium
@@ -1853,23 +1969,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           buttons.push([{ text: "⭐ VIP Premium olish", callback_data: "view_premium" }]);
         }
 
-        await sendTelegramMessage(chatId, quotaNotice, {
-          inline_keyboard: buttons
-        }, userId);
+        if (statusMsgId) {
+          await editTelegramMessage(chatId, statusMsgId, quotaNotice, { inline_keyboard: buttons }, userId);
+        } else {
+          await sendTelegramMessage(chatId, quotaNotice, { inline_keyboard: buttons }, userId);
+        }
         return res.status(200).json({ status: 'quota_exceeded' });
       }
 
-      sendChatAction(chatId, 'record_voice').catch(() => {});
-      const statusMsg = await sendTelegramMessage(
-        chatId,
-        message.voice
-          ? `🎙️ <b>Ovozli xabar qabul qilindi...</b>\n⏳ <i>Ovoz yuklab olinmoqda va tahlil qilinmoqda...</i>`
-          : `🎵 <b>Audio qabul qilindi...</b>\n⏳ <i>Audio tahlil qilinmoqda...</i>`,
-        undefined,
-        userId
-      );
-      const statusMsgId = statusMsg?.result?.message_id;
-
+      sendChatAction(chatId, 'typing').catch(() => {});
       const fileUrl = await getTelegramFileUrl(audioMsg.file_id);
       if (fileUrl) {
         try {
@@ -1881,7 +1989,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             editTelegramMessage(
               chatId,
               statusMsgId,
-              `🧠 <b>Moliya AI ovozni eshitmoqda...</b>\n⚡ <i>Xarajat summasi aniqlanmoqda...</i>`,
+              `🧠 <b>Moliya AI ovozni qayta ishlamoqda...</b>\n📊 <i>Xarajat summasi hisoblanmoqda...</i>`,
               undefined,
               userId
             ).catch(() => {});

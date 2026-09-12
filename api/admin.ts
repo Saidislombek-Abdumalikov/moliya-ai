@@ -47,7 +47,25 @@ async function notifyUserVipGrantedTelegram(telegramId: string | number, expires
     const token = process.env.TELEGRAM_BOT_TOKEN || '8955141731:AAGILXzT69Vity8ZFi-H8XeZc_H6_BFaS8Y';
     if (!token || !telegramId || String(telegramId) === '—') return;
 
-    const formattedExpiry = formatUzbekExpiryDate(expiresAt);
+    let expiryDisplay = "Cheksiz (Doimiy VIP)";
+    if (expiresAt) {
+      try {
+        const d = new Date(expiresAt);
+        const diffMs = d.getTime() - Date.now();
+        const days = Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+        const months = [
+          'yanvar', 'fevral', 'mart', 'aprel', 'may', 'iyun',
+          'iyul', 'avgust', 'sentabr', 'oktabr', 'noyabr', 'dekabr'
+        ];
+        const day = d.getDate();
+        const month = months[d.getMonth()];
+        const year = d.getFullYear();
+        expiryDisplay = `${days} kun (${day}-${month}, ${year} gacha)`;
+      } catch {
+        expiryDisplay = formatUzbekExpiryDate(expiresAt);
+      }
+    }
+
     const text = `🎉 <b>Tabriklaymiz! Sizga Moliya AI Premium (VIP) obunasi taqdim etildi!</b>\n\n` +
       `✨ Endi siz barcha imkoniyatlardan cheklovlarsiz foydalanishingiz mumkin:\n` +
       `• 🤖 <b>Cheksiz AI tahlil:</b> Kunlik savollar va cheklovlar yo'q\n` +
@@ -55,7 +73,7 @@ async function notifyUserVipGrantedTelegram(telegramId: string | number, expires
       `• 🧾 <b>Chek skaneri:</b> Rasmdan avtomatik xarajat aniqlash\n` +
       `• 📊 <b>Barcha hisobotlar:</b> Excel va PDF formatida to'liq eksport\n` +
       `• ⚡ <b>24/7 ustuvor va tezkor AI yordamchi</b>\n\n` +
-      `⏳ <b>Amal qilish muddati:</b> <b>${formattedExpiry}</b> gacha\n\n` +
+      `⏳ <b>Amal qilish muddati:</b> <b>${expiryDisplay}</b>\n\n` +
       `📱 <i>Moliya Mini App ga kiring va barcha qulayliklardan bahramand bo'ling!</i>`;
 
     const appUrl = process.env.APP_URL || 'https://moliya-ai-pi.vercel.app';
@@ -1243,7 +1261,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // 3. Extract real numeric message IDs
         const messageIdsToDelete: number[] = [];
         for (const m of botMessages) {
-          const numId = Number(m.message_id);
+          const numId = Number(m.message_id || m.messageId || (typeof m.id === 'string' && m.id.split('_').pop()));
           if (Number.isInteger(numId) && numId > 0 && !messageIdsToDelete.includes(numId)) {
             messageIdsToDelete.push(numId);
           }
@@ -1258,15 +1276,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         // 4. Targeted clear of stored message history records: onboarding.bot_messages = []
-        // CRITICAL DATA SAFETY: NEVER TOUCH transactions, cards, phone, name, is_premium, or ai_logs!
         let clearedDbRecords = 0;
         if (userRow) {
           clearedDbRecords = botMessages.length;
-          const updatedOnboarding = { ...(userRow.onboarding || {}), bot_messages: [] };
+          const nowIso = new Date().toISOString();
+          const updatedOnboarding = {
+            ...(userRow.onboarding || {}),
+            bot_messages: [],
+            last_link_message_id: null,
+            chat_cleared_at: nowIso
+          };
           await supabase.from('users').update({
             onboarding: updatedOnboarding,
-            updated_at: new Date().toISOString()
+            updated_at: nowIso
           }).eq('id', canonicalUserId);
+
+          // Clear chat query logs for this user
+          await supabase.from('ai_logs').delete().eq('user_id', canonicalUserId);
         }
 
         return res.status(200).json({
