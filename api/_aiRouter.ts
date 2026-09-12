@@ -466,3 +466,75 @@ export async function testSpecificAiKey(keyData: {
 export function setInMemoryKeys(keys: AiKeyRecord[]) {
   inMemoryKeys = [...keys];
 }
+
+/**
+ * Generic AI query execution with key rotation
+ */
+export async function executeAiQuery(
+  userPrompt: string,
+  systemInstruction?: string,
+  options: { temperature?: number; response_mime_type?: string; maxTokens?: number } = {}
+): Promise<{ text: string }> {
+  const candidateKeys = await getCandidateAiKeys();
+  if (!candidateKeys || candidateKeys.length === 0) {
+    return { text: '' };
+  }
+
+  for (const key of candidateKeys) {
+    try {
+      const cleanKey = (key.api_key || '').trim();
+      const isGoogle = key.provider === 'google' || (key.provider as string) === 'gemini';
+      if (isGoogle) {
+        const ai = new GoogleGenAI({ apiKey: cleanKey });
+        const modelName = (key.model || 'gemini-3.5-flash-lite').trim();
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: userPrompt,
+          config: {
+            systemInstruction: systemInstruction || undefined,
+            temperature: options.temperature ?? 0.3,
+            responseMimeType: (options.response_mime_type as any) || undefined,
+            maxOutputTokens: options.maxTokens ?? 1000
+          }
+        });
+        if (response?.text) {
+          await recordKeyResult(key.id, true);
+          return { text: response.text };
+        }
+      } else {
+        const endpoint = key.provider === 'groq'
+          ? 'https://api.groq.com/openai/v1/chat/completions'
+          : 'https://api.openai.com/v1/chat/completions';
+        const model = key.model || (key.provider === 'groq' ? 'llama-3.3-70b-versatile' : 'gpt-4o-mini');
+        const messages: any[] = [];
+        if (systemInstruction) messages.push({ role: 'system', content: systemInstruction });
+        messages.push({ role: 'user', content: userPrompt });
+
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${cleanKey}`
+          },
+          body: JSON.stringify({
+            model,
+            messages,
+            temperature: options.temperature ?? 0.3,
+            response_format: options.response_mime_type === 'application/json' ? { type: 'json_object' } : undefined
+          })
+        });
+        const data = await res.json();
+        const content = data.choices?.[0]?.message?.content;
+        if (content) {
+          await recordKeyResult(key.id, true);
+          return { text: content };
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[AI_ROUTER] executeAiQuery with key ${key.name} failed:`, err?.message);
+      await recordKeyResult(key.id, false, err?.message, 'temporary');
+    }
+  }
+
+  return { text: '' };
+}

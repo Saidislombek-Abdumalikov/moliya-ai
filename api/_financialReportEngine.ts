@@ -8,8 +8,8 @@
  * 3. Persists generated reports in Supabase with duplicate prevention.
  */
 
-import { executeAiQuery } from './_aiRouter';
-import { supabase } from './_supabaseClient';
+import { executeAiQuery } from './_aiRouter.js';
+import { supabase } from './_supabaseClient.js';
 
 export interface ReportMetrics {
   totalIncome: number;
