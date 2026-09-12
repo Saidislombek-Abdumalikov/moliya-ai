@@ -253,6 +253,196 @@ async function startServer() {
     }
   });
 
+  // Account deletion endpoint with Telegram chat sweep & keyboard removal
+  app.post("/api/auth/delete-account", async (req, res) => {
+    try {
+      const { userId, telegramId, initData } = req.body || {};
+      const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
+
+      if (!userId && !telegramId) {
+        res.status(400).json({ error: "Missing userId or telegramId" });
+        return;
+      }
+
+      let verifiedTgUser: any = null;
+      if (initData && BOT_TOKEN) {
+        const verification = verifyTelegramInitData(initData, BOT_TOKEN);
+        if (verification.isValid && verification.user) {
+          verifiedTgUser = verification.user;
+        }
+      }
+
+      const uidStr = userId ? String(userId).trim() : "";
+      const tgIdStr = telegramId ? String(telegramId).trim() : (verifiedTgUser?.id ? String(verifiedTgUser.id) : null);
+
+      let userDoc: any = null;
+      if (uidStr) {
+        const { data: byId } = await supabase.from('users').select('*').eq('id', uidStr).maybeSingle();
+        userDoc = byId;
+      }
+
+      if (!userDoc && tgIdStr) {
+        const { data: byTg } = await supabase.from('users').select('*').eq('telegram_id', tgIdStr).maybeSingle();
+        userDoc = byTg;
+        if (!userDoc) {
+          const { data: byTgId } = await supabase.from('users').select('*').eq('id', `moliya_user_tg_${tgIdStr}`).maybeSingle();
+          userDoc = byTgId;
+        }
+      }
+
+      const canonicalUserId = userDoc?.id || uidStr || (tgIdStr ? `moliya_user_tg_${tgIdStr}` : null);
+      const targetTgId = tgIdStr || userDoc?.telegram_id || userDoc?.onboarding?.telegramId || (canonicalUserId?.startsWith('moliya_user_tg_') ? canonicalUserId.replace('moliya_user_tg_', '') : null);
+
+      const botMessages: any[] = Array.isArray(userDoc?.onboarding?.bot_messages) ? userDoc.onboarding.bot_messages : [];
+      const storedIds: number[] = [];
+      for (const m of botMessages) {
+        const numId = Number(m.message_id || m.messageId);
+        if (Number.isInteger(numId) && numId > 0 && !storedIds.includes(numId)) {
+          storedIds.push(numId);
+        }
+      }
+
+      const lastMsgId = Number(userDoc?.onboarding?.last_message_id) || 0;
+
+      let chatPurged = false;
+      const tgDetails = { attempted: 0, deleted: 0, alreadyAbsent: 0, notDeletable: 0, failed: 0 };
+
+      if (targetTgId && targetTgId !== '—' && BOT_TOKEN) {
+        try {
+          const idsToDelete = new Set<number>();
+          storedIds.forEach(id => idsToDelete.add(id));
+
+          let topMsgId = lastMsgId && lastMsgId > 0 ? lastMsgId : null;
+          try {
+            const probeRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: String(targetTgId),
+                text: '·',
+                disable_notification: true
+              })
+            });
+            const probeData: any = await probeRes.json();
+            if (probeData.ok && probeData.result?.message_id) {
+              const probeId = probeData.result.message_id;
+              topMsgId = Math.max(topMsgId || 0, probeId);
+              idsToDelete.add(probeId);
+            }
+          } catch (probeErr) {
+            console.warn('[DELETE_ACCOUNT] Probe error:', probeErr);
+          }
+
+          if (topMsgId && topMsgId > 0) {
+            const minId = Math.max(1, topMsgId - 150);
+            for (let m = topMsgId; m >= minId; m--) {
+              idsToDelete.add(m);
+            }
+          }
+
+          const idList = Array.from(idsToDelete).sort((a, b) => b - a);
+          tgDetails.attempted = idList.length;
+
+          for (let i = 0; i < idList.length; i += 100) {
+            const chunk = idList.slice(i, i + 100);
+            try {
+              const batchRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/deleteMessages`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: String(targetTgId), message_ids: chunk })
+              });
+              const batchData: any = await batchRes.json();
+              if (batchData.ok) {
+                tgDetails.deleted += chunk.length;
+              } else {
+                const indResults = await Promise.allSettled(
+                  chunk.map(async (msgId) => {
+                    const sRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/deleteMessage`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ chat_id: String(targetTgId), message_id: msgId })
+                    });
+                    return await sRes.json();
+                  })
+                );
+
+                indResults.forEach((r) => {
+                  if (r.status === 'fulfilled') {
+                    const d: any = r.value;
+                    if (d?.ok) {
+                      tgDetails.deleted++;
+                    } else {
+                      const desc = (d?.description || '').toLowerCase();
+                      if (desc.includes('not found')) {
+                        tgDetails.alreadyAbsent++;
+                      } else if (desc.includes("can't be deleted") || desc.includes('cant be deleted')) {
+                        tgDetails.notDeletable++;
+                      } else {
+                        tgDetails.failed++;
+                      }
+                    }
+                  } else {
+                    tgDetails.failed++;
+                  }
+                });
+              }
+            } catch {
+              tgDetails.failed += chunk.length;
+            }
+
+            if (i + 100 < idList.length) {
+              await new Promise(r => setTimeout(r, 40));
+            }
+          }
+
+          try {
+            const kbRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: String(targetTgId),
+                text: '🗑️',
+                disable_notification: true,
+                reply_markup: { remove_keyboard: true }
+              })
+            });
+            const kbData: any = await kbRes.json();
+            if (kbData.ok && kbData.result?.message_id) {
+              await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/deleteMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: String(targetTgId), message_id: kbData.result.message_id })
+              }).catch(() => {});
+            }
+          } catch {}
+
+          chatPurged = true;
+        } catch (tgErr) {
+          console.warn('[DELETE_ACCOUNT] Telegram purge error:', tgErr);
+        }
+      }
+
+      if (canonicalUserId) {
+        await supabase.from('users').delete().eq('id', canonicalUserId);
+      }
+      if (targetTgId) {
+        await supabase.from('users').delete().or(`id.eq.moliya_user_tg_${targetTgId},id.eq.req_${targetTgId},id.eq.exchange_${targetTgId}`);
+      }
+
+      res.json({
+        success: true,
+        userDeleted: true,
+        chatPurged,
+        userId: canonicalUserId,
+        telegramId: targetTgId,
+        details: tgDetails
+      });
+    } catch (e: any) {
+      console.error("Delete account error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.post("/api/parse-expense", async (req, res) => {
     try {
       const { text, cards = [] } = req.body;

@@ -41,15 +41,15 @@ export async function adminWipeUserData(
     });
     return { success: true, action: 'USER_DATA_WIPED', scope: 'financial', targetUserId };
   } else {
-    const result = await deleteUserAccount(targetUserId, { hardDelete: false });
+    const result = await deleteUserAccount(targetUserId, { hardDelete: true, wipeTelegramChat: true });
     await logAdminAudit({
       action: 'ACCOUNT_DELETED',
       target_user_id: targetUserId,
       target_user_name: targetUserName,
       admin_id: adminId,
-      details: { mode: result.mode }
+      details: { mode: result.mode, chatPurged: result.chatPurged }
     });
-    return { success: true, action: 'ACCOUNT_DELETED', scope: 'account', targetUserId };
+    return { success: true, action: 'ACCOUNT_DELETED', scope: 'account', targetUserId, chatPurged: result.chatPurged };
   }
 }
 

@@ -863,11 +863,11 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
     }
     setDeleteConfirmName('')
     setActiveModal(null);
-    setToastMessage(lang === 'uz' ? "Ma'lumotlar o'chirilmoqda..." : lang === 'uz_cyrl' ? "Маълумотлар ўчирилмоқда..." : lang === 'ru' ? "Удаление данных..." : "Clearing data...");
+    setToastMessage(lang === 'uz' ? "Hisob va Telegram bot chati tozalanmoqda..." : lang === 'uz_cyrl' ? "Ҳисоб ва Telegram бот чати тозаланмоқда..." : lang === 'ru' ? "Очистка аккаунта и чата Telegram..." : "Clearing account & Telegram chat...");
     
     try {
       await clearAllData();
-      setToastMessage(lang === 'uz' ? "Barcha ma'lumotlar o'chirildi" : lang === 'uz_cyrl' ? "Барча маълумотлар ўчирилди" : lang === 'ru' ? "Все данные удалены" : "All data cleared");
+      setToastMessage(lang === 'uz' ? "Hisob va Telegram chati butunlay tozalandi" : lang === 'uz_cyrl' ? "Ҳисоб ва Telegram чати бутунлай тозаланди" : lang === 'ru' ? "Аккаунт и чат Telegram очищены" : "Account & Telegram chat completely cleared");
     } catch (e) {
       console.error("Failed to clear data:", e);
     }

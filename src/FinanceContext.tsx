@@ -1171,13 +1171,33 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const clearAllData = async () => {
-    if (userId) {
-      try {
-        await supabase.from('users').delete().eq('id', userId);
-      } catch (e) {
-        console.warn('User delete error:', e);
+    const targetUserId = userId;
+    const targetTgId = tgUser?.id ? String(tgUser.id) : (onboarding?.telegramId ? String(onboarding.telegramId) : null);
+    const initData = (typeof window !== 'undefined' && (window as any).Telegram?.WebApp?.initData) || '';
+
+    // Call backend endpoint to sweep Telegram bot chat, remove custom keyboards, and purge user account
+    try {
+      await fetch('/api/auth/delete-account', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: targetUserId,
+          telegramId: targetTgId,
+          initData
+        })
+      });
+    } catch (apiErr) {
+      console.warn('[FINANCE] Error calling delete-account API:', apiErr);
+      // Fallback direct delete from Supabase if network/API fails
+      if (targetUserId) {
+        try {
+          await supabase.from('users').delete().eq('id', targetUserId);
+        } catch (e) {
+          console.warn('User delete error fallback:', e);
+        }
       }
     }
+
     try {
       await supabase.auth.signOut();
     } catch {}
