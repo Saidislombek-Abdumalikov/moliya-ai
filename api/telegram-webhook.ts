@@ -278,11 +278,21 @@ async function resolveCanonicalUser(fromUser: any) {
   }
 
   // 2. Fetch existing active canonical user
-  const { data: existing } = await supabase
+  let { data: existing } = await supabase
     .from('users')
     .select('*')
     .eq('id', userId)
     .maybeSingle();
+
+  // If not found by canonical ID, search by telegram_id
+  if (!existing) {
+    const { data: byTgId } = await supabase
+      .from('users')
+      .select('*')
+      .eq('telegram_id', tgId)
+      .maybeSingle();
+    if (byTgId) existing = byTgId;
+  }
 
   if (existing) {
     // Check if user is blocked by admin
@@ -293,7 +303,30 @@ async function resolveCanonicalUser(fromUser: any) {
       existing.device_info?.restricted
     );
 
-    const hasPhone = isValidPhoneNumber(existing.phone) || isValidPhoneNumber(existing.onboarding?.phone);
+    let hasPhone = isValidPhoneNumber(existing.phone) || isValidPhoneNumber(existing.onboarding?.phone);
+
+    // If existing record has no verified phone, look up if another record with this telegram_id has a phone
+    if (!hasPhone) {
+      const { data: userWithPhone } = await supabase
+        .from('users')
+        .select('phone, onboarding')
+        .eq('telegram_id', tgId)
+        .neq('phone', null)
+        .neq('phone', '—')
+        .maybeSingle();
+      if (userWithPhone && isValidPhoneNumber(userWithPhone.phone)) {
+        existing.phone = userWithPhone.phone;
+        if (!existing.onboarding) existing.onboarding = {};
+        existing.onboarding.phone = userWithPhone.phone;
+        hasPhone = true;
+        // Sync to Supabase so it's persisted permanently
+        supabase.from('users').update({
+          phone: userWithPhone.phone,
+          onboarding: existing.onboarding,
+          updated_at: new Date().toISOString()
+        }).eq('id', existing.id).then(() => {}).catch(() => {});
+      }
+    }
 
     if (isBlocked) {
       return { user: existing, userId, isBlocked: true, isRegistered: false, isNew: false, hasPhone };
@@ -1559,10 +1592,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }).eq('id', userId);
     }
 
-    // ── 2. STRICT PHONE NUMBER REQUIREMENT ───────────────────────
-    // Without a verified phone number, users are strictly blocked from using the bot:
-    // Expenses (text, voice, photo), commands, and interactive features are inaccessible until phone is verified.
-    const userHasPhone = isValidPhoneNumber(user?.phone) || isValidPhoneNumber(user?.onboarding?.phone);
+    // ── 2. STRICT PHONE NUMBER REQUIREMENT & TEXT PHONE DETECTION ──
+    let userHasPhone = isValidPhoneNumber(user?.phone) || isValidPhoneNumber(user?.onboarding?.phone);
+
+    // If user typed/sent their phone number as a plain text message, register it immediately
+    if (!userHasPhone && text) {
+      const cleanDigits = text.replace(/[\s\-\(\)\+]/g, '');
+      const isTextPhone =
+        (cleanDigits.length === 9 && /^[0-9]{9}$/.test(cleanDigits)) ||
+        (cleanDigits.length === 12 && cleanDigits.startsWith('998') && /^[0-9]{12}$/.test(cleanDigits));
+
+      if (isTextPhone) {
+        const formattedPhone = cleanDigits.length === 9 ? `+998${cleanDigits}` : `+${cleanDigits}`;
+        await completePhoneRegistration(fromUser, formattedPhone);
+        await sendTelegramMessage(chatId, `✅ <i>Telefon raqamingiz qabul qilindi:</i> <code>${formattedPhone}</code>`, { remove_keyboard: true }, userId);
+        const successMsg =
+          `🎉 <b>Tabriklaymiz, ${fromUser.first_name || 'foydalanuvchi'}!</b>\n\n` +
+          `✅ <b>Telefon raqamingiz tasdiqlandi:</b> <code>${formattedPhone}</code>\n` +
+          `💎 <b>Sizga 1 kunlik CHEKSIZ PREMIUM va AI sinov muddati taqdim etildi!</b>\n\n` +
+          `Endi Moliya Mini App orqali xarajatlaringizni to'liq boshqarishingiz, xarajatlarni yozishingiz yoki ovozli xabar yuborishingiz mumkin.\n\n` +
+          `👇 <i>Pastdagi tugma orqali Mini Appni ochishingiz mumkin:</i>`;
+        await sendTelegramMessage(chatId, successMsg, getMainAppKeyboard(appUrl), userId);
+        return res.status(200).json({ status: 'ok' });
+      }
+    }
 
     if (!userHasPhone) {
       const phoneRequestText =
@@ -1782,8 +1835,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ status: 'ok' });
     }
 
-    // ── Voice Message (Audio Parsing) ───────────────────────────
-    if (message.voice) {
+    // ── Voice & Audio Message (Audio Parsing) ───────────────────
+    const audioMsg = message.voice || message.audio;
+    if (audioMsg) {
       const quota = await checkAiQuota(userId);
       if (!quota.allowed) {
         const quotaNotice = quota.isPremium
@@ -1808,13 +1862,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       sendChatAction(chatId, 'record_voice').catch(() => {});
       const statusMsg = await sendTelegramMessage(
         chatId,
-        `🎙️ <b>Ovozli xabar qabul qilindi...</b>\n⏳ <i>Ovoz yuklab olinmoqda va tahlil qilinmoqda...</i>`,
+        message.voice
+          ? `🎙️ <b>Ovozli xabar qabul qilindi...</b>\n⏳ <i>Ovoz yuklab olinmoqda va tahlil qilinmoqda...</i>`
+          : `🎵 <b>Audio qabul qilindi...</b>\n⏳ <i>Audio tahlil qilinmoqda...</i>`,
         undefined,
         userId
       );
       const statusMsgId = statusMsg?.result?.message_id;
 
-      const fileUrl = await getTelegramFileUrl(message.voice.file_id);
+      const fileUrl = await getTelegramFileUrl(audioMsg.file_id);
       if (fileUrl) {
         try {
           const audioRes = await fetch(fileUrl);
@@ -1875,7 +1931,7 @@ Today: ${srvCtx.currentDate}. Output valid JSON only.`;
                       parts: [
                         {
                           inlineData: {
-                            mimeType: message.voice.mime_type || 'audio/ogg',
+                            mimeType: audioMsg.mime_type || (message.voice ? 'audio/ogg' : 'audio/mp3'),
                             data: base64Audio
                           }
                         },
@@ -1946,11 +2002,14 @@ Today: ${srvCtx.currentDate}. Output valid JSON only.`;
               const isIncome = parsed.type === 'income';
               const signedAmount = isIncome ? rawAmt : -rawAmt;
 
+              const defaultTitle = message.voice ? 'Ovozli xarajat' : 'Audio xarajat';
+              const defaultNote = message.voice ? 'Ovozli kiritilgan' : 'Audio orqali kiritilgan';
+
               const newTx = {
                 id: txId,
                 type: parsed.type || 'expense',
-                name: parsed.title || parsed.note || 'Ovozli xarajat',
-                title: parsed.title || parsed.note || 'Ovozli xarajat',
+                name: parsed.title || parsed.note || defaultTitle,
+                title: parsed.title || parsed.note || defaultTitle,
                 category: parsed.category || 'Boshqa',
                 amount: signedAmount,
                 date: safeD.date,
@@ -1958,7 +2017,7 @@ Today: ${srvCtx.currentDate}. Output valid JSON only.`;
                 month: safeD.month,
                 year: safeD.year,
                 time: safeD.time,
-                note: parsed.note || 'Ovozli kiritilgan',
+                note: parsed.note || defaultNote,
                 debtWho: parsed.debtWho || ''
               };
 
@@ -1974,7 +2033,7 @@ Today: ${srvCtx.currentDate}. Output valid JSON only.`;
                 }
 
                 await saveBotTransaction(userId, newTx);
-                await recordAiUsage(userId, 'text', parsed.note || 'Voice expense', quota.isPremium, quota.usedCount, 'telegram_bot');
+                await recordAiUsage(userId, 'text', parsed.note || (message.voice ? 'Voice expense' : 'Audio expense'), quota.isPremium, quota.usedCount, 'telegram_bot');
 
                 const isInc = newTx.type === 'income';
                 const successCard = buildTransactionSuccessCard(newTx, isInc, txId);
@@ -1997,11 +2056,13 @@ Today: ${srvCtx.currentDate}. Output valid JSON only.`;
             }
           }
         } catch (voiceErr) {
-          console.error('[BOT] Voice parsing error:', voiceErr);
+          console.error('[BOT] Voice/Audio parsing error:', voiceErr);
         }
       }
 
-      const unparsedMsg = `🎙 <b>Ovozli xabar tahlil qilindi, lekin summa aniqlanmadi.</b>\n\nIltimos, xarajat summasi bilan aniqroq gapiring (masalan: <i>"taksiga 30 ming"</i>) yoki matn orqali yozing.`;
+      const unparsedMsg = message.voice
+        ? `🎙 <b>Ovozli xabar tahlil qilindi, lekin summa aniqlanmadi.</b>\n\nIltimos, xarajat summasi bilan aniqroq gapiring (masalan: <i>"taksiga 30 ming"</i>) yoki matn orqali yozing.`
+        : `🎵 <b>Audio tahlil qilindi, lekin xarajat summasi aniqlanmadi.</b>\n\nIltimos, xarajat summasi bilan aniqroq gapiring yoki matn orqali yozing.`;
       const unparsedKb = {
         inline_keyboard: [
           [{ text: "📱 Moliya Mini Appni ochish", web_app: { url: appUrl } }]
@@ -2221,20 +2282,7 @@ Today: ${srvCtx.currentDate}. Output valid JSON only.`;
       return res.status(200).json({ status: 'ok' });
     }
 
-    // ── Audio Message (Non-voice) ───────────────────────────────
-    if (message.audio) {
-      await sendTelegramMessage(
-        chatId,
-        `🎵 <b>Audio qabul qilindi.</b>\n\nOvozli xarajat kiritish uchun ovozli xabar (voice message) yuborishingiz mumkin 🎙`,
-        {
-          inline_keyboard: [
-            [{ text: "📱 Moliya Mini App", web_app: { url: appUrl } }]
-          ]
-        },
-        userId
-      );
-      return res.status(200).json({ status: 'ok' });
-    }
+
 
     // ── Video Message ───────────────────────────────────────────
     if (message.video) {

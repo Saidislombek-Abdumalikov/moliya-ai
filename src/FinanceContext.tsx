@@ -954,7 +954,9 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         .eq('id', targetUserId)
         .maybeSingle();
 
-      const existingPhone = dbUser?.phone || updated.phone || null;
+      const isValidPhone = (p: any) => typeof p === 'string' && p.trim().length >= 7 && p !== '—' && p !== '-' && p !== 'null' && p !== 'undefined';
+      const existingPhone = isValidPhone(updated.phone) ? updated.phone : (isValidPhone(dbUser?.phone) ? dbUser.phone : (updated.phone || null));
+      if (existingPhone) updated.phone = existingPhone;
       const existingTgId = dbUser?.telegram_id || updated.telegramId || null;
 
       const isDbVipActive = Boolean(
