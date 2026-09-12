@@ -156,10 +156,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           updated_at: nowStr
         };
 
-        const { data: createdUser } = await supabase.from('users').upsert(newRecord, { onConflict: 'id' }).select().single();
-        userDoc = createdUser || newRecord;
+        const { data: createdUser } = await supabase.from('users').upsert(newRecord, {
+          onConflict: 'id',
+          ignoreDuplicates: true  // SAFETY: Never overwrite existing user data in race conditions
+        }).select().single();
+        // If insert was ignored (user appeared between check and insert), re-fetch
+        if (!createdUser) {
+          const { data: refetched } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
+          userDoc = refetched || newRecord;
+        } else {
+          userDoc = createdUser;
+        }
       }
-
       // ── Effective Access Calculation (replaces destructive trial reset) ──
       // Import effectiveAccess inline to avoid circular deps at module level
       const { effectiveAccess } = await import('./_accessHelper.js');

@@ -368,12 +368,24 @@ async function resolveCanonicalUser(fromUser: any) {
     updated_at: now
   };
 
-  const { error: upErr } = await supabase.from('users').upsert(newPayload, { onConflict: 'id' });
+  const { data: created, error: upErr } = await supabase.from('users').upsert(newPayload, {
+    onConflict: 'id',
+    ignoreDuplicates: true  // SAFETY: Never overwrite existing user data in race conditions
+  }).select().maybeSingle();
   if (upErr) {
     console.error('[BOT] Error creating initial user record:', upErr.message);
   }
 
-  return { user: newPayload, userId, isBlocked: false, isRegistered: false, isNew: true, hasPhone: false };
+  // If insert was ignored (user appeared between check and insert), re-fetch existing
+  if (!created) {
+    const { data: refetched } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
+    if (refetched) {
+      const hasPhone = isValidPhoneNumber(refetched.phone) || isValidPhoneNumber(refetched.onboarding?.phone);
+      return { user: refetched, userId, isBlocked: false, isRegistered: hasPhone, isNew: false, hasPhone };
+    }
+  }
+
+  return { user: created || newPayload, userId, isBlocked: false, isRegistered: false, isNew: true, hasPhone: false };
 }
 
 // ── Complete Phone Registration & Grant 1-Day Trial ─────────
