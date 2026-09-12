@@ -385,8 +385,15 @@ async function completePhoneRegistration(fromUser: any, phoneNumber: string) {
   const fullName = [fromUser.first_name, fromUser.last_name].filter(Boolean).join(' ') || 'Foydalanuvchi';
   const username = fromUser.username ? `@${fromUser.username}` : null;
 
-  // Clean registration starting completely fresh from zero (no old transactions/cards restored)
+  // IMPORTANT: Fetch existing user data first to PRESERVE transactions and cards
+  const { data: existingUser } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
+  const existingOb = existingUser?.onboarding || {};
+  const existingTransactions = Array.isArray(existingUser?.transactions) ? existingUser.transactions : [];
+  const existingCards = Array.isArray(existingUser?.cards) ? existingUser.cards : [];
+  const isFirstRegistration = !existingUser?.phone;
+
   const updatedOnboarding = {
+    ...existingOb,  // Preserve existing onboarding data (bot_messages, etc.)
     completed: false,
     language: 'uz',
     name: fullName,
@@ -394,28 +401,32 @@ async function completePhoneRegistration(fromUser: any, phoneNumber: string) {
     telegram: username,
     telegramId: tgId,
     registration_status: 'completed',
-    trial_started_at: now.toISOString(),
-    trial_ends_at: trialEndsAt,
-    privacy_consent: { accepted: true, version: '1.0', accepted_at: now.toISOString(), method: 'auto_on_registration' }
+    trial_started_at: existingOb.trial_started_at || now.toISOString(),
+    trial_ends_at: existingOb.trial_ends_at || trialEndsAt,
+    privacy_consent: existingOb.privacy_consent || { accepted: true, version: '1.0', accepted_at: now.toISOString(), method: 'auto_on_registration' }
   };
 
-  const updatePayload = {
+  const updatePayload: any = {
     id: userId,
     name: fullName,
     telegram: username,
     telegram_id: tgId,
     phone: phoneNumber,
-    is_premium: true, // Fresh 1-Day Unlimited Premium Trial!
-    premium_expires_at: trialEndsAt,
-    ai_limit: null, // Unlimited for trial
-    ai_query_count: 0,
     platform: 'telegram',
-    cards: [], // Fresh account: zero cards
-    transactions: [], // Fresh account: zero transactions
+    cards: existingCards,               // PRESERVE existing cards
+    transactions: existingTransactions, // PRESERVE existing transactions
     onboarding: updatedOnboarding,
-    created_at: now.toISOString(),
     updated_at: now.toISOString()
   };
+
+  // Only grant fresh trial for FIRST-TIME registration (not re-registration)
+  if (isFirstRegistration) {
+    updatePayload.is_premium = true;
+    updatePayload.premium_expires_at = trialEndsAt;
+    updatePayload.ai_limit = null;
+    updatePayload.ai_query_count = 0;
+    updatePayload.created_at = now.toISOString();
+  }
 
   const { error: saveErr } = await supabase.from('users').upsert(updatePayload, { onConflict: 'id' });
   if (saveErr) {
@@ -1196,7 +1207,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             accepted_at: new Date().toISOString(),
             source: 'telegram'
           };
-          const { data: currUser } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
+          const { data: currUser } = await supabase.from('users').select('onboarding, phone').eq('id', userId).maybeSingle();
           const updatedOb = {
             ...(currUser?.onboarding || {}),
             privacy_consent: consentData
@@ -1207,6 +1218,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }).eq('id', userId);
 
           await answerCallbackQuery(cb.id, "✅ Maxfiylik siyosati qabul qilindi!");
+
+          // If user already has a verified phone, don't ask again — just confirm
+          const alreadyHasPhone = isValidPhoneNumber(currUser?.phone) || isValidPhoneNumber(currUser?.onboarding?.phone);
+          if (alreadyHasPhone) {
+            await editTelegramMessage(
+              chatId,
+              cb.message.message_id,
+              `✅ <b>Maxfiylik siyosati qabul qilindi.</b> Rahmat!\n\nBotdan foydalanishingiz mumkin. Xarajat yozish uchun oddiy matn yuboring.`,
+              undefined,
+              userId
+            );
+            return res.status(200).json({ status: 'ok' });
+          }
+
           await editTelegramMessage(
             chatId,
             cb.message.message_id,
@@ -1215,7 +1240,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             userId
           );
 
-          // Send phone request keyboard
+          // Send phone request keyboard — ONLY for users without a phone
           await sendTelegramMessage(
             chatId,
             `⚠️ <b>Botdan to'liq foydalanish uchun telefon raqamingizni tasdiqlang:</b>\n\nPastdagi tugmani bosing:`,
@@ -1492,7 +1517,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const rawPhone = contact.phone_number || '';
       const phone = rawPhone.startsWith('+') ? rawPhone : `+${rawPhone}`;
 
-      // Complete registration & grant 1-day trial
+      // If user already has a verified phone, just acknowledge — don't re-register
+      const alreadyRegistered = isValidPhoneNumber(user?.phone) || isValidPhoneNumber(user?.onboarding?.phone);
+      if (alreadyRegistered) {
+        await sendTelegramMessage(chatId, `✅ <i>Telefon raqamingiz allaqachon tasdiqlangan.</i>`, { remove_keyboard: true }, userId);
+        await sendTelegramMessage(chatId,
+          `✅ <b>Siz allaqachon ro'yxatdan o'tgansiz!</b>\n\nXarajat yozish uchun oddiy matn yuboring yoki Mini Appdan foydalaning.`,
+          getMainAppKeyboard(appUrl), userId);
+        return res.status(200).json({ status: 'ok' });
+      }
+
+      // Complete registration & grant 1-day trial (first-time only)
       await completePhoneRegistration(fromUser, phone);
 
       const successMsg =
