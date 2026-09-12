@@ -320,7 +320,7 @@ function parseCustomPolicy(text: string) {
   let currentSection: any = null;
 
   const getIcon = (idx: number) => {
-    const icons = ['🛡️', '📱', '🎯', '🤖', '🔒', '🗑️', '⚖️', '📋', '💎', '🔄'];
+    const icons = ['🛡️', '📱', '🎯', '🤖', '🔒', '🗑️', '⚖️', '📋', '💎', '🔄', '🌐', '📝', '📞', '✅'];
     return icons[idx % icons.length];
   };
 
@@ -328,12 +328,24 @@ function parseCustomPolicy(text: string) {
     const trimmed = line.trim();
     if (!trimmed) continue;
 
+    if (trimmed.startsWith('# ') && !trimmed.match(/^#+\s*\d+/)) {
+      if (currentSection) sections.push(currentSection);
+      currentSection = {
+        icon: '📋',
+        num: 'Hujjat',
+        title: trimmed.replace(/^#+\s*/, ''),
+        content: '',
+        bullets: []
+      };
+      continue;
+    }
+
     if (trimmed.startsWith('### ') || trimmed.startsWith('## ') || trimmed.startsWith('# ')) {
       if (currentSection) sections.push(currentSection);
       const titleRaw = trimmed.replace(/^#+\s*/, '');
-      const matchNum = titleRaw.match(/^(\d+[\.\)]?\s*)(.*)/);
+      const matchNum = titleRaw.match(/^(\d+(\.\d+)?[\.\)]?\s*)(.*)/);
       const num = matchNum ? matchNum[1].replace(/[\.\)]\s*$/, '') : String(sections.length + 1);
-      const title = matchNum ? matchNum[2] : titleRaw;
+      const title = matchNum ? matchNum[3] : titleRaw;
       currentSection = {
         icon: getIcon(sections.length),
         num,
