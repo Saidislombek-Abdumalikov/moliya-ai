@@ -252,7 +252,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const tgName = [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') || 'Foydalanuvchi'
       const tgUsername = tgUser.username ? `@${tgUser.username}` : '@moliya_user'
       return {
-        completed: true,
+        completed: false,
+        tour_completed: false,
         language: tgUser.language_code || 'uz',
         name: tgName,
         phone: '',
@@ -367,9 +368,16 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       localStorage.setItem('user_session_token_v1', data.sessionToken)
     }
     localStorage.setItem('user_logged_in_v1', 'true')
-    // Only mark onboarding as completed if the user has explicitly finished it in database or locally
+    // Authoritative onboarding and tour completion state from DB
     if (data.onboarding?.completed === true) {
       localStorage.setItem('user_onboarding_completed_v1', 'true')
+    } else {
+      localStorage.removeItem('user_onboarding_completed_v1')
+    }
+    if (data.onboarding?.tour_completed === true) {
+      localStorage.setItem('user_tour_completed_v2', 'true')
+    } else {
+      localStorage.removeItem('user_tour_completed_v2')
     }
     const acc = computeAccessState({ ...data, ...(data.onboarding || {}) })
     setAccessState(acc)
@@ -945,6 +953,12 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     setOnboarding(updated);
     localStorage.setItem('user_onboarding_v1', JSON.stringify(updated));
+    if (updated.completed === true) {
+      localStorage.setItem('user_onboarding_completed_v1', 'true');
+    }
+    if (updated.tour_completed === true) {
+      localStorage.setItem('user_tour_completed_v2', 'true');
+    }
     window.dispatchEvent(new Event('user_onboarding_updated'));
 
     // 2. Authoritative persistence to Supabase

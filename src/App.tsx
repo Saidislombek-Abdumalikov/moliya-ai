@@ -44,7 +44,17 @@ export default function App() {
   // Determine stage ONLY after auth check completes
   useEffect(() => {
     if (!isAuthReady) return;
-    const isOnboarded = localStorage.getItem('user_onboarding_completed_v1') === 'true' || onboarding?.completed === true;
+    
+    // DB state is authoritative
+    let isOnboarded = false;
+    if (onboarding && typeof onboarding.completed === 'boolean') {
+      isOnboarded = onboarding.completed;
+      if (!isOnboarded) {
+        localStorage.removeItem('user_onboarding_completed_v1');
+      }
+    } else {
+      isOnboarded = localStorage.getItem('user_onboarding_completed_v1') === 'true';
+    }
 
     if (isOnboarded) {
       setStage('app');
@@ -59,9 +69,8 @@ export default function App() {
     const tourSeen = localStorage.getItem('user_tour_completed_v2') === 'true';
     const dbTourDone = onboarding?.tour_completed === true;
 
-    if (onboarding && onboarding.tour_completed === false) {
-      // Account was deleted/re-registered fresh: clear stale local cache & trigger tour
-      localStorage.removeItem('user_tour_completed_v2');
+    // Show tour if user has not completed the tour in DB or locally
+    if (onboarding && onboarding.tour_completed !== true) {
       setShowTour(true);
     } else if (!tourSeen && !dbTourDone) {
       setShowTour(true);
@@ -71,7 +80,16 @@ export default function App() {
   // Auto-transition to app/onboarding when user gets authenticated or logs out
   useEffect(() => {
     const checkLoggedIn = () => {
-      const isOnboarded = localStorage.getItem('user_onboarding_completed_v1') === 'true' || onboarding?.completed === true;
+      let isOnboarded = false;
+      if (onboarding && typeof onboarding.completed === 'boolean') {
+        isOnboarded = onboarding.completed;
+        if (!isOnboarded) {
+          localStorage.removeItem('user_onboarding_completed_v1');
+        }
+      } else {
+        isOnboarded = localStorage.getItem('user_onboarding_completed_v1') === 'true';
+      }
+
       if (isOnboarded) {
         setStage('app');
       } else if (isAuthReady) {

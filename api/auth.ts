@@ -127,6 +127,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         const newOnboarding = {
           completed: false,
+          tour_completed: false,
           language: tgUser.language_code || 'uz',
           name: tgName,
           telegram: tgUsername,
@@ -208,7 +209,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const updatedOnboarding = {
         ...(userDoc?.onboarding || {}),
-        completed: userDoc?.onboarding?.completed || false,
+        completed: userDoc?.onboarding?.completed === true,
+        tour_completed: userDoc?.onboarding?.tour_completed === true,
         language: userDoc?.language || tgUser.language_code || 'uz',
         name: tgName,
         phone: userDoc?.phone || '',

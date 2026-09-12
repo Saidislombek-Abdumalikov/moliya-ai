@@ -238,6 +238,7 @@ export default function Onboarding({ onComplete }: Props) {
   const [selectedGoal, setSelectedGoal] = useState<number>(3000000)
   const [customGoalInput, setCustomGoalInput] = useState('')
   const [isCustomGoal, setIsCustomGoal] = useState(false)
+  const [selectedAiQuestion, setSelectedAiQuestion] = useState<number | null>(0)
   const [showPolicy, setShowPolicy] = useState(false)
   const [policyTab, setPolicyTab] = useState<'privacy' | 'terms'>('privacy')
 

@@ -85,8 +85,6 @@ export default class ErrorBoundary extends Component<Props, State> {
             </button>
             <button
               onClick={() => {
-                localStorage.setItem('user_onboarding_completed_v1', 'true');
-                localStorage.setItem('user_tour_completed_v2', 'true');
                 this.setState({ hasError: false, error: null });
                 window.location.href = window.location.pathname;
               }}
