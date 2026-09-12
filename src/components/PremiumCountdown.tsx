@@ -1,119 +1,174 @@
-﻿import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { motion } from 'motion/react'
 
-export interface CountdownResult {
+export interface PremiumDaysInfo {
+  isPremium: boolean
+  isLifetime: boolean
+  isExpired: boolean
+  remainingDays: number
+  badgeLabel: string
+  remainingText: string
+  formattedExpiry: string
+  statusBadge: string
+  fullPlanName: string
+}
+
+export interface CountdownResult extends PremiumDaysInfo {
   days: number
   hours: number
   minutes: number
   seconds: number
-  isExpired: boolean
-  isLifetime: boolean
   badgeText: string
   fullText: string
 }
 
-export function usePremiumCountdown(
-  expiresAt: string | null | undefined,
-  isLifetime: boolean = false
-): CountdownResult {
-  const calculate = (): CountdownResult => {
-    if (isLifetime || !expiresAt) {
-      return {
-        days: 0,
-        hours: 0,
-        minutes: 0,
-        seconds: 0,
-        isExpired: false,
-        isLifetime: true,
-        badgeText: 'Doimiy VIP',
-        fullText: 'Cheksiz / Doimiy obuna',
-      }
-    }
-
-    const expTime = new Date(expiresAt).getTime()
-    const now = Date.now()
-    const diff = expTime - now
-
-    if (diff <= 0) {
-      return {
-        days: 0,
-        hours: 0,
-        minutes: 0,
-        seconds: 0,
-        isExpired: true,
-        isLifetime: false,
-        badgeText: 'Muddati tugagan',
-        fullText: 'Obuna muddati tugagan',
-      }
-    }
-
-    const totalSeconds = Math.floor(diff / 1000)
-    const days = Math.floor(totalSeconds / 86400)
-    const hours = Math.floor((totalSeconds % 86400) / 3600)
-    const minutes = Math.floor((totalSeconds % 3600) / 60)
-    const seconds = totalSeconds % 60
-
-    let badgeText = ''
-    if (days >= 1) {
-      badgeText = `${days}k ${hours}s ${minutes}d`
-    } else if (hours >= 1) {
-      badgeText = `${hours}s ${minutes}d ${seconds}s`
-    } else {
-      badgeText = `${minutes}d ${seconds}s`
-    }
-
-    const parts: string[] = []
-    if (days > 0) parts.push(`${days} kun`)
-    if (hours > 0 || days > 0) parts.push(`${hours} soat`)
-    parts.push(`${minutes} daqiqa`)
-    parts.push(`${seconds} soniya`)
-
-    return {
-      days,
-      hours,
-      minutes,
-      seconds,
-      isExpired: false,
-      isLifetime: false,
-      badgeText,
-      fullText: parts.join(' '),
-    }
+/**
+ * Format clean localized expiration date string (e.g. "24-sentabr, 2026")
+ * Does not include distracting seconds or minutes.
+ */
+export function formatExpiryDate(isoDate: string | null | undefined, lang: string = 'uz'): string {
+  if (!isoDate) {
+    if (lang === 'ru') return 'Бессрочно'
+    if (lang === 'en') return 'Lifetime'
+    if (lang === 'uz_cyrl') return 'Чексиз'
+    return 'Cheksiz / Doimiy'
   }
 
-  const [countdown, setCountdown] = useState<CountdownResult>(calculate)
-
-  useEffect(() => {
-    setCountdown(calculate())
-    const interval = setInterval(() => {
-      setCountdown(calculate())
-    }, 1000)
-
-    return () => clearInterval(interval)
-  }, [expiresAt, isLifetime])
-
-  return countdown
-}
-
-/**
- * Format Uzbek date string: "11-oktabr, 2026 21:00"
- */
-export function formatUzbekDateTime(isoDate: string | null | undefined): string {
-  if (!isoDate) return 'Cheksiz / Doimiy'
   try {
     const d = new Date(isoDate)
     if (isNaN(d.getTime())) return isoDate
-    const months = [
+
+    const monthsUz = [
       'yanvar', 'fevral', 'mart', 'aprel', 'may', 'iyun',
       'iyul', 'avgust', 'sentabr', 'oktabr', 'noyabr', 'dekabr'
     ]
+    const monthsUzCyrl = [
+      'январ', 'феврал', 'март', 'апрел', 'май', 'июн',
+      'июл', 'август', 'сентабр', 'октабр', 'ноябр', 'декабр'
+    ]
+    const monthsRu = [
+      'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+      'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'
+    ]
+    const monthsEn = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    ]
+
     const day = d.getDate()
-    const month = months[d.getMonth()]
+    const month = d.getMonth()
     const year = d.getFullYear()
-    const hours = String(d.getHours()).padStart(2, '0')
-    const mins = String(d.getMinutes()).padStart(2, '0')
-    return `${day}-${month}, ${year} ${hours}:${mins}`
+
+    if (lang === 'ru') return `${day} ${monthsRu[month]} ${year} г.`
+    if (lang === 'en') return `${monthsEn[month]} ${day}, ${year}`
+    if (lang === 'uz_cyrl') return `${day}-${monthsUzCyrl[month]}, ${year}`
+    return `${day}-${monthsUz[month]}, ${year}`
   } catch {
     return isoDate
+  }
+}
+
+/**
+ * Backwards-compatible alias for formatExpiryDate
+ */
+export function formatUzbekDateTime(isoDate: string | null | undefined): string {
+  return formatExpiryDate(isoDate, 'uz')
+}
+
+/**
+ * Centralized deterministic day-based premium calculation
+ * Single source of truth across the entire Mini App.
+ */
+export function getPremiumDaysInfo(
+  expiresAt: string | null | undefined,
+  isLifetime: boolean = false,
+  lang: string = 'uz'
+): PremiumDaysInfo {
+  if (isLifetime || !expiresAt) {
+    return {
+      isPremium: true,
+      isLifetime: true,
+      isExpired: false,
+      remainingDays: 0,
+      badgeLabel: '⭐ Full Premium',
+      remainingText: lang === 'ru' ? 'Бессрочный' : (lang === 'en' ? 'Lifetime' : (lang === 'uz_cyrl' ? 'Чексиз / Доимий' : 'Cheksiz / Doimiy')),
+      formattedExpiry: lang === 'ru' ? 'Бессрочный доступ' : (lang === 'en' ? 'Lifetime access' : (lang === 'uz_cyrl' ? 'Чексиз муддат' : 'Cheksiz obuna')),
+      statusBadge: lang === 'ru' ? 'Активен' : (lang === 'en' ? 'Active' : 'Faol'),
+      fullPlanName: 'Full Premium'
+    }
+  }
+
+  const expTime = new Date(expiresAt).getTime()
+  const now = Date.now()
+  const diff = expTime - now
+
+  if (diff <= 0) {
+    return {
+      isPremium: false,
+      isLifetime: false,
+      isExpired: true,
+      remainingDays: 0,
+      badgeLabel: 'Premium',
+      remainingText: lang === 'ru' ? 'Срок действия истек' : (lang === 'en' ? 'Premium expired' : (lang === 'uz_cyrl' ? 'Премиум муддати тугаган' : 'Premium muddati tugagan')),
+      formattedExpiry: formatExpiryDate(expiresAt, lang),
+      statusBadge: lang === 'ru' ? 'Истек' : (lang === 'en' ? 'Expired' : 'Muddati tugagan'),
+      fullPlanName: 'Full Premium'
+    }
+  }
+
+  // Calculate remaining days cleanly with ceiling, never negative
+  const remainingDays = Math.max(1, Math.ceil(diff / (1000 * 60 * 60 * 24)))
+
+  let remainingText = ''
+  if (remainingDays === 1) {
+    remainingText = lang === 'ru' ? 'Остался 1 день' : (lang === 'en' ? '1 day remaining' : (lang === 'uz_cyrl' ? '1 кун қолди' : '1 kun qoldi'))
+  } else {
+    remainingText = lang === 'ru' ? `Осталось ${remainingDays} дн.` : (lang === 'en' ? `${remainingDays} days remaining` : (lang === 'uz_cyrl' ? `${remainingDays} кун қолди` : `${remainingDays} kun qoldi`))
+  }
+
+  return {
+    isPremium: true,
+    isLifetime: false,
+    isExpired: false,
+    remainingDays,
+    badgeLabel: '⭐ Full Premium',
+    remainingText,
+    formattedExpiry: formatExpiryDate(expiresAt, lang),
+    statusBadge: lang === 'ru' ? 'Активен' : (lang === 'en' ? 'Active' : 'Faol'),
+    fullPlanName: 'Full Premium'
+  }
+}
+
+/**
+ * Hook to retrieve day-based premium status.
+ * Replaces high-frequency 1000ms timer with clean relaxed periodic check.
+ */
+export function usePremiumCountdown(
+  expiresAt: string | null | undefined,
+  isLifetime: boolean = false,
+  lang: string = 'uz'
+): CountdownResult {
+  const [info, setInfo] = useState<PremiumDaysInfo>(() => getPremiumDaysInfo(expiresAt, isLifetime, lang))
+
+  useEffect(() => {
+    setInfo(getPremiumDaysInfo(expiresAt, isLifetime, lang))
+
+    // Check once every 60 seconds (no need for 1-second CPU burn)
+    const interval = setInterval(() => {
+      setInfo(getPremiumDaysInfo(expiresAt, isLifetime, lang))
+    }, 60000)
+
+    return () => clearInterval(interval)
+  }, [expiresAt, isLifetime, lang])
+
+  return {
+    ...info,
+    days: info.remainingDays,
+    hours: 0,
+    minutes: 0,
+    seconds: 0,
+    badgeText: info.remainingText,
+    fullText: info.remainingText
   }
 }
 
@@ -124,9 +179,8 @@ export const PremiumCountdownBadge: React.FC<{
   expiresAt: string | null | undefined
   isLifetime?: boolean
   onClick?: () => void
-}> = ({ expiresAt, isLifetime, onClick }) => {
-  const cd = usePremiumCountdown(expiresAt, isLifetime)
-
+  lang?: string
+}> = ({ onClick }) => {
   return (
     <motion.button
       whileHover={{ scale: 1.03 }}
@@ -145,28 +199,30 @@ export const PremiumCountdownBadge: React.FC<{
         color: '#92400E',
         fontSize: 12,
         fontFamily: 'inherit',
-        boxShadow: '0 2px 10px rgba(245, 158, 11, 0.15)',
+        boxShadow: '0 2px 8px rgba(245, 158, 11, 0.15)',
         transition: 'all 0.2s ease',
         userSelect: 'none',
       }}
     >
-      <span style={{ fontSize: 13 }}>👑</span>
-      <span style={{ letterSpacing: -0.2 }}>
-        VIP · {cd.badgeText}
-      </span>
+      <span style={{ fontSize: 13 }}>⭐</span>
+      <span style={{ letterSpacing: -0.2 }}>Full Premium</span>
     </motion.button>
   )
 }
 
+export const PremiumNavBadge = PremiumCountdownBadge
+
 /**
- * 4-Segment Live Digital Countdown Blocks
- * [ Days ] : [ Hours ] : [ Mins ] : [ Secs ]
+ * Clean Day Status Card for Modals (HomeScreen and ProfileScreen)
+ * Communicates duration strictly in DAYS.
+ * Eliminates digit counter boxes and ticking seconds.
  */
 export const PremiumCountdownTimer: React.FC<{
   expiresAt: string | null | undefined
   isLifetime?: boolean
-}> = ({ expiresAt, isLifetime }) => {
-  const cd = usePremiumCountdown(expiresAt, isLifetime)
+  lang?: string
+}> = ({ expiresAt, isLifetime, lang = 'uz' }) => {
+  const cd = usePremiumCountdown(expiresAt, isLifetime, lang)
 
   if (cd.isLifetime) {
     return (
@@ -182,21 +238,14 @@ export const PremiumCountdownTimer: React.FC<{
       >
         <div style={{ fontSize: 24, marginBottom: 4 }}>✨ 👑 ✨</div>
         <p style={{ fontSize: 16, fontWeight: 800, color: '#6B21A8', marginBottom: 4 }}>
-          Cheksiz Doimiy VIP Obuna
+          {lang === 'ru' ? 'Бессрочный Full Premium' : (lang === 'en' ? 'Lifetime Full Premium' : (lang === 'uz_cyrl' ? 'Чексиз Доимий VIP Обуна' : 'Cheksiz Doimiy VIP Obuna'))}
         </p>
         <p style={{ fontSize: 12, color: '#7E22CE', opacity: 0.85 }}>
-          Hech qanday muddat cheklovisiz barcha AI imkoniyatlari faol!
+          {lang === 'ru' ? 'Все AI функции доступны без ограничений по времени!' : (lang === 'en' ? 'All AI features are active with no expiration date!' : (lang === 'uz_cyrl' ? 'Ҳеч қандай муддат чекловсиз барча AI имкониятлари фаол!' : 'Hech qanday muddat cheklovisiz barcha AI imkoniyatlari faol!'))}
         </p>
       </div>
     )
   }
-
-  const timeBlocks = [
-    { label: 'Kun', value: String(cd.days).padStart(2, '0') },
-    { label: 'Soat', value: String(cd.hours).padStart(2, '0') },
-    { label: 'Daqiqa', value: String(cd.minutes).padStart(2, '0') },
-    { label: 'Soniya', value: String(cd.seconds).padStart(2, '0') },
-  ]
 
   return (
     <div
@@ -204,7 +253,7 @@ export const PremiumCountdownTimer: React.FC<{
         background: 'linear-gradient(135deg, #FFFBEB 0%, #FEF3C7 100%)',
         border: '1.5px solid #FDE68A',
         borderRadius: 20,
-        padding: '16px 16px',
+        padding: '16px 20px',
         marginBottom: 20,
         boxShadow: '0 4px 14px rgba(245, 158, 11, 0.08)',
       }}
@@ -214,12 +263,12 @@ export const PremiumCountdownTimer: React.FC<{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          marginBottom: 12,
+          marginBottom: 8,
         }}
       >
         <span
           style={{
-            fontSize: 11,
+            fontSize: 12,
             fontWeight: 800,
             textTransform: 'uppercase',
             letterSpacing: 0.5,
@@ -229,74 +278,57 @@ export const PremiumCountdownTimer: React.FC<{
             gap: 5,
           }}
         >
-          <span>⏳</span> Tugashiga qoldi:
+          <span>👑</span> Full Premium
         </span>
-        {expiresAt && (
-          <span style={{ fontSize: 11, fontWeight: 600, color: '#92400E', opacity: 0.85 }}>
-            {formatUzbekDateTime(expiresAt)} gacha
-          </span>
-        )}
+        <span
+          style={{
+            fontSize: 11,
+            fontWeight: 800,
+            padding: '3px 9px',
+            borderRadius: 12,
+            background: cd.isExpired ? '#FEE2E2' : '#D1FAE5',
+            color: cd.isExpired ? '#DC2626' : '#059669',
+            textTransform: 'uppercase',
+            letterSpacing: 0.4,
+          }}
+        >
+          {cd.statusBadge}
+        </span>
       </div>
 
       <div
         style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
-          gap: 8,
+          fontSize: 22,
+          fontWeight: 900,
+          color: '#78350F',
+          letterSpacing: -0.4,
+          marginBottom: 4,
         }}
       >
-        {timeBlocks.map((block, i) => (
-          <div
-            key={i}
-            style={{
-              background: '#FFFFFF',
-              border: '1.5px solid #FCD34D',
-              borderRadius: 14,
-              padding: '10px 4px',
-              textAlign: 'center',
-              boxShadow: '0 2px 6px rgba(245, 158, 11, 0.06)',
-            }}
-          >
-            <div
-              style={{
-                fontSize: 22,
-                fontWeight: 900,
-                color: '#78350F',
-                letterSpacing: -0.5,
-                lineHeight: 1.1,
-                fontVariantNumeric: 'tabular-nums',
-              }}
-            >
-              {block.value}
-            </div>
-            <div
-              style={{
-                fontSize: 10,
-                fontWeight: 700,
-                color: '#B45309',
-                marginTop: 3,
-                textTransform: 'uppercase',
-                letterSpacing: 0.3,
-              }}
-            >
-              {block.label}
-            </div>
-          </div>
-        ))}
+        {cd.remainingText}
+      </div>
+
+      <div style={{ fontSize: 12, fontWeight: 600, color: '#92400E', opacity: 0.85 }}>
+        {lang === 'ru' ? 'Срок действия: ' : (lang === 'en' ? 'Expires: ' : (lang === 'uz_cyrl' ? 'Амал қилиш муддати: ' : 'Amal qilish muddati: '))}
+        <span style={{ fontWeight: 700 }}>{cd.formattedExpiry}</span>
       </div>
     </div>
   )
 }
 
+export const PremiumDaysCard = PremiumCountdownTimer
+
 /**
  * Interactive Banner for ProfileScreen VIP Card
+ * Displays clean plan name, days remaining, and expiration date.
  */
 export const PremiumCountdownBanner: React.FC<{
   expiresAt: string | null | undefined
   isLifetime?: boolean
   onClick?: () => void
-}> = ({ expiresAt, isLifetime, onClick }) => {
-  const cd = usePremiumCountdown(expiresAt, isLifetime)
+  lang?: string
+}> = ({ expiresAt, isLifetime, onClick, lang = 'uz' }) => {
+  const cd = usePremiumCountdown(expiresAt, isLifetime, lang)
 
   return (
     <div
@@ -329,17 +361,17 @@ export const PremiumCountdownBanner: React.FC<{
       <div style={{ position: 'relative', zIndex: 2 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
           <span style={{ fontSize: 13 }}>👑</span>
-          <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.9)', fontWeight: 600 }}>
-            VIP Premium Faol
+          <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.95)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+            Full Premium
           </p>
         </div>
-        <p style={{ fontSize: 18, fontWeight: 900, color: '#FFFFFF', marginBottom: 3 }}>
-          {cd.isLifetime ? 'Cheksiz / Doimiy' : `⏳ Qoldi: ${cd.badgeText}`}
+        <p style={{ fontSize: 19, fontWeight: 900, color: '#FFFFFF', marginBottom: 3, letterSpacing: -0.3 }}>
+          {cd.remainingText}
         </p>
         <p style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.85)', fontWeight: 500 }}>
           {cd.isLifetime
-            ? 'Barcha AI funksiyalar va hisobotlar cheksiz'
-            : cd.fullText}
+            ? (lang === 'ru' ? 'Все AI функции и отчеты без ограничений' : (lang === 'en' ? 'All AI features and reports unlimited' : (lang === 'uz_cyrl' ? 'Барча AI функциялар ва ҳисоботлар чексиз' : 'Barcha AI funksiyalar va hisobotlar cheksiz')))
+            : `${lang === 'ru' ? 'Срок действия' : (lang === 'en' ? 'Expires' : (lang === 'uz_cyrl' ? 'Амал қилиш муддати' : 'Amal qilish muddati'))}: ${cd.formattedExpiry}`}
         </p>
       </div>
 
@@ -360,8 +392,11 @@ export const PremiumCountdownBanner: React.FC<{
           zIndex: 2,
         }}
       >
-        Batafsil
+        {lang === 'ru' ? 'Подробнее' : (lang === 'en' ? 'Details' : (lang === 'uz_cyrl' ? 'Батафсил' : 'Batafsil'))}
       </button>
     </div>
   )
 }
+
+export const PremiumStatusBanner = PremiumCountdownBanner
+

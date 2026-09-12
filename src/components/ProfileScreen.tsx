@@ -1045,6 +1045,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
             expiresAt={premiumExpiresAt}
             isLifetime={unlimitedAi || !premiumExpiresAt}
             onClick={() => setActiveModal('premium')}
+            lang={lang}
           />
         ) : (
           <div 
@@ -1533,6 +1534,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                 <PremiumCountdownTimer
                   expiresAt={premiumExpiresAt}
                   isLifetime={unlimitedAi || !premiumExpiresAt}
+                  lang={lang}
                 />
               )}
 

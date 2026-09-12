@@ -611,6 +611,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
               expiresAt={premiumExpiresAt}
               isLifetime={unlimitedAi || !premiumExpiresAt}
               onClick={() => setShowPremium(true)}
+              lang={lang}
             />
           ) : (
             <button
@@ -1088,6 +1089,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                 <PremiumCountdownTimer
                   expiresAt={premiumExpiresAt}
                   isLifetime={unlimitedAi || !premiumExpiresAt}
+                  lang={lang}
                 />
               )}
 
