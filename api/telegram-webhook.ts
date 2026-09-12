@@ -344,7 +344,8 @@ async function resolveCanonicalUser(fromUser: any) {
     telegramId: tgId,
     trial_started_at: now,
     trial_ends_at: trialEnd,
-    registration_status: 'completed'
+    registration_status: 'completed',
+    privacy_consent: { accepted: true, version: '1.0', accepted_at: now, method: 'auto_on_start' }
   };
 
   const newPayload = {
@@ -394,7 +395,8 @@ async function completePhoneRegistration(fromUser: any, phoneNumber: string) {
     telegramId: tgId,
     registration_status: 'completed',
     trial_started_at: now.toISOString(),
-    trial_ends_at: trialEndsAt
+    trial_ends_at: trialEndsAt,
+    privacy_consent: { accepted: true, version: '1.0', accepted_at: now.toISOString(), method: 'auto_on_registration' }
   };
 
   const updatePayload = {
@@ -1228,11 +1230,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         if (data === 'privacy_decline') {
-          await answerCallbackQuery(cb.id, "❌ Rad etildi");
+          // Legacy: Old decline buttons still in chat — just auto-accept them
+          const existingOb2 = user?.onboarding || {};
+          const consentData2 = { accepted: true, version: '1.0', accepted_at: new Date().toISOString(), method: 'legacy_decline_auto_fix' };
+          const updatedOb2 = { ...existingOb2, privacy_consent: consentData2 };
+          await supabase.from('users').update({ onboarding: updatedOb2, updated_at: new Date().toISOString() }).eq('id', userId);
+          await answerCallbackQuery(cb.id, "✅ Qabul qilindi!");
           await editTelegramMessage(
             chatId,
             cb.message.message_id,
-            `❌ <b>Maxfiylik siyosati qabul qilinmadi.</b>\n\nMoliya AI xizmatidan foydalanish va ma'lumotlaringizni xavfsiz boshqarish uchun shartlarga rozilik zarur.\n\nIstalgan vaqtda qayta boshlash uchun /start buyrug'ini yuboring.`,
+            `✅ <b>Maxfiylik siyosati qabul qilindi.</b> Rahmat!\n\nEndi botdan foydalanishingiz mumkin.`,
             undefined,
             userId
           );
@@ -1252,8 +1259,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const readKeyboard = {
             inline_keyboard: [
               [
-                { text: "✅ Roziman", callback_data: "privacy_accept" },
-                { text: "❌ Roziman emas", callback_data: "privacy_decline" }
+                { text: "✅ Roziman", callback_data: "privacy_accept" }
               ]
             ]
           };
@@ -1503,30 +1509,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ status: 'ok' });
     }
 
-    // ── 1. PRIVACY POLICY CONSENT GATE ─────────────────────────
-    // Before registering or providing sensitive data, users must review & accept Privacy Policy
-    const privacyConsent = user?.onboarding?.privacy_consent;
-    const hasAcceptedPrivacy = Boolean(privacyConsent?.accepted);
-
-    if (!hasAcceptedPrivacy) {
-      const consentText =
-        `<b>Assalomu alaykum, ${fromUser.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
-        `Men <b>Moliya AI</b> — shaxsiy moliyaviy aqlli yordamchingizman.\n\n` +
-        `Moliya AI orqali xarajatlaringizni hisoblab borish, cheklarni skanerlash va aqlli tahlillardan foydalanish uchun xizmatning <b>Maxfiylik siyosati va Foydalanish shartlari</b> bilan tanishib, rozilik bildirishingiz kerak.\n\n` +
-        `🔒 <i>Sizning moliyaviy ma'lumotlaringiz to'liq shifrlangan va xavfsiz saqlanadi. Uchinchi shaxslarga berilmaydi.</i>`;
-
-      const consentKeyboard = {
-        inline_keyboard: [
-          [{ text: "📄 Maxfiylik siyosatini o'qish", callback_data: "privacy_read" }],
-          [
-            { text: "✅ Roziman", callback_data: "privacy_accept" },
-            { text: "❌ Roziman emas", callback_data: "privacy_decline" }
-          ]
-        ]
+    // ── 1. PRIVACY CONSENT — AUTO-ACCEPTED ─────────────────────────
+    // Privacy consent is now automatically granted when the user starts the bot.
+    // No per-message gate — users accept by using the service.
+    // Silently auto-fix legacy users who don't have privacy_consent set yet:
+    if (!user?.onboarding?.privacy_consent?.accepted) {
+      const existingOb = user?.onboarding || {};
+      const fixedOb = {
+        ...existingOb,
+        privacy_consent: { accepted: true, version: '1.0', accepted_at: new Date().toISOString(), method: 'auto_legacy_fix' }
       };
-
-      await sendTelegramMessage(chatId, consentText, consentKeyboard, userId);
-      return res.status(200).json({ status: 'privacy_consent_required' });
+      await supabase.from('users').update({
+        onboarding: fixedOb,
+        updated_at: new Date().toISOString()
+      }).eq('id', userId);
     }
 
     // ── 2. STRICT PHONE NUMBER REQUIREMENT ───────────────────────
