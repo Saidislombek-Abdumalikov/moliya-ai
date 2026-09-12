@@ -9,6 +9,7 @@ const isFigmaSandbox = process.env.FIGMA === '1' || process.env.FIGMA === 'true'
 
 // Vite config — https://vitejs.dev/config/
 export default defineConfig({
+  root: __dirname,
   base: process.env.FIGMA_PUBLIC_URL ? `${process.env.FIGMA_PUBLIC_URL}/` : '/',
   plugins: [
     react(),

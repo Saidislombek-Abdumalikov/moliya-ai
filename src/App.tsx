@@ -61,13 +61,20 @@ export default function App() {
     }
   }, [isAuthReady, userId, onboarding]);
 
-  // Trigger tour on first visit to main page
+  // Trigger tour on first visit to main page (DB flag takes priority for fresh registration)
   useEffect(() => {
-    const tourSeen = localStorage.getItem('user_tour_completed_v2');
-    if (!tourSeen && stage === 'app') {
+    if (stage !== 'app') return;
+    const tourSeen = localStorage.getItem('user_tour_completed_v2') === 'true';
+    const dbTourDone = onboarding?.tour_completed === true;
+
+    if (onboarding && onboarding.tour_completed === false) {
+      // Account was deleted/re-registered fresh: clear stale local cache & trigger tour
+      localStorage.removeItem('user_tour_completed_v2');
+      setShowTour(true);
+    } else if (!tourSeen && !dbTourDone) {
       setShowTour(true);
     }
-  }, [stage]);
+  }, [stage, onboarding?.tour_completed]);
 
   // Auto-transition to app/onboarding when user gets authenticated or logs out
   useEffect(() => {
@@ -261,7 +268,11 @@ export default function App() {
       <InstallPromptModal />
       <AppTour 
         isOpen={showTour} 
-        onClose={() => setShowTour(false)} 
+        onClose={() => {
+          setShowTour(false);
+          localStorage.setItem('user_tour_completed_v2', 'true');
+          updateOnboarding({ tour_completed: true });
+        }} 
         language={onboarding?.language || 'uz'}
         onNavigateScreen={setActiveScreen}
       />

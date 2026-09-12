@@ -97,15 +97,95 @@ async function cleanPreviousLinkButton(chatId: number | string, userId?: string,
         await supabase.from('users').update({ onboarding: updatedOb }).eq('id', userId);
       } catch {}
     }
-  } else if (!newMsgIdWithLink && prevMsgId) {
-    lastLinkMessageByUser.delete(chatKey);
-    if (userId) {
-      try {
-        const { data: curr } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
-        const updatedOb = { ...(curr?.onboarding || {}), last_link_message_id: null };
-        await supabase.from('users').update({ onboarding: updatedOb }).eq('id', userId);
-      } catch {}
+  }
+}
+
+/**
+ * Authoritative System Message Manager
+ * Automatically replaces previous welcome / status / guide cards
+ * so that at most ONE system card with link button stays in the chat.
+ * Never affects user messages or transaction responses.
+ */
+async function sendOrReplaceSystemMessage(
+  chatId: number | string,
+  text: string,
+  replyMarkup?: any,
+  userId?: string,
+  customType: string = 'bot_response'
+) {
+  if (!BOT_TOKEN) return null;
+
+  const isLink = hasLinkButton(replyMarkup);
+
+  // 1. Delete previous system message(s) from Telegram if known
+  if (userId) {
+    try {
+      const { data: u } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
+      const prevSysId = Number(u?.onboarding?.last_system_message_id);
+      const prevLinkId = Number(u?.onboarding?.last_link_message_id);
+
+      const idsToPurge = new Set<number>();
+      if (Number.isInteger(prevSysId) && prevSysId > 0) idsToPurge.add(prevSysId);
+      if (Number.isInteger(prevLinkId) && prevLinkId > 0) idsToPurge.add(prevLinkId);
+
+      for (const mId of idsToPurge) {
+        const delRes = await deleteTelegramMessage(chatId, mId);
+        if (!delRes || !delRes.ok) {
+          // If message is > 48h old and cannot be deleted, strip the inline keyboard
+          await editTelegramMessageReplyMarkup(chatId, mId, { inline_keyboard: [] });
+        }
+      }
+    } catch (err) {
+      console.warn('[BOT] Error cleaning previous system message:', err);
     }
+  }
+
+  // 2. Send the new system card
+  const payload: any = {
+    chat_id: String(chatId),
+    text,
+    parse_mode: 'HTML',
+  };
+  if (replyMarkup) {
+    payload.reply_markup = replyMarkup;
+  }
+
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (data?.ok && data?.result?.message_id) {
+      const newMsgId = data.result.message_id;
+      if (userId) {
+        try {
+          const { data: curr } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
+          const updatedOb = {
+            ...(curr?.onboarding || {}),
+            last_system_message_id: newMsgId,
+            last_link_message_id: isLink ? newMsgId : null
+          };
+          await supabase.from('users').update({ onboarding: updatedOb }).eq('id', userId);
+        } catch {}
+
+        await logBotMessage(userId, {
+          id: `bot_${chatId}_${newMsgId}`,
+          chat_id: chatId,
+          message_id: newMsgId,
+          direction: 'bot_to_user',
+          sender: 'bot',
+          type: customType,
+          text,
+          timestamp: new Date().toISOString()
+        });
+      }
+    }
+    return data;
+  } catch (err) {
+    console.error('[BOT] Error sending system message:', err);
+    return null;
   }
 }
 
@@ -366,33 +446,20 @@ async function resolveCanonicalUser(fromUser: any) {
   const fullName = [fromUser.first_name, fromUser.last_name].filter(Boolean).join(' ') || 'Foydalanuvchi';
   const username = fromUser.username ? `@${fromUser.username}` : null;
 
-  // 1. Identity-based block check (survives account deletion)
-  const { data: blockedIdentity } = await supabase
-    .from('users')
-    .select('*')
-    .eq('id', `restricted_tg_${tgId}`)
-    .maybeSingle();
+  // 1. Identity-based block check & parallel user lookup (fast concurrent round-trip)
+  const [blockedRes, existingRes, byTgIdRes] = await Promise.all([
+    supabase.from('users').select('*').eq('id', `restricted_tg_${tgId}`).maybeSingle(),
+    supabase.from('users').select('*').eq('id', userId).maybeSingle(),
+    supabase.from('users').select('*').eq('telegram_id', tgId).maybeSingle()
+  ]);
 
+  const blockedIdentity = blockedRes.data;
   if (blockedIdentity && blockedIdentity.onboarding?.is_blocked !== false) {
-    return { user: blockedIdentity, userId, isBlocked: true, isRegistered: false, isNew: false, hasPhone: false };
+    return { user: blockedIdentity, userId, isBlocked: true, isRegistered: false, isNew: false, hasPhone: false, hasAcceptedOferta: false };
   }
 
   // 2. Fetch existing active canonical user
-  let { data: existing } = await supabase
-    .from('users')
-    .select('*')
-    .eq('id', userId)
-    .maybeSingle();
-
-  // If not found by canonical ID, search by telegram_id
-  if (!existing) {
-    const { data: byTgId } = await supabase
-      .from('users')
-      .select('*')
-      .eq('telegram_id', tgId)
-      .maybeSingle();
-    if (byTgId) existing = byTgId;
-  }
+  let existing = existingRes.data || byTgIdRes.data;
 
   if (existing) {
     // Check if user is blocked by admin
@@ -419,7 +486,7 @@ async function resolveCanonicalUser(fromUser: any) {
         if (!existing.onboarding) existing.onboarding = {};
         existing.onboarding.phone = userWithPhone.phone;
         hasPhone = true;
-        // Sync to Supabase so it's persisted permanently
+        // Sync to Supabase in background
         supabase.from('users').update({
           phone: userWithPhone.phone,
           onboarding: existing.onboarding,
@@ -428,25 +495,32 @@ async function resolveCanonicalUser(fromUser: any) {
       }
     }
 
+    const hasAcceptedOferta = Boolean(
+      existing.onboarding?.oferta_accepted === true ||
+      existing.onboarding?.privacy_consent?.accepted === true
+    );
+
     if (isBlocked) {
-      return { user: existing, userId, isBlocked: true, isRegistered: false, isNew: false, hasPhone };
+      return { user: existing, userId, isBlocked: true, isRegistered: false, isNew: false, hasPhone, hasAcceptedOferta };
     }
 
-    return { user: existing, userId, isBlocked: false, isRegistered: hasPhone, isNew: false, hasPhone };
+    return { user: existing, userId, isBlocked: false, isRegistered: hasPhone, isNew: false, hasPhone, hasAcceptedOferta };
   }
 
   // 3. User was deleted or is first-time visitor -> Create clean active user record with trial
   const trialEnd = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
   const newOnboarding = {
     completed: false,
+    tour_completed: false,
+    oferta_accepted: false,
     language: 'uz',
     name: fullName,
     telegram: username,
     telegramId: tgId,
     trial_started_at: now,
     trial_ends_at: trialEnd,
-    registration_status: 'completed',
-    privacy_consent: { accepted: true, version: '1.0', accepted_at: now, method: 'auto_on_start' }
+    registration_status: 'pending_oferta',
+    privacy_consent: null
   };
 
   const newPayload = {
@@ -464,7 +538,7 @@ async function resolveCanonicalUser(fromUser: any) {
     cards: [],
     transactions: [],
     onboarding: newOnboarding,
-    registration_status: 'completed',
+    registration_status: 'pending_oferta',
     created_at: now,
     updated_at: now
   };
@@ -482,11 +556,15 @@ async function resolveCanonicalUser(fromUser: any) {
     const { data: refetched } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
     if (refetched) {
       const hasPhone = isValidPhoneNumber(refetched.phone) || isValidPhoneNumber(refetched.onboarding?.phone);
-      return { user: refetched, userId, isBlocked: false, isRegistered: hasPhone, isNew: false, hasPhone };
+      const hasAcceptedOferta = Boolean(
+        refetched.onboarding?.oferta_accepted === true ||
+        refetched.onboarding?.privacy_consent?.accepted === true
+      );
+      return { user: refetched, userId, isBlocked: false, isRegistered: hasPhone, isNew: false, hasPhone, hasAcceptedOferta };
     }
   }
 
-  return { user: created || newPayload, userId, isBlocked: false, isRegistered: false, isNew: true, hasPhone: false };
+  return { user: created || newPayload, userId, isBlocked: false, isRegistered: false, isNew: true, hasPhone: false, hasAcceptedOferta: false };
 }
 
 // ── Complete Phone Registration & Grant 1-Day Trial ─────────
@@ -508,15 +586,17 @@ async function completePhoneRegistration(fromUser: any, phoneNumber: string) {
   const updatedOnboarding = {
     ...existingOb,  // Preserve existing onboarding data (bot_messages, etc.)
     completed: false,
+    tour_completed: false, // Fresh registration: Tour Guide will trigger automatically on first Mini App open!
     language: 'uz',
     name: fullName,
     phone: phoneNumber,
     telegram: username,
     telegramId: tgId,
     registration_status: 'completed',
+    oferta_accepted: true,
     trial_started_at: existingOb.trial_started_at || now.toISOString(),
     trial_ends_at: existingOb.trial_ends_at || trialEndsAt,
-    privacy_consent: existingOb.privacy_consent || { accepted: true, version: '1.0', accepted_at: now.toISOString(), method: 'auto_on_registration' }
+    privacy_consent: existingOb.privacy_consent || { accepted: true, version: '1.0', accepted_at: now.toISOString(), method: 'oferta_agreed' }
   };
 
   const updatePayload: any = {
@@ -1289,25 +1369,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ status: 'blocked' });
       }
 
-      // Phone verification gate for inline buttons
-      const userHasPhone = isValidPhoneNumber(userRow?.phone) || isValidPhoneNumber(userRow?.onboarding?.phone);
-      if (!userHasPhone) {
-        await answerCallbackQuery(cb.id, "⚠️ Botdan foydalanish uchun telefon raqamingizni tasdiqlang!");
-        if (chatId) {
-          await sendTelegramMessage(
-            chatId,
-            `⚠️ <b>Botdan to'liq foydalanish uchun avval telefon raqamingizni tasdiqlang:</b>\n\nPastdagi tugmani bosing:`,
-            {
-              keyboard: [[{ text: "📞 Telefon raqamni yuborish", request_contact: true }]],
-              resize_keyboard: true,
-              one_time_keyboard: true
-            },
-            userId
-          );
-        }
-        return res.status(200).json({ status: 'phone_required' });
-      }
-
       if (chatId && cb.message?.message_id && data) {
         // Log user callback interaction
         await logBotMessage(userId, {
@@ -1323,16 +1384,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           timestamp: new Date().toISOString()
         });
 
-        if (data === 'privacy_accept') {
+        // 1. Handle Oferta / Privacy Acceptance (must be handled before phone gate!)
+        if (data === 'accept_oferta' || data === 'privacy_accept') {
           const consentData = {
             policy_version: '1.0',
             accepted: true,
             accepted_at: new Date().toISOString(),
-            source: 'telegram'
+            source: 'telegram_button'
           };
           const { data: currUser } = await supabase.from('users').select('onboarding, phone').eq('id', userId).maybeSingle();
           const updatedOb = {
             ...(currUser?.onboarding || {}),
+            oferta_accepted: true,
             privacy_consent: consentData
           };
           await supabase.from('users').update({
@@ -1340,58 +1403,70 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             updated_at: new Date().toISOString()
           }).eq('id', userId);
 
-          await answerCallbackQuery(cb.id, "✅ Maxfiylik siyosati qabul qilindi!");
+          await answerCallbackQuery(cb.id, "✅ Shartlar qabul qilindi!");
 
-          // If user already has a verified phone, don't ask again — just confirm
+          // If user already has a verified phone, confirm and show main app
           const alreadyHasPhone = isValidPhoneNumber(currUser?.phone) || isValidPhoneNumber(currUser?.onboarding?.phone);
           if (alreadyHasPhone) {
-            await editTelegramMessage(
+            await sendOrReplaceSystemMessage(
               chatId,
-              cb.message.message_id,
-              `✅ <b>Maxfiylik siyosati qabul qilindi.</b> Rahmat!\n\nBotdan foydalanishingiz mumkin. Xarajat yozish uchun oddiy matn yuboring.`,
-              undefined,
-              userId
+              `✅ <b>Ommaviy oferta va shartlar qabul qilindi!</b>\n\nEndi bot va Moliya Mini Appdan to'liq foydalanishingiz mumkin.`,
+              getMainAppKeyboard(appUrl),
+              userId,
+              'welcome_card'
             );
             return res.status(200).json({ status: 'ok' });
           }
 
-          await editTelegramMessage(
-            chatId,
-            cb.message.message_id,
-            `✅ <b>Maxfiylik siyosati qabul qilindi.</b> Rahmat!\n\nEndi botdan to'liq foydalanish uchun telefon raqamingizni tasdiqlang:`,
-            undefined,
-            userId
-          );
+          // Fresh user: Send phone number request card
+          const phoneReqText =
+            `🎉 <b>Roziligingiz qabul qilindi!</b>\n\n` +
+            `Endi botdan to'liq foydalanish va hisobingizni faollashtirish uchun telefon raqamingizni tasdiqlang.\n\n` +
+            `<blockquote>💎 <b>1 kunlik CHEKSIZ VIP PREMIUM:</b>\n` +
+            `Raqamingiz tasdiqlangach, sizga darhol bepul sinov muddati taqdim etiladi!</blockquote>\n\n` +
+            `👇 <i>Pastdagi tugmani bosing va telefon raqamingizni yuboring:</i>`;
 
-          // Send phone request keyboard — ONLY for users without a phone
-          await sendTelegramMessage(
+          await sendOrReplaceSystemMessage(
             chatId,
-            `⚠️ <b>Botdan to'liq foydalanish uchun telefon raqamingizni tasdiqlang:</b>\n\nPastdagi tugmani bosing:`,
+            phoneReqText,
             {
               keyboard: [[{ text: "📞 Telefon raqamni yuborish", request_contact: true }]],
               resize_keyboard: true,
               one_time_keyboard: true
             },
-            userId
+            userId,
+            'phone_request'
           );
-          return res.status(200).json({ status: 'ok' });
+          return res.status(200).json({ status: 'phone_requested' });
         }
 
         if (data === 'privacy_decline') {
-          // Legacy: Old decline buttons still in chat — just auto-accept them
-          const existingOb2 = user?.onboarding || {};
-          const consentData2 = { accepted: true, version: '1.0', accepted_at: new Date().toISOString(), method: 'legacy_decline_auto_fix' };
-          const updatedOb2 = { ...existingOb2, privacy_consent: consentData2 };
-          await supabase.from('users').update({ onboarding: updatedOb2, updated_at: new Date().toISOString() }).eq('id', userId);
-          await answerCallbackQuery(cb.id, "✅ Qabul qilindi!");
-          await editTelegramMessage(
-            chatId,
-            cb.message.message_id,
-            `✅ <b>Maxfiylik siyosati qabul qilindi.</b> Rahmat!\n\nEndi botdan foydalanishingiz mumkin.`,
-            undefined,
-            userId
-          );
+          await answerCallbackQuery(cb.id, "ℹ️ Botdan foydalanish uchun shartlarga rozilik bildirish lozim.");
           return res.status(200).json({ status: 'ok' });
+        }
+
+        // Phone verification gate for other inline buttons (cards, limit, stats, etc.)
+        const userHasPhone = isValidPhoneNumber(userRow?.phone) || isValidPhoneNumber(userRow?.onboarding?.phone);
+        if (!userHasPhone) {
+          await answerCallbackQuery(cb.id, "⚠️ Botdan foydalanish uchun telefon raqamingizni tasdiqlang!");
+          const phoneReqText =
+            `⚠️ <b>Botdan to'liq foydalanish uchun telefon raqamingizni tasdiqlang:</b>\n\n` +
+            `<blockquote>💎 <b>1 kunlik CHEKSIZ VIP PREMIUM:</b>\n` +
+            `Raqamingiz tasdiqlangach, sizga darhol bepul sinov muddati taqdim etiladi!</blockquote>\n\n` +
+            `👇 <i>Pastdagi tugmani bosing va telefon raqamingizni yuboring:</i>`;
+
+          await sendOrReplaceSystemMessage(
+            chatId,
+            phoneReqText,
+            {
+              keyboard: [[{ text: "📞 Telefon raqamni yuborish", request_contact: true }]],
+              resize_keyboard: true,
+              one_time_keyboard: true
+            },
+            userId,
+            'phone_request'
+          );
+          return res.status(200).json({ status: 'phone_required' });
         }
 
         if (data === 'privacy_read') {
@@ -1558,9 +1633,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Canonical Identity Resolution & Restriction Check
     const { user, userId, isBlocked, isRegistered } = await resolveCanonicalUser(fromUser);
 
-    // Auto-clean previous link button message so only 1 link button message stays in the chat
-    cleanPreviousLinkButton(chatId, userId).catch(() => {});
-
     // ── Record Incoming User Activity (Idempotent by update_id & message_id) ──
     let userMsgType = 'text';
     let userMsgText = text;
@@ -1636,15 +1708,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const senderTgId = String(fromUser.id);
 
       if (contactUserId && contactUserId !== senderTgId) {
-        await sendTelegramMessage(
+        await sendOrReplaceSystemMessage(
           chatId,
-          `⚠️ <b>Faqat o'zingizning shaxsiy telefon raqamingizni yuboring.</b>\n\nIltimos, pastdagi tugmani bosing:`,
+          `⚠️ <b>Faqat o'zingizning shaxsiy telefon raqamingizni yuboring.</b>\n\n` +
+          `<blockquote>Iltimos, pastdagi tugmani bosish orqali o'zingizning raqamingizni tasdiqlang.</blockquote>`,
           {
             keyboard: [[{ text: "📞 Telefon raqamni yuborish", request_contact: true }]],
             resize_keyboard: true,
             one_time_keyboard: true
           },
-          userId
+          userId,
+          'phone_request'
         );
         return res.status(200).json({ status: 'invalid_contact' });
       }
@@ -1652,47 +1726,71 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const rawPhone = contact.phone_number || '';
       const phone = rawPhone.startsWith('+') ? rawPhone : `+${rawPhone}`;
 
-      // If user already has a verified phone, just acknowledge — don't re-register
+      // If user already has a verified phone, acknowledge cleanly without duplicate messages
       const alreadyRegistered = isValidPhoneNumber(user?.phone) || isValidPhoneNumber(user?.onboarding?.phone);
       if (alreadyRegistered) {
-        await sendTelegramMessage(chatId, `✅ <i>Telefon raqamingiz allaqachon tasdiqlangan.</i>`, { remove_keyboard: true }, userId);
-        await sendTelegramMessage(chatId,
+        const removeRes = await sendTelegramMessage(chatId, `✅ <i>Telefon raqamingiz allaqachon tasdiqlangan.</i>`, { remove_keyboard: true }, userId);
+        if (removeRes?.result?.message_id) {
+          setTimeout(() => deleteTelegramMessage(chatId, removeRes.result.message_id).catch(() => {}), 1500);
+        }
+        await sendOrReplaceSystemMessage(
+          chatId,
           `✅ <b>Siz allaqachon ro'yxatdan o'tgansiz!</b>\n\nXarajat yozish uchun oddiy matn yuboring yoki Mini Appdan foydalaning.`,
-          getMainAppKeyboard(appUrl), userId);
+          getMainAppKeyboard(appUrl),
+          userId,
+          'welcome_card'
+        );
         return res.status(200).json({ status: 'ok' });
       }
 
-      // Complete registration & grant 1-day trial (first-time only)
+      // Complete registration & grant 1-day trial
       await completePhoneRegistration(fromUser, phone);
 
       const successMsg =
         `🎉 <b>Tabriklaymiz, ${fromUser.first_name || 'foydalanuvchi'}!</b>\n\n` +
-        `✅ <b>Telefon raqamingiz tasdiqlandi:</b> <code>${phone}</code>\n` +
-        `💎 <b>Sizga 1 kunlik CHEKSIZ PREMIUM va AI sinov muddati taqdim etildi!</b>\n\n` +
+        `✅ <b>Telefon raqamingiz muvaffaqiyatli tasdiqlandi:</b> <code>${phone}</code>\n\n` +
+        `<blockquote>💎 <b>1 kunlik CHEKSIZ VIP PREMIUM faollashtirildi!</b>\n` +
+        `• Ovozli xabarlar va cheklarni cheksiz tahlil qilish\n` +
+        `• Telegram Mini App interaktiv boshqaruvi\n` +
+        `• Cheksiz AI maslahatchi va toifalar statistikasi</blockquote>\n\n` +
         `Endi Moliya Mini App orqali xarajatlaringizni to'liq boshqarishingiz mumkin.\n\n` +
-        `👇 <i>Pastdagi tugma orqali Mini Appni ochishingiz yoki to'g'ridan-to'g'ri xarajatlarni yozishingiz mumkin:</i>`;
+        `👇 <i>Pastdagi tugma orqali Mini Appni oching yoki to'g'ridan-to'g'ri xarajatlarni yozing:</i>`;
 
-      // Cleanly remove any physical reply keyboard
-      await sendTelegramMessage(chatId, "✅ <i>Telefon raqamingiz qabul qilindi.</i>", { remove_keyboard: true }, userId);
-      // Set clickable inline buttons permanently
-      await sendTelegramMessage(chatId, successMsg, getMainAppKeyboard(appUrl), userId);
+      // Remove reply keyboard cleanly
+      const removeRes = await sendTelegramMessage(chatId, "✅ <i>Telefon raqamingiz qabul qilindi.</i>", { remove_keyboard: true }, userId);
+      if (removeRes?.result?.message_id) {
+        setTimeout(() => deleteTelegramMessage(chatId, removeRes.result.message_id).catch(() => {}), 1500);
+      }
+      await sendOrReplaceSystemMessage(chatId, successMsg, getMainAppKeyboard(appUrl), userId, 'welcome_card');
       return res.status(200).json({ status: 'ok' });
     }
 
-    // ── 1. PRIVACY CONSENT — AUTO-ACCEPTED ─────────────────────────
-    // Privacy consent is now automatically granted when the user starts the bot.
-    // No per-message gate — users accept by using the service.
-    // Silently auto-fix legacy users who don't have privacy_consent set yet:
-    if (!user?.onboarding?.privacy_consent?.accepted) {
-      const existingOb = user?.onboarding || {};
-      const fixedOb = {
-        ...existingOb,
-        privacy_consent: { accepted: true, version: '1.0', accepted_at: new Date().toISOString(), method: 'auto_legacy_fix' }
+    // ── 1. OFERTA & ROZILIK (TERMS & PRIVACY) AGREEMENT ───────────
+    const hasAcceptedOferta = Boolean(
+      user?.onboarding?.oferta_accepted === true ||
+      user?.onboarding?.privacy_consent?.accepted === true
+    );
+
+    if (!hasAcceptedOferta) {
+      const ofertaText =
+        `<b>Assalomu alaykum, ${fromUser.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
+        `Men <b>Moliya AI</b> — shaxsiy moliyaviy yordamchingizman.\n\n` +
+        `Xizmatimizdan foydalanishdan oldin, iltimos, <b>Foydalanish shartlari (Ommaviy oferta)</b> va <b>Maxfiylik siyosati</b> bilan tanishib chiqing:\n\n` +
+        `<blockquote>📄 <b>Ommaviy oferta va shartlar:</b>\n` +
+        `• Xizmat shaxsiy daromad va xarajatlaringizni tahlil qilish uchun mo'ljallangan.\n` +
+        `• Kiritilgan barcha moliyaviy ma'lumotlar shifrlangan va xavfsiz holda saqlanadi.\n` +
+        `• Ma'lumotlaringiz uchinchi shaxslarga aslo taqdim etilmaydi.\n` +
+        `• Ro'yxatdan o'tish orqali siz shaxsiy ma'lumotlarni qayta ishlashga rozilik bildirasiz.</blockquote>\n\n` +
+        `👇 <i>Davom etish uchun quyidagi tugmani bosing va rozilik bildiring:</i>`;
+
+      const ofertaKeyboard = {
+        inline_keyboard: [
+          [{ text: "✅ Roziman va qabul qilaman", callback_data: "accept_oferta" }]
+        ]
       };
-      await supabase.from('users').update({
-        onboarding: fixedOb,
-        updated_at: new Date().toISOString()
-      }).eq('id', userId);
+
+      await sendOrReplaceSystemMessage(chatId, ofertaText, ofertaKeyboard, userId, 'oferta_request');
+      return res.status(200).json({ status: 'oferta_required' });
     }
 
     // ── 2. STRICT PHONE NUMBER REQUIREMENT & TEXT PHONE DETECTION ──
@@ -1708,14 +1806,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (isTextPhone) {
         const formattedPhone = cleanDigits.length === 9 ? `+998${cleanDigits}` : `+${cleanDigits}`;
         await completePhoneRegistration(fromUser, formattedPhone);
-        await sendTelegramMessage(chatId, `✅ <i>Telefon raqamingiz qabul qilindi:</i> <code>${formattedPhone}</code>`, { remove_keyboard: true }, userId);
+
         const successMsg =
           `🎉 <b>Tabriklaymiz, ${fromUser.first_name || 'foydalanuvchi'}!</b>\n\n` +
-          `✅ <b>Telefon raqamingiz tasdiqlandi:</b> <code>${formattedPhone}</code>\n` +
-          `💎 <b>Sizga 1 kunlik CHEKSIZ PREMIUM va AI sinov muddati taqdim etildi!</b>\n\n` +
-          `Endi Moliya Mini App orqali xarajatlaringizni to'liq boshqarishingiz, xarajatlarni yozishingiz yoki ovozli xabar yuborishingiz mumkin.\n\n` +
-          `👇 <i>Pastdagi tugma orqali Mini Appni ochishingiz mumkin:</i>`;
-        await sendTelegramMessage(chatId, successMsg, getMainAppKeyboard(appUrl), userId);
+          `✅ <b>Telefon raqamingiz tasdiqlandi:</b> <code>${formattedPhone}</code>\n\n` +
+          `<blockquote>💎 <b>1 kunlik CHEKSIZ VIP PREMIUM faollashtirildi!</b>\n` +
+          `• Ovozli xabarlar va cheklarni cheksiz tahlil qilish\n` +
+          `• Telegram Mini App interaktiv boshqaruvi\n` +
+          `• Cheksiz AI maslahatchi va toifalar statistikasi</blockquote>\n\n` +
+          `Endi Moliya Mini App orqali barcha xarajatlaringizni to'liq boshqarishingiz mumkin.\n\n` +
+          `👇 <i>Pastdagi tugma orqali Mini Appni oching yoki to'g'ridan-to'g'ri xarajatlarni yozing:</i>`;
+
+        const removeRes = await sendTelegramMessage(chatId, `✅ <i>Telefon raqamingiz qabul qilindi:</i> <code>${formattedPhone}</code>`, { remove_keyboard: true }, userId);
+        if (removeRes?.result?.message_id) {
+          setTimeout(() => deleteTelegramMessage(chatId, removeRes.result.message_id).catch(() => {}), 1500);
+        }
+        await sendOrReplaceSystemMessage(chatId, successMsg, getMainAppKeyboard(appUrl), userId, 'welcome_card');
         return res.status(200).json({ status: 'ok' });
       }
     }
@@ -1724,11 +1830,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const phoneRequestText =
         `<b>Assalomu alaykum, ${fromUser.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
         `Men <b>Moliya AI</b> — shaxsiy moliyaviy yordamchingizman.\n\n` +
-        `⚠️ <b>Botdan foydalanish uchun telefon raqamingizni tasdiqlashingiz shart.</b>\n` +
-        `Raqamingiz tasdiqlangach, sizga darhol <b>1 kunlik CHEKSIZ VIP PREMIUM</b> sinov muddati taqdim etiladi! 💎\n\n` +
+        `<blockquote>⚠️ <b>Telefon raqamingizni tasdiqlang:</b>\n` +
+        `Botdan foydalanish uchun telefon raqamingizni tasdiqlashingiz shart.\n` +
+        `Raqamingiz tasdiqlangach, sizga darhol <b>1 kunlik CHEKSIZ VIP PREMIUM</b> sinov muddati taqdim etiladi! 💎</blockquote>\n\n` +
         `👇 <i>Pastdagi tugmani bosing va telefon raqamingizni yuboring:</i>`;
 
-      await sendTelegramMessage(
+      await sendOrReplaceSystemMessage(
         chatId,
         phoneRequestText,
         {
@@ -1736,7 +1843,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           resize_keyboard: true,
           one_time_keyboard: true
         },
-        userId
+        userId,
+        'phone_request'
       );
       return res.status(200).json({ status: 'phone_required' });
     }
@@ -1754,7 +1862,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const code = verifyResult?.exchangeCode;
           const targetUrl = code ? `${appUrl}?code=${code}` : appUrl;
 
-          await sendTelegramMessage(
+          await sendOrReplaceSystemMessage(
             chatId,
             `<b>Assalomu alaykum, ${fromUser.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
             `✅ <b>Profilingiz tasdiqlandi!</b> 🚀\n` +
@@ -1765,7 +1873,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 [{ text: "📱 Moliya Mini App", web_app: { url: targetUrl } }]
               ]
             },
-            userId
+            userId,
+            'login_card'
           );
           return res.status(200).json({ status: 'ok' });
         }
@@ -1774,7 +1883,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // If user tapped 👤 Profile, 👤 Profil, 👤 Hisobim or /profile
       if (text === '👤 Profile' || text === '👤 Profil' || text === '👤 Hisobim' || text.startsWith('/profile')) {
         const { text: profText, keyboard: profKeyboard } = await renderProfileMessage(fromUser, user, userId);
-        await sendTelegramMessage(chatId, profText, profKeyboard, userId);
+        await sendOrReplaceSystemMessage(chatId, profText, profKeyboard, userId, 'profile_card');
         return res.status(200).json({ status: 'ok' });
       }
 
@@ -1793,26 +1902,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const welcomeText =
         `<b>Assalomu alaykum, ${fromUser.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
         `Men <b>Moliya AI</b> — shaxsiy moliyaviy yordamchingizman.\n\n` +
-        `👤 <b>Hisob:</b> <code>${user.phone || fromUser.first_name}</code>\n` +
+        `<blockquote>👤 <b>Hisob:</b> <code>${user.phone || fromUser.first_name}</code>\n` +
         `🏷 <b>Tarif:</b> ${planLabel}\n` +
-        `⚡ <b>Bugungi AI kvotasi:</b> ${quotaStatus}\n\n` +
-        `💡 <b>Qanday ishlatish mumkin?</b>\n` +
+        `⚡ <b>Bugungi AI kvotasi:</b> ${quotaStatus}</blockquote>\n\n` +
+        `<blockquote>💡 <b>Qanday ishlatish mumkin?</b>\n` +
         `• <b>Xarajat:</b> <i>"50 000 go'sht oldim"</i> yoki <i>"kecha taksiga 25000"</i>\n` +
         `• <b>Daromad:</b> <i>"14 mln maosh tushdi"</i>\n` +
         `• <b>Ovozli xabar:</b> Ovoz bilan xarajatni gapirib yuboring 🎙\n` +
-        `• <b>Chek skaner:</b> Xarid cheki rasmini yuboring 📸\n\n` +
+        `• <b>Chek skaner:</b> Xarid cheki rasmini yuboring 📸</blockquote>\n\n` +
         `👇 <i>Quyidagi menyu tugmalaridan foydalaning:</i>`;
 
-      // 1. Permanently remove any legacy physical reply keyboard from Telegram client
-      await sendTelegramMessage(
-        chatId,
-        "✨ <b>Moliya AI tizimiga xush kelibsiz!</b>",
-        { remove_keyboard: true },
-        userId
-      );
-
-      // 2. Send main interactive menu card with pure inline link buttons
-      await sendTelegramMessage(chatId, welcomeText, getMainAppKeyboard(appUrl), userId);
+      // Authoritative replacement so at most 1 welcome card stays in chat
+      await sendOrReplaceSystemMessage(chatId, welcomeText, getMainAppKeyboard(appUrl), userId, 'welcome_card');
       return res.status(200).json({ status: 'ok' });
     }
 
@@ -1849,43 +1950,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // ── Command: /app or 🚀 Moliya or 📱 Mini App ─────────────────
     if (text.startsWith('/app') || text === '🚀 Moliya' || text === '📱 Mini App') {
-      const appText = `🚀 <b>Moliya Telegram Mini App</b>\n\nBarcha hisob-kitoblar, kartalar, oylik limit, grafiklar va tahlillar bir joyda! 👇`;
+      const appText =
+        `🚀 <b>Moliya Telegram Mini App</b>\n\n` +
+        `<blockquote>Barcha hisob-kitoblar, kartalar balansi, oylik limit, grafiklar va aqlli tahlillar bir joyda!</blockquote>\n\n` +
+        `👇 <i>Mini Appni ochish uchun pastdagi tugmani bosing:</i>`;
       const appKeyboard = {
         inline_keyboard: [
           [{ text: "📱 Moliya Mini Appni ochish", web_app: { url: appUrl } }]
         ]
       };
-      await sendTelegramMessage(chatId, appText, appKeyboard, userId);
+      await sendOrReplaceSystemMessage(chatId, appText, appKeyboard, userId, 'app_card');
       return res.status(200).json({ status: 'ok' });
     }
 
     // ── Command: /help or /yordam or ❓ Help / ❓ Yordam ───────────
     if (text.startsWith('/help') || text.startsWith('/yordam') || text === '❓ Help' || text === '❓ Yordam') {
       const helpText =
-        `ℹ️ <b>Moliya AI Botdan foydalanish yo'riqnomasi</b>\n\n` +
-        `📝 <b>1. Oddiy matn bilan kiritish:</b>\n` +
+        `ℹ️ <b>Moliya AI Bot Yo'riqnomasi</b>\n\n` +
+        `<blockquote>📝 <b>1. Oddiy matn bilan kiritish:</b>\n` +
         `Xarajatingiz yoki daromadingizni tabiiy tilda yozing:\n` +
         `• <i>"14 mln maosh tushdi"</i>\n` +
         `• <i>"taksiga 25000 so'm"</i>\n` +
         `• <i>"kecha obedga 45 ming sarfladim"</i>\n` +
-        `• <i>"3 kun oldin 120 000 ga dori oldim"</i>\n` +
-        `• <i>"25 avgust kuni 2.5 mln qarz qaytardim"</i>\n\n` +
-        `🎙 <b>2. Ovozli xabar:</b>\n` +
-        `Ovozli xabar yuboring — AI uni matnga o'giradi, sanasini aniqlaydi va bazaga saqlaydi.\n\n` +
-        `📸 <b>3. Chek rasmi:</b>\n` +
-        `Xarid chekini rasmga olib yuborsangiz, AI do'kon nomi, jami summa va sanani avtomatik o'qiydi.\n\n` +
-        `💎 <b>4. AI Limitlari va Premium:</b>\n` +
-        `• Bepul tarif: <b>kuniga 5 ta AI so'rovi</b>\n` +
-        `• Cheksiz AI so'rovlar uchun <b>VIP Premium</b> oling.\n\n` +
-        `📊 <b>Menyu Tugmalari:</b>\n` +
-        `• <b>📱 Mini App</b> — Ilovani to'liq ochish\n` +
-        `• <b>👤 Profilim</b> — Hisob ma'lumotlari va tarif\n` +
-        `• <b>💳 Kartalarim</b> — Bank kartalari balansi\n` +
-        `• <b>📊 Oylik Limit</b> — Byudjet sarfi va nazorat\n` +
-        `• <b>💎 Premium Pro</b> — VIP status va imkoniyatlar\n` +
-        `• <b>📈 Statistika</b> — Oylik balans va xarajatlar`;
+        `• <i>"3 kun oldin 120 000 ga dori oldim"</i></blockquote>\n\n` +
+        `<blockquote>🎙 <b>2. Ovozli xabar va Chek skaner:</b>\n` +
+        `• Ovozli xabar yuboring — AI uni 1 soniyada tahlil qilib saqlaydi\n` +
+        `• Chek rasmini yuboring — OCR avtomatik summani o'qiydi</blockquote>\n\n` +
+        `<blockquote>💎 <b>3. AI Limitlari va VIP Premium:</b>\n` +
+        `• Bepul tarif: kuniga 5 ta AI so'rovi\n` +
+        `• VIP Premium: Cheksiz AI, to'liq tahlil va ustunliklar</blockquote>\n\n` +
+        `👇 <i>Quyidagi menyu tugmalaridan foydalaning:</i>`;
 
-      await sendTelegramMessage(chatId, helpText, getMainAppKeyboard(appUrl), userId);
+      await sendOrReplaceSystemMessage(chatId, helpText, getMainAppKeyboard(appUrl), userId, 'help_card');
       return res.status(200).json({ status: 'ok' });
     }
 

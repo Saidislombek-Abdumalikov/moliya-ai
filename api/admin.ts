@@ -66,15 +66,37 @@ async function notifyUserVipGrantedTelegram(telegramId: string | number, expires
       }
     }
 
-    const text = `🎉 <b>Tabriklaymiz! Sizga Moliya AI Premium (VIP) obunasi taqdim etildi!</b>\n\n` +
-      `✨ Endi siz barcha imkoniyatlardan cheklovlarsiz foydalanishingiz mumkin:\n` +
-      `• 🤖 <b>Cheksiz AI tahlil:</b> Kunlik savollar va cheklovlar yo'q\n` +
-      `• 🎙️ <b>Cheksiz ovozli xabarlar:</b> Ovozli xarajatlarni 1 zumda kiritish\n` +
+    // Clean previous system/link card so there is at most 1 active link button
+    if (userId) {
+      try {
+        const { data: curr } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
+        const prevSysId = Number(curr?.onboarding?.last_system_message_id);
+        const prevLinkId = Number(curr?.onboarding?.last_link_message_id);
+        const idsToPurge = new Set<number>();
+        if (Number.isInteger(prevSysId) && prevSysId > 0) idsToPurge.add(prevSysId);
+        if (Number.isInteger(prevLinkId) && prevLinkId > 0) idsToPurge.add(prevLinkId);
+
+        for (const mId of idsToPurge) {
+          try {
+            await fetch(`https://api.telegram.org/bot${token}/deleteMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chat_id: String(telegramId), message_id: mId })
+            });
+          } catch {}
+        }
+      } catch {}
+    }
+
+    const text = `🎉 <b>Tabriklaymiz! Sizga Moliya AI VIP Premium obunasi taqdim etildi!</b>\n\n` +
+      `<blockquote>✨ <b>VIP Premium imkoniyatlari:</b>\n` +
+      `• 🤖 <b>Cheksiz AI tahlil:</b> Kunlik so'rovlar cheklovisiz\n` +
+      `• 🎙️ <b>Cheksiz ovozli xabarlar:</b> Xarajatlarni gapirib yuborish\n` +
       `• 🧾 <b>Chek skaneri:</b> Rasmdan avtomatik xarajat aniqlash\n` +
-      `• 📊 <b>Barcha hisobotlar:</b> Excel va PDF formatida to'liq eksport\n` +
-      `• ⚡ <b>24/7 ustuvor va tezkor AI yordamchi</b>\n\n` +
-      `⏳ <b>Amal qilish muddati:</b> <b>${expiryDisplay}</b>\n\n` +
-      `📱 <i>Moliya Mini App ga kiring va barcha qulayliklardan bahramand bo'ling!</i>`;
+      `• 📊 <b>Barcha hisobotlar:</b> Excel va PDF to'liq eksport\n` +
+      `• ⚡ <b>24/7 ustuvor va tezkor yordamchi</b></blockquote>\n\n` +
+      `<blockquote>⏳ <b>Amal qilish muddati:</b> <b>${expiryDisplay}</b></blockquote>\n\n` +
+      `👇 <i>Moliya Mini App orqali barcha qulayliklardan foydalaning:</i>`;
 
     const appUrl = process.env.APP_URL || 'https://moliya-ai-pi.vercel.app';
     const keyboard = {
@@ -94,6 +116,7 @@ async function notifyUserVipGrantedTelegram(telegramId: string | number, expires
       })
     });
     const result = await res.json();
+    const newMsgId = result?.result?.message_id;
 
     if (userId) {
       const { data: curr } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
@@ -103,10 +126,15 @@ async function notifyUserVipGrantedTelegram(telegramId: string | number, expires
         sender: 'bot',
         text,
         timestamp: new Date().toISOString(),
-        messageId: result?.result?.message_id || null
+        messageId: newMsgId || null
       };
       await supabase.from('users').update({
-        onboarding: { ...(curr?.onboarding || {}), bot_messages: [...existingMsgs, newMsg] },
+        onboarding: {
+          ...(curr?.onboarding || {}),
+          last_system_message_id: newMsgId || curr?.onboarding?.last_system_message_id,
+          last_link_message_id: newMsgId || curr?.onboarding?.last_link_message_id,
+          bot_messages: [...existingMsgs, newMsg]
+        },
         updated_at: new Date().toISOString()
       }).eq('id', userId);
     }
@@ -122,13 +150,34 @@ async function notifyUserUnlimitedAiGrantedTelegram(telegramId: string | number,
     const token = process.env.TELEGRAM_BOT_TOKEN || '8955141731:AAGILXzT69Vity8ZFi-H8XeZc_H6_BFaS8Y';
     if (!token || !telegramId || String(telegramId) === '—') return;
 
+    if (userId) {
+      try {
+        const { data: curr } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
+        const prevSysId = Number(curr?.onboarding?.last_system_message_id);
+        const prevLinkId = Number(curr?.onboarding?.last_link_message_id);
+        const idsToPurge = new Set<number>();
+        if (Number.isInteger(prevSysId) && prevSysId > 0) idsToPurge.add(prevSysId);
+        if (Number.isInteger(prevLinkId) && prevLinkId > 0) idsToPurge.add(prevLinkId);
+
+        for (const mId of idsToPurge) {
+          try {
+            await fetch(`https://api.telegram.org/bot${token}/deleteMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chat_id: String(telegramId), message_id: mId })
+            });
+          } catch {}
+        }
+      } catch {}
+    }
+
     const text = `🌟 <b>Tabriklaymiz! Sizga Cheksiz AI (Unlimited) imkoniyati taqdim etildi!</b>\n\n` +
-      `✨ Endi hisobingizda hech qanday kunlik AI cheklovi yo'q:\n` +
+      `<blockquote>✨ Endi hisobingizda hech qanday kunlik AI cheklovi yo'q:\n` +
       `• 🤖 <b>Cheksiz AI so'rovlar:</b> Istalgancha xarajat tahlili va savollar\n` +
       `• 🎙️ <b>Cheksiz audio/ovozli yozuvlar</b>\n` +
       `• 🧾 <b>Chek va rasmlar skaneri</b>\n` +
-      `• ⚡ <b>Ustuvor tezkor AI marshrutlash</b>\n\n` +
-      `📱 <i>Moliya Mini App orqali to'liq foydalanishingiz mumkin!</i>`;
+      `• ⚡ <b>Ustuvor tezkor AI marshrutlash</b></blockquote>\n\n` +
+      `👇 <i>Moliya Mini App orqali to'liq foydalanishingiz mumkin!</i>`;
 
     const appUrl = process.env.APP_URL || 'https://moliya-ai-pi.vercel.app';
     const keyboard = {
@@ -148,6 +197,7 @@ async function notifyUserUnlimitedAiGrantedTelegram(telegramId: string | number,
       })
     });
     const result = await res.json();
+    const newMsgId = result?.result?.message_id;
 
     if (userId) {
       const { data: curr } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
@@ -157,10 +207,15 @@ async function notifyUserUnlimitedAiGrantedTelegram(telegramId: string | number,
         sender: 'bot',
         text,
         timestamp: new Date().toISOString(),
-        messageId: result?.result?.message_id || null
+        messageId: newMsgId || null
       };
       await supabase.from('users').update({
-        onboarding: { ...(curr?.onboarding || {}), bot_messages: [...existingMsgs, newMsg] },
+        onboarding: {
+          ...(curr?.onboarding || {}),
+          last_system_message_id: newMsgId || curr?.onboarding?.last_system_message_id,
+          last_link_message_id: newMsgId || curr?.onboarding?.last_link_message_id,
+          bot_messages: [...existingMsgs, newMsg]
+        },
         updated_at: new Date().toISOString()
       }).eq('id', userId);
     }

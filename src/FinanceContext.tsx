@@ -338,7 +338,12 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }
 
   const [loading] = useState(false)
-  const [isAuthReady, setIsAuthReady] = useState(false)
+  const [isAuthReady, setIsAuthReady] = useState<boolean>(() => {
+    if (!isTg) return false
+    const cachedId = localStorage.getItem('user_id_v1') || defaultTgUserId
+    const cachedOb = localStorage.getItem('user_onboarding_v1')
+    return Boolean(cachedId && cachedOb)
+  })
   const [authError, setAuthError] = useState<string | null>(null)
 
   const [dateRange, setDateRange] = useState<{ start: Date; end: Date }>(() => {
@@ -1243,6 +1248,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     localStorage.removeItem('user_transactions_v1');
     localStorage.removeItem('user_security_v1');
     localStorage.removeItem('user_has_sample_v1');
+    localStorage.removeItem('user_tour_completed_v2');
     localStorage.removeItem('moliya_pending_request_id');
     setUserId(null);
     setOnboarding(null);
