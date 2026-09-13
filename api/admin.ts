@@ -2002,10 +2002,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const cleanChatId = String(chatId).replace(/[^\d-]/g, '');
 
       // Build inline keyboard link button if specified
-      if (linkButtonText && linkButtonUrl) {
+      if (linkButtonText && (linkButtonUrl || req.body?.linkButtonType === 'miniapp')) {
+        const isMiniApp = req.body?.linkButtonType === 'miniapp' || (linkButtonUrl && String(linkButtonUrl).includes('moliya-ai-pi.vercel.app'));
+        const finalUrl = String(linkButtonUrl || 'https://moliya-ai-pi.vercel.app').trim();
         replyMarkup = {
           inline_keyboard: [
-            [{ text: String(linkButtonText).trim(), url: String(linkButtonUrl).trim() }]
+            [
+              isMiniApp
+                ? { text: String(linkButtonText).trim(), web_app: { url: finalUrl } }
+                : { text: String(linkButtonText).trim(), url: finalUrl }
+            ]
           ]
         };
       }
