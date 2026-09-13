@@ -1780,7 +1780,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         `• Xizmat shaxsiy daromad va xarajatlaringizni tahlil qilish uchun mo'ljallangan.\n` +
         `• Kiritilgan barcha moliyaviy ma'lumotlar shifrlangan va xavfsiz holda saqlanadi.\n` +
         `• Ma'lumotlaringiz uchinchi shaxslarga aslo taqdim etilmaydi.\n` +
-        `• Ro'yxatdan o'tish orqali siz shaxsiy ma'lumotlarni qayta ishlashga rozilik bildirasiz.</blockquote>\n\n` +
+        `• Ro'yxatdan o'tish orqali siz shaxsiy ma'lumotlarni qayta ishlashga rozilik bildirasiz.\n` +
+        `• <b>Admin:</b> @moliya_admin | <b>Tel:</b> +998 94 948 05 42\n` +
+        `• <b>Email:</b> saidislomabdumalikov1234@gmail.com | <b>Bot:</b> @moliya_v2bot</blockquote>\n\n` +
         `👇 <i>Davom etish uchun quyidagi tugmani bosing va rozilik bildiring:</i>`;
 
       const ofertaKeyboard = {

@@ -96,6 +96,18 @@ export const PRIVACY_POLICY_DATA = {
         num: "5",
         title: "Ofertaga o'zgartirishlar kiritish",
         content: "Moliya AI ma'muriyati qonunchilik talablari yoki xizmat funksiyalarining kengayishi munosabati bilan ushbu Oferta va Maxfiylik siyosatiga o'zgartirishlar kiritish huquqini o'zida saqlab qoladi. Yangilangan tahrir e'lon qilingan paytdan boshlab kuchga kiradi."
+      },
+      {
+        icon: "📞",
+        num: "6",
+        title: "Bog'lanish va ma'muriyat",
+        content: "Moliya AI ma'muriyati bilan bog'lanish va rasmiy rekvizitlar:",
+        bullets: [
+          "Telefon: +998 94 948 05 42",
+          "Email: saidislomabdumalikov1234@gmail.com",
+          "Telegram Admin: @moliya_admin",
+          "Telegram Bot: @moliya_v2bot"
+        ]
       }
     ]
   },
@@ -167,6 +179,18 @@ export const PRIVACY_POLICY_DATA = {
         num: "3",
         title: "1 кунлик Premium синов",
         content: "Янги фойдаланувчиларга 1 кунлик чексиз VIP Premium синов муддати берилади."
+      },
+      {
+        icon: "📞",
+        num: "4",
+        title: "Боғланиш ва маъмурият",
+        content: "Moliya AI маъмурияти билан боғланиш ва расмий реквизитлар:",
+        bullets: [
+          "Телефон: +998 94 948 05 42",
+          "Email: saidislomabdumalikov1234@gmail.com",
+          "Telegram Admin: @moliya_admin",
+          "Telegram Bot: @moliya_v2bot"
+        ]
       }
     ]
   },
@@ -238,6 +262,18 @@ export const PRIVACY_POLICY_DATA = {
         num: "3",
         title: "1 день бесплатного Premium",
         content: "Каждый новый пользователь получает 1 день безлимитного доступа ко всем возможностям VIP Premium в подарок."
+      },
+      {
+        icon: "📞",
+        num: "4",
+        title: "Контакты и администрация",
+        content: "Официальные каналы связи с администрацией Moliya AI:",
+        bullets: [
+          "Телефон: +998 94 948 05 42",
+          "Email: saidislomabdumalikov1234@gmail.com",
+          "Telegram Admin: @moliya_admin",
+          "Telegram Bot: @moliya_v2bot"
+        ]
       }
     ]
   },
@@ -309,6 +345,18 @@ export const PRIVACY_POLICY_DATA = {
         num: "3",
         title: "1-Day Unlimited Premium Trial",
         content: "All newly verified users receive a complimentary 24-hour unlimited VIP Premium trial."
+      },
+      {
+        icon: "📞",
+        num: "4",
+        title: "Contact & Administration",
+        content: "Official communication channels with Moliya AI administration:",
+        bullets: [
+          "Phone: +998 94 948 05 42",
+          "Email: saidislomabdumalikov1234@gmail.com",
+          "Telegram Admin: @moliya_admin",
+          "Telegram Bot: @moliya_v2bot"
+        ]
       }
     ]
   }
