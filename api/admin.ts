@@ -1360,15 +1360,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           console.log(`[TelegramDelete] userId=${canonicalUserId} telegramId=${cleanTgId} attempted=${deletionSummary.attempted} deleted=${deletionSummary.deleted} alreadyAbsent=${deletionSummary.alreadyAbsent} notDeletable=${deletionSummary.notDeletable} failed=${deletionSummary.failed}`);
         }
 
-        // 4. Targeted clear of stored message history records across ALL matched user rows
+        // 4. Targeted mark of stored message history records across ALL matched user rows (keeps in DB for Admin audit)
         let clearedDbRecords = 0;
         const nowIso = new Date().toISOString();
         for (const u of allMatchedUsers) {
           const bMsgs: any[] = Array.isArray(u.onboarding?.bot_messages) ? u.onboarding.bot_messages : [];
           clearedDbRecords += bMsgs.length;
+          const markedMsgs = bMsgs.map((m: any) => ({ ...m, tg_deleted: true, tg_deleted_at: nowIso }));
           const updatedOnboarding = {
             ...(u.onboarding || {}),
-            bot_messages: [],
+            bot_messages: markedMsgs,
             last_link_message_id: null,
             chat_cleared_at: nowIso
           };
@@ -1384,25 +1385,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           if (!allMatchedUsers.some(u => u.id === tgKey)) {
             const { data: tgUser } = await supabase.from('users').select('onboarding').eq('id', tgKey).maybeSingle();
             if (tgUser) {
+              const tgMsgs = Array.isArray(tgUser.onboarding?.bot_messages) ? tgUser.onboarding.bot_messages : [];
+              const markedTgMsgs = tgMsgs.map((m: any) => ({ ...m, tg_deleted: true, tg_deleted_at: nowIso }));
               await supabase.from('users').update({
-                onboarding: { ...(tgUser.onboarding || {}), bot_messages: [], last_link_message_id: null, chat_cleared_at: nowIso },
+                onboarding: { ...(tgUser.onboarding || {}), bot_messages: markedTgMsgs, last_link_message_id: null, chat_cleared_at: nowIso },
                 updated_at: nowIso
               }).eq('id', tgKey);
             }
-          }
-        }
-
-        // Clear chat query logs for this user across all aliases
-        if (canonicalUserId) {
-          await supabase.from('ai_logs').delete().eq('user_id', canonicalUserId);
-        }
-        if (cleanTgId) {
-          await supabase.from('ai_logs').delete().eq('user_id', cleanTgId);
-          await supabase.from('ai_logs').delete().eq('user_id', `moliya_user_tg_${cleanTgId}`);
-        }
-        for (const u of allMatchedUsers) {
-          if (u.id && u.id !== canonicalUserId) {
-            await supabase.from('ai_logs').delete().eq('user_id', u.id);
           }
         }
 
@@ -1450,9 +1439,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             console.log(`[TelegramDelete] Global user=${u.id} tgId=${uTgId} deleted=${sum.deleted} absent=${sum.alreadyAbsent} notDeletable=${sum.notDeletable}`);
           }
 
-          // Clear bot_messages in onboarding
+          // Mark bot_messages as tg_deleted in onboarding (preserve for Admin audit)
           totalDbCleared += uMsgs.length;
-          const updatedOb = { ...(u.onboarding || {}), bot_messages: [] };
+          const markedObMsgs = uMsgs.map((m: any) => ({ ...m, tg_deleted: true, tg_deleted_at: new Date().toISOString() }));
+          const updatedOb = { ...(u.onboarding || {}), bot_messages: markedObMsgs, last_link_message_id: null, chat_cleared_at: new Date().toISOString() };
           await supabase.from('users').update({ onboarding: updatedOb, updated_at: new Date().toISOString() }).eq('id', u.id);
           usersPurged++;
 
@@ -1991,31 +1981,67 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // ── SEND TELEGRAM MESSAGE (admin → user) ────────────────────
   if (route === 'send-telegram-message' && req.method === 'POST') {
     try {
-      const { userId, telegramId, message } = req.body || {};
+      const { userId, telegramId, message, linkButtonText, linkButtonUrl } = req.body || {};
+      let replyMarkup = req.body?.replyMarkup || null;
       if (!message || (!userId && !telegramId)) {
         return res.status(400).json({ error: 'Missing message, userId or telegramId' });
       }
 
       let chatId = telegramId;
-      if (!chatId && userId) {
-        // Extract telegram ID from user record
-        const { data: user } = await supabase.from('users').select('telegram_id, onboarding').eq('id', userId).maybeSingle();
-        chatId = user?.telegram_id || user?.onboarding?.telegramId;
+      let targetUser: any = null;
+      if (userId) {
+        const { data: user } = await supabase.from('users').select('id, telegram_id, onboarding').eq('id', userId).maybeSingle();
+        targetUser = user;
+        if (!chatId) {
+          chatId = user?.telegram_id || user?.onboarding?.telegramId;
+        }
       }
 
       if (!chatId) return res.status(400).json({ error: 'Could not determine Telegram chat ID' });
 
+      const cleanChatId = String(chatId).replace(/[^\d-]/g, '');
+
+      // Build inline keyboard link button if specified
+      if (linkButtonText && linkButtonUrl) {
+        replyMarkup = {
+          inline_keyboard: [
+            [{ text: String(linkButtonText).trim(), url: String(linkButtonUrl).trim() }]
+          ]
+        };
+      }
+
       const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8955141731:AAGILXzT69Vity8ZFi-H8XeZc_H6_BFaS8Y';
       if (!BOT_TOKEN) return res.status(500).json({ error: 'TELEGRAM_BOT_TOKEN is not configured' });
+
+      // Enforce single button rule: remove previous link button from chat if exists
+      const prevButtonId = targetUser?.onboarding?.last_link_message_id;
+      if (replyMarkup && prevButtonId) {
+        try {
+          await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageReplyMarkup`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: cleanChatId,
+              message_id: Number(prevButtonId),
+              reply_markup: { inline_keyboard: [] }
+            })
+          });
+        } catch {}
+      }
+
+      const payload: any = {
+        chat_id: cleanChatId,
+        text: message,
+        parse_mode: 'HTML'
+      };
+      if (replyMarkup) {
+        payload.reply_markup = replyMarkup;
+      }
 
       const sendResp = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: message,
-          parse_mode: 'HTML'
-        })
+        body: JSON.stringify(payload)
       });
 
       const sendResult = await sendResp.json();
@@ -2023,9 +2049,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(500).json({ error: 'Failed to send Telegram message', details: sendResult.description });
       }
 
-      await logAdminAction('send_telegram_message', userId || `tg_${chatId}`, undefined, { chatId, messagePreview: message.slice(0, 100) });
+      const newMsgId = sendResult.result?.message_id;
 
-      return res.status(200).json({ success: true, messageId: sendResult.result?.message_id });
+      // Record to onboarding.bot_messages and track last_link_message_id
+      const effectiveUid = targetUser?.id || userId;
+      if (effectiveUid) {
+        try {
+          const { data: curr } = await supabase.from('users').select('onboarding').eq('id', effectiveUid).maybeSingle();
+          const existing = Array.isArray(curr?.onboarding?.bot_messages) ? curr.onboarding.bot_messages : [];
+          const adminEntry = {
+            id: `admin_${Date.now()}`,
+            message_id: newMsgId || Date.now(),
+            chat_id: cleanChatId,
+            direction: 'bot_to_user',
+            sender: 'bot',
+            type: 'admin_direct',
+            text: message.trim(),
+            timestamp: new Date().toISOString(),
+            hasLinkButton: Boolean(replyMarkup),
+            linkButtonText: linkButtonText || null,
+            linkButtonUrl: linkButtonUrl || null
+          };
+          const updatePayload: any = {
+            onboarding: {
+              ...(curr?.onboarding || {}),
+              bot_messages: [...existing, adminEntry].slice(-500)
+            },
+            updated_at: new Date().toISOString()
+          };
+          if (replyMarkup && newMsgId) {
+            updatePayload.onboarding.last_link_message_id = newMsgId;
+          }
+          await supabase.from('users').update(updatePayload).eq('id', effectiveUid);
+        } catch {}
+      }
+
+      await logAdminAction('send_telegram_message', effectiveUid || `tg_${cleanChatId}`, undefined, { chatId: cleanChatId, messagePreview: message.slice(0, 100) });
+
+      return res.status(200).json({ success: true, messageId: newMsgId });
     } catch (e: any) {
       return res.status(500).json({ error: 'Failed to send message', details: e?.message });
     }
