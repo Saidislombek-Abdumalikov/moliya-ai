@@ -164,6 +164,8 @@ interface FinanceContextType {
   logout: () => void
   setDateRange: (range: { start: Date; end: Date }) => void
   startTelegramLogin: (onVerified?: () => void) => Promise<{ requestId: string; cancel: () => void }>
+  enableWebAppMode: () => void
+  isWebAppMode: boolean
 }
 
 const FinanceContext = createContext<FinanceContextType | undefined>(undefined)
@@ -172,6 +174,55 @@ export const useFinance = () => {
   const context = useContext(FinanceContext)
   if (!context) throw new Error('useFinance must be used within a FinanceProvider')
   return context
+}
+
+// Helper: Detect if running in standalone PWA or Web App mode
+export function isWebApp(): boolean {
+  if (typeof window === 'undefined') return false
+
+  // 1. Standalone display mode (PWA installed on home screen)
+  if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) return true
+  if ((navigator as any).standalone === true) return true
+  if (document.referrer && document.referrer.includes('android-app://')) return true
+
+  // 2. User chose web app mode in this browser
+  if (localStorage.getItem('moliya_web_app_mode') === 'true') return true
+
+  // 3. URL explicitly requests web mode
+  const search = window.location.search || ''
+  const hash = window.location.hash || ''
+  if (search.includes('mode=web') || hash.includes('mode=web')) return true
+
+  // 4. Stored user ID exists and is logged in
+  const storedId = localStorage.getItem('user_id_v1')
+  if (storedId && localStorage.getItem('user_logged_in_v1') === 'true') return true
+
+  return false
+}
+
+// Helper: Check if client is either Telegram Mini App or Web App
+export function isAllowedClient(): boolean {
+  return isTelegramMiniApp() || isWebApp()
+}
+
+// Helper: Enable standalone Web App mode
+export function enableWebAppMode(): void {
+  if (typeof window === 'undefined') return
+  localStorage.setItem('moliya_web_app_mode', 'true')
+  window.dispatchEvent(new Event('moliya_web_mode_enabled'))
+}
+
+// Helper: Generate or retrieve persistent web user ID
+export function getOrCreateWebUserId(): string {
+  if (typeof window === 'undefined') return 'moliya_user_web_anon'
+  let current = localStorage.getItem('user_id_v1')
+  if (current) return current
+
+  const rand = Math.random().toString(36).substring(2, 10) + Date.now().toString(36)
+  const newId = `moliya_user_web_${rand}`
+  localStorage.setItem('user_id_v1', newId)
+  localStorage.setItem('moliya_web_app_mode', 'true')
+  return newId
 }
 
 // Helper: Detect if running inside a legitimate Telegram Mini App
@@ -231,19 +282,36 @@ async function setSupabaseSession(accessToken: string, refreshToken: string): Pr
 
 export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const isTg = isTelegramMiniApp()
+  const [isWeb, setIsWeb] = useState<boolean>(() => isWebApp())
+  const isClientAllowed = isTg || isWeb
+
+  useEffect(() => {
+    const handleWebMode = () => {
+      setIsWeb(true)
+    }
+    window.addEventListener('moliya_web_mode_enabled', handleWebMode)
+    window.addEventListener('storage', handleWebMode)
+    return () => {
+      window.removeEventListener('moliya_web_mode_enabled', handleWebMode)
+      window.removeEventListener('storage', handleWebMode)
+    }
+  }, [])
 
   // Resolve Telegram WebApp user ONLY if legitimately in Telegram
   const tgUser = (isTg && typeof window !== 'undefined' && (window as any).Telegram?.WebApp?.initDataUnsafe?.user) || null
   const defaultTgUserId = tgUser?.id ? `moliya_user_tg_${tgUser.id}` : null
 
-  // SECURITY: Never restore private user state from localStorage when running in a normal browser outside Telegram
   const [userId, setUserId] = useState<string | null>(() => {
-    if (!isTg) return null
-    return localStorage.getItem('user_id_v1') || defaultTgUserId || null
+    if (!isClientAllowed) return null
+    const stored = localStorage.getItem('user_id_v1')
+    if (stored) return stored
+    if (defaultTgUserId) return defaultTgUserId
+    if (isWeb) return getOrCreateWebUserId()
+    return null
   })
 
   const [onboarding, setOnboarding] = useState<OnboardingResult | null>(() => {
-    if (!isTg) return null
+    if (!isClientAllowed) return null
     try {
       const saved = localStorage.getItem('user_onboarding_v1')
       if (saved) return JSON.parse(saved)
@@ -267,7 +335,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   })
 
   const [accessState, setAccessState] = useState<UserAccessState>(() => {
-    if (!isTg) return { isPremium: false, isVip: false, premiumExpiresAt: null, unlimitedAi: false, isTrial: false }
+    if (!isClientAllowed) return { isPremium: false, isVip: false, premiumExpiresAt: null, unlimitedAi: false, isTrial: false }
     try {
       const saved = localStorage.getItem('user_onboarding_v1')
       if (saved) {
@@ -278,7 +346,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   })
 
   const [cards, setCards] = useState<Card[]>(() => {
-    if (!isTg) return []
+    if (!isClientAllowed) return []
     try {
       const saved = localStorage.getItem('user_cards_v1')
       return saved ? JSON.parse(saved) : []
@@ -294,7 +362,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   })
 
   const [customTransactions, setCustomTransactions] = useState<Transaction[]>(() => {
-    if (!isTg) return []
+    if (!isClientAllowed) return []
     try {
       const saved = localStorage.getItem('user_transactions_v1')
       return saved ? JSON.parse(saved) : []
@@ -304,7 +372,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   })
 
   const [deletedTxIds, setDeletedTxIds] = useState<string[]>(() => {
-    if (!isTg) return []
+    if (!isClientAllowed) return []
     try {
       const saved = localStorage.getItem('user_deleted_tx_ids_v1')
       return saved ? JSON.parse(saved) : []
@@ -314,7 +382,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   })
 
   const [hasSampleData, setHasSampleDataState] = useState<boolean>(() => {
-    if (!isTg) return false
+    if (!isClientAllowed) return false
     const saved = localStorage.getItem('user_has_sample_v1')
     return saved === 'true'
   })
@@ -336,7 +404,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const [loading] = useState(false)
   const [isAuthReady, setIsAuthReady] = useState<boolean>(() => {
-    if (!isTg) return false
+    if (!isClientAllowed) return true
     const cachedId = localStorage.getItem('user_id_v1') || defaultTgUserId
     const cachedOb = localStorage.getItem('user_onboarding_v1')
     return Boolean(cachedId && cachedOb)
@@ -430,11 +498,25 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           try { if (typeof tg.enableClosingConfirmation === 'function') tg.enableClosingConfirmation() } catch {}
         }
 
-        // If outside Telegram (regular web browser), do not restore session or authenticate
-        if (!isTelegramMiniApp()) {
-          console.log('[AUTH] Normal browser detected outside Telegram. Access restricted to Telegram Mini App.');
+        // If outside Telegram and web mode not active, pause and let UI offer Telegram or Web entry
+        if (!isAllowedClient()) {
+          console.log('[AUTH] Browser outside Telegram and web mode not active.');
           setIsAuthReady(true);
           return;
+        }
+
+        // Web mode active outside Telegram
+        if (isWebApp() && !isTelegramMiniApp()) {
+          const webId = getOrCreateWebUserId();
+          setUserId(webId);
+          const savedOb = localStorage.getItem('user_onboarding_v1');
+          if (savedOb) {
+            try {
+              const ob = JSON.parse(savedOb);
+              setOnboarding(ob);
+              setAccessState(computeAccessState(ob));
+            } catch {}
+          }
         }
         const initData = tg?.initData || ''
         const initDataUnsafe = tg?.initDataUnsafe
@@ -820,13 +902,14 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const stored = localStorage.getItem('user_id_v1');
     if (stored) return stored;
     if (defaultTgUserId) return defaultTgUserId;
-    if (!isTelegramMiniApp()) return null;
+    if (isWebApp()) return getOrCreateWebUserId();
+    if (!isAllowedClient()) return null;
     return null;
   };
 
-  // Dedicated data refresh function to keep Bot and Mini App 100% in sync
+  // Dedicated data refresh function to keep Bot, Mini App, and Web App in sync
   const refreshUserData = async (targetId?: string | null) => {
-    if (!isTelegramMiniApp()) return;
+    if (!isAllowedClient()) return;
     const idToUse = targetId || getEffectiveUserId();
     if (!idToUse) return;
 
@@ -870,7 +953,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   // Supabase Real-Time User & Data Syncing
   // ═══════════════════════════════════════════════════════════
   useEffect(() => {
-    if (!isTelegramMiniApp()) return;
+    if (!isAllowedClient()) return;
     const activeId = getEffectiveUserId();
     if (!activeId) return;
 
@@ -982,7 +1065,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const nowIso = new Date().toISOString();
       const payload: any = {
         updated_at: nowIso,
-        onboarding: updated
+        onboarding: updated,
+        platform: isTg ? 'telegram_mini_app' : 'web_app'
       };
       if (updated.name && updated.name !== '—') payload.name = updated.name;
       if (updated.language) payload.language = updated.language;
@@ -1006,6 +1090,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         await supabase.from('users').upsert({
           id: targetUserId,
           ...payload,
+          platform: isTg ? 'telegram_mini_app' : 'web_app',
           created_at: nowIso
         }, { onConflict: 'id' });
       }
@@ -1296,6 +1381,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         logout,
         setDateRange,
         startTelegramLogin,
+        enableWebAppMode,
+        isWebAppMode: isWeb,
       }}
     >
       {children}

@@ -3,6 +3,31 @@
  * Handles numbers, multipliers, abbreviations, colloquial phrases, and mixed languages.
  */
 
+export { detectCurrency, convertCurrencyToUzs, type SupportedCurrency } from './_currencyHelper.js';
+
+export interface TurboTransaction {
+  type: 'expense' | 'income' | 'debt' | 'lending';
+  amount: number;
+  currency: string;
+  originalAmount?: number;
+  originalCurrency?: string;
+  category: string;
+  description: string;
+  date: string;
+  time: string | null;
+  counterparty: string | null;
+  confidence: number;
+}
+
+export interface TurboParseResult {
+  intent: 'record_transaction' | 'query_finances' | 'general_question';
+  transactions: TurboTransaction[];
+  needs_clarification: boolean;
+  clarification_reason: string | null;
+  overall_confidence: number;
+  is_local_turbo: boolean;
+}
+
 // Mapping of Uzbek word numbers to numeric values
 const UZBEK_WORD_NUMBERS: Record<string, number> = {
   'nol': 0,
@@ -416,6 +441,10 @@ export function normalizeUzbekFinancialText(rawText: string): NormalizedFinancia
 
   // Extract amount: first via digits, then spoken numbers
   let extractedAmount = extractUzbekNumber(text) || undefined;
+  const currInfo = detectCurrency(originalText || text);
+  if (extractedAmount && extractedAmount > 0 && currInfo.isForeign) {
+    extractedAmount = convertCurrencyToUzs(extractedAmount, currInfo.currency).uzsAmount;
+  }
 
   return {
     originalText,
@@ -500,12 +529,17 @@ function parseSingleTurboTransaction(text: string, todayStr: string): TurboTrans
   const amount = extractUzbekNumber(text);
   if (!amount || amount <= 0) return null;
 
-  // Currency
-  let currency = 'UZS';
-  if (/\b(dollar|dollor|dolir|usd|\$|доллар)\b/i.test(text)) {
-    currency = 'USD';
-  } else if (/\b(rubl|rub|руб|₽)\b/i.test(text)) {
-    currency = 'RUB';
+  // Currency Detection & Conversion
+  const currInfo = detectCurrency(text);
+  let finalAmount = amount;
+  let originalAmount: number | undefined = undefined;
+  let originalCurrency: string | undefined = undefined;
+
+  if (currInfo.isForeign) {
+    originalAmount = amount;
+    originalCurrency = currInfo.currency;
+    const conv = convertCurrencyToUzs(amount, currInfo.currency);
+    finalAmount = conv.uzsAmount;
   }
 
   // Category & Type
@@ -566,12 +600,22 @@ function parseSingleTurboTransaction(text: string, todayStr: string): TurboTrans
     date = `${nowObj.getFullYear()}-${String(nowObj.getMonth() + 1).padStart(2, '0')}-${String(nowObj.getDate()).padStart(2, '0')}`;
   }
 
+  let description = text.slice(0, 80);
+  if (currInfo.isForeign && originalAmount) {
+    const conv = convertCurrencyToUzs(originalAmount, currInfo.currency);
+    if (!description.includes('≈') && !description.includes('so\'m') && !description.includes('som')) {
+      description = `${description} ${conv.noteAnnotation}`;
+    }
+  }
+
   return {
     type,
-    amount,
-    currency,
+    amount: finalAmount,
+    currency: 'UZS',
+    originalAmount,
+    originalCurrency,
     category,
-    description: text.slice(0, 80),
+    description,
     date,
     time: null,
     counterparty,
@@ -621,7 +665,12 @@ Date context: Today is ${ctx.currentDate} (${ctx.currentDayOfWeek}). Input: "${n
 
 Categories: 'Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\\'liq', 'Ta\\'lim', 'Ko\\'ngil ochar', 'Maosh', 'Freelance', 'Biznes', 'Sovg\\'a', 'Investitsiya', 'Boshqa'.
 Types: 'expense', 'income', 'debt', 'lending'.
-Currency: Assume Uzbek So'm (UZS). Extract amount as integer.
+Currency: Default is Uzbek So'm (UZS). Extract amount as integer in UZS.
+
+CRITICAL CURRENCY CONVERSION RULES:
+- If amount is in USD ($ / dollar / usd / доллар), convert to Uzbek So'm at rate 1 USD = 12,900 UZS. E.g. "400$" -> 5160000. "100 dollar" -> 1290000. "50$" -> 645000. Always include the original dollar amount in the note (e.g. note: "telefon 400$ (~5 160 000 so'm)").
+- If amount is in RUB (rubl / руб / ₽), convert at rate 1 RUB = 140 UZS. E.g. "1000 rubl" -> 140000.
+- If amount is in EUR (€ / euro / yevro), convert at rate 1 EUR = 14,000 UZS.
 
 CRITICAL UZBEK NUMBER & CATEGORY RULES:
 - "ming" / "минг" / "k" = THOUSAND (1,000 UZS). E.g. "500 ming" = 500000 (500 thousand, NEVER 500 million!). E.g. "30 ming" = 30000.
@@ -632,7 +681,7 @@ CRITICAL UZBEK NUMBER & CATEGORY RULES:
 Rules:
 - If relative date (e.g. "kecha", "bugun"), calculate YYYY-MM-DD from ${ctx.currentDate}. If no date, use ${ctx.currentDate}.
 - 'debt' = borrowed money from someone; 'lending' = lent money to someone. Fill 'debtWho' with the person's name if present.
-- 'title': short 2-3 word title. 'note': clean description.
+- 'title': short 2-3 word title. 'note': clean description with currency annotation.
 
 Return ONLY valid JSON:
 {
@@ -872,6 +921,19 @@ export function validateAiFinancialOutput(rawJson: any, normalizedInput: Normali
     rawJson.note || rawJson.title || ''
   );
 
+  const currInfo = detectCurrency(normalizedInput.originalText || normalizedInput.normalizedText || '');
+  let note = (rawJson.note || normalizedInput.originalText).slice(0, 200);
+  if (currInfo.isForeign && amount > 0) {
+    const rawVal = extractUzbekNumber(normalizedInput.originalText || normalizedInput.normalizedText || '');
+    if (rawVal && (Math.abs(amount - rawVal) < 1 || amount < 10000)) {
+      const conv = convertCurrencyToUzs(amount, currInfo.currency);
+      amount = conv.uzsAmount;
+      if (!note.includes('≈') && !note.includes("so'm") && !note.includes('som')) {
+        note = `${note} ${conv.noteAnnotation}`;
+      }
+    }
+  }
+
   const validTypes = ['expense', 'income', 'debt', 'lending'];
   const type = validTypes.includes(rawJson.type) ? rawJson.type : (normalizedInput.inferredType || 'expense');
 
@@ -886,7 +948,6 @@ export function validateAiFinancialOutput(rawJson: any, normalizedInput: Normali
   if (category === 'Ta\\\'lim') category = 'Ta\'lim';
 
   const name = (rawJson.title || rawJson.note || normalizedInput.originalText).slice(0, 80);
-  const note = (rawJson.note || normalizedInput.originalText).slice(0, 200);
 
   // Validate or assign date deterministically
   const parsedDate = parseSafeDate(rawJson.date, defaultDate);

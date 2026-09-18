@@ -338,9 +338,9 @@ export async function executeAiWithRotation(promptText: string): Promise<AiParse
   const prompt = `You are a financial AI assistant for Moliya AI. Parse this transaction spoken transcript or written text in Uzbek, Russian, or English: "${promptText}".
 Detect and return JSON:
 - type: 'expense' (spending), 'income' (salary/earnings), 'debt' (borrowed money), or 'lending' (loaned money to someone)
-- amount: total amount in numbers (e.g. "45 ming" -> 45000, "1.5 mln" -> 1500000, "100 dollar" -> 100, "ellik ming" -> 50000)
+- amount: total amount in Uzbek So'm (UZS). If foreign currency is specified, convert to UZS: 1 USD ($) = 12,900 UZS, 1 RUB (₽) = 140 UZS, 1 EUR (€) = 14,000 UZS. Examples: "45 ming" -> 45000, "1.5 mln" -> 1500000, "100 dollar" -> 1290000, "400$" -> 5160000, "ellik ming" -> 50000
 - category: choose EXACTLY one from: ['Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\\'liq', 'Ta\\'lim', 'Ko\\'ngil ochar', 'Boshqa', 'Maosh', 'Freelance', 'Biznes', 'Sovg\\'a', 'Investitsiya', 'Do\\'st', 'Bank', 'Oila', 'Hamkasb']
-- note: meaningful description of the item or expense
+- note: meaningful description of the item or expense. Include original currency if foreign currency was entered (e.g. "400$ (~5 160 000 so'm)")
 - title: concise 2-3 word title
 - debtWho: person or organization name if debt/lending, otherwise empty`;
 

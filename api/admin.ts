@@ -1533,6 +1533,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // Secure Server-Side Streaming Proxy:
       // Stream buffer directly through the server so TELEGRAM_BOT_TOKEN is NEVER exposed to the browser
+      const ext = (filePath.split('.').pop() || 'bin').toLowerCase();
+      let mimeType = 'application/octet-stream';
+      if (ext === 'oga' || ext === 'ogg') {
+        mimeType = 'audio/ogg; codecs=opus';
+      } else if (ext === 'mp3') {
+        mimeType = 'audio/mpeg';
+      } else if (ext === 'm4a' || ext === 'aac') {
+        mimeType = 'audio/mp4';
+      } else if (ext === 'wav') {
+        mimeType = 'audio/wav';
+      } else if (ext === 'jpg' || ext === 'jpeg') {
+        mimeType = 'image/jpeg';
+      } else if (ext === 'png') {
+        mimeType = 'image/png';
+      } else if (ext === 'webp') {
+        mimeType = 'image/webp';
+      } else if (ext === 'gif') {
+        mimeType = 'image/gif';
+      } else if (ext === 'mp4') {
+        mimeType = 'video/mp4';
+      } else if (ext === 'mov') {
+        mimeType = 'video/quicktime';
+      } else if (ext === 'pdf') {
+        mimeType = 'application/pdf';
+      } else {
+        mimeType = streamRes.headers?.get('content-type') || 'application/octet-stream';
+      }
+
       if (req.query.download === '1' || req.query.raw === '1' || req.query.stream === '1') {
         const streamRes = await fetch(tgFileUrl);
         if (!streamRes.ok) {
@@ -1540,12 +1568,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
         const arrayBuf = await streamRes.arrayBuffer();
         const buffer = Buffer.from(arrayBuf);
-        const contentType = streamRes.headers.get('content-type') || 'application/octet-stream';
-        const ext = filePath.split('.').pop() || 'bin';
         const fileName = `moliya_tg_${fileId.slice(-8)}.${ext}`;
 
-        res.setHeader('Content-Type', contentType);
-        res.setHeader('Content-Length', buffer.length);
+        res.setHeader('Content-Type', mimeType);
+        res.setHeader('Accept-Ranges', 'bytes');
+        res.setHeader('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+
+        const totalLength = buffer.length;
+        const range = req.headers.range;
+
+        if (range && req.query.download !== '1') {
+          const parts = range.replace(/bytes=/, "").split("-");
+          const start = parseInt(parts[0], 10);
+          const end = parts[1] ? parseInt(parts[1], 10) : totalLength - 1;
+          const chunkSize = (end - start) + 1;
+          const chunk = buffer.slice(start, end + 1);
+
+          res.status(206);
+          res.setHeader('Content-Range', `bytes ${start}-${end}/${totalLength}`);
+          res.setHeader('Content-Length', chunkSize);
+          res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
+          return res.send(chunk);
+        }
+
+        res.setHeader('Content-Length', totalLength);
         if (req.query.download === '1') {
           res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
         } else {
@@ -1561,11 +1608,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         success: true,
         fileId,
         filePath,
+        fileName: `moliya_tg_${fileId.slice(-8)}.${ext}`,
         fileSize: tgData.result.file_size,
+        mimeType,
+        directUrl: tgFileUrl,
         downloadUrl: safeDownloadUrl,
         streamUrl: safeStreamUrl,
         isImage: /\.(jpe?g|png|webp|gif)$/i.test(filePath),
-        isAudio: /\.(oga|ogg|mp3|m4a)$/i.test(filePath),
+        isAudio: /\.(oga|ogg|mp3|m4a|wav)$/i.test(filePath),
         isVideo: /\.(mp4|mov)$/i.test(filePath)
       });
     } catch (err: any) {

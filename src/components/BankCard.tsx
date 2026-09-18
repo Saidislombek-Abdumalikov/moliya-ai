@@ -48,7 +48,7 @@ export default function BankCard({ bank, number, name, brand, balance, currency,
           <p style={{ fontSize: 15, fontWeight: 700, letterSpacing: 0.5, textShadow: '0 1px 2px rgba(0,0,0,0.2)' }}>{bank}</p>
           <p style={{ fontSize: 13, fontWeight: 800, opacity: 0.95, fontStyle: 'italic', textShadow: '0 1px 2px rgba(0,0,0,0.2)' }}>{name?.toUpperCase()}</p>
         </div>
-        <p style={{ fontSize: 20, letterSpacing: 2, marginBottom: 20, fontFamily: 'monospace', textShadow: '0 2px 4px rgba(0,0,0,0.3)' }}>
+        <p style={{ fontSize: 'clamp(15px, 4.5vw, 20px)', letterSpacing: 'clamp(1px, 0.5vw, 2px)', marginBottom: 20, fontFamily: 'monospace', textShadow: '0 2px 4px rgba(0,0,0,0.3)', whiteSpace: 'nowrap' }}>
           {number.replace(/\D/g, '').replace(/(.{4})/g, '$1 ').trim()}
         </p>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>

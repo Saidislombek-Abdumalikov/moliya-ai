@@ -81,6 +81,16 @@ async function parseAIText(text: string, cardsList: any[] = [], userId?: string)
           rawNum = correctAiMultiplierHallucination(rawNum, text, data.note || data.title);
           data.amount = rawNum.toLocaleString('en-US').replace(/,/g, ' ');
         }
+
+        // Foreign Currency Guard: If user entered foreign currency (e.g. 400$) and server returned unconverted value (e.g. 400)
+        if (localResult && localResult.originalAmount && localResult.currency !== 'UZS') {
+          if (rawNum === localResult.originalAmount || rawNum < 10000) {
+            data.amount = localResult.amount;
+          }
+          if (localResult.note && !data.note?.includes('≈')) {
+            data.note = localResult.note;
+          }
+        }
         return {
           type: data.type || localResult?.type || 'expense',
           amount: data.amount,
@@ -593,8 +603,8 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
         className="gpu-layer"
         style={{
           position: 'fixed',
-          bottom: 130,
-          left: 'min(calc(50% + 75px), calc(100vw - 110px))',
+          bottom: 'calc(env(safe-area-inset-bottom, 12px) + 82px)',
+          left: 'min(calc(50% + var(--app-max-width, 430px) / 2 - 76px), calc(100vw - 76px))',
           width: 56,
           height: 56,
           borderRadius: 18,
@@ -652,8 +662,8 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
               onClick={(e) => e.stopPropagation()}
               style={{
                 width: '100%',
-                maxWidth: 440,
-                maxHeight: '85vh',
+                maxWidth: 'var(--app-max-width, 440px)',
+                maxHeight: '85dvh',
                 overflowY: 'auto',
                 background: '#FFFFFF',
                 borderRadius: '28px 28px 0 0',

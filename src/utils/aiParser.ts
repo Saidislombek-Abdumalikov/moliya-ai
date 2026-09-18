@@ -1,3 +1,5 @@
+import { detectCurrency, convertCurrencyToUzs, type SupportedCurrency } from './currencyService'
+
 export type EntryType = 'expense' | 'income' | 'debt' | 'lending'
 
 export interface ParsedTransaction {
@@ -9,6 +11,8 @@ export interface ParsedTransaction {
   debtWho?: string
   date?: string
   cardId?: string
+  currency?: SupportedCurrency
+  originalAmount?: number
   isLocalParsed?: boolean
 }
 
@@ -95,14 +99,18 @@ export function resolveCompoundNumbers(raw: string): string {
 /**
  * Extracts numeric value from spoken or written text
  */
-export function extractAmountFromText(raw: string): number | null {
+export function extractAmountFromText(raw: string, convertForeign: boolean = true): number | null {
   if (!raw || typeof raw !== 'string') return null
   let text = raw.toLowerCase().replace(/[`ʻ‘’]/g, "'")
 
+  // Detect foreign currency before stripping symbols
+  const currInfo = detectCurrency(text)
+
   // Remove currency words so 'm' in "so'm" doesn't trigger million
   text = text.replace(/\b(so'm|som|sum|сўм|сум|uzs)\b/gi, ' ')
-  text = text.replace(/\b(dollar|dollor|usd|\$)\b/gi, ' ')
-  text = text.replace(/\b(rubl|rub|руб|₽)\b/gi, ' ')
+  text = text.replace(/\b(dollar|dollor|dolir|usd|доллар(?:ov|da|ga|lik)?)\b|\$/gi, ' ')
+  text = text.replace(/\b(rubl|rub|руб|рубл)\b|₽/gi, ' ')
+  text = text.replace(/\b(yevro|evro|euro|eur|евро)\b|€/gi, ' ')
 
   // 1. Resolve compound numbers
   text = resolveCompoundNumbers(text)
@@ -125,54 +133,65 @@ export function extractAmountFromText(raw: string): number | null {
   text = text.replace(/(\d+)\s*mingga\b/gi, '$1000')
   text = text.replace(/(\d+)\s*mlnga\b/gi, '$1000000')
 
+  let finalVal: number | null = null
+
   // 5. Extract explicit digits
   const cleanedDigits = text.replace(/(\d+)\s+(\d{3})\b/g, '$1$2')
   const numberMatch = cleanedDigits.match(/\b\d{3,12}\b/)
   if (numberMatch) {
     const val = parseInt(numberMatch[0].replace(/\s+/g, ''), 10)
-    if (!isNaN(val) && val > 0) return val
-  }
-
-  // Also check smaller numbers (e.g. 50, 100)
-  const anyDigitsMatch = cleanedDigits.match(/\b\d{1,12}\b/)
-  if (anyDigitsMatch) {
-    const val = parseInt(anyDigitsMatch[0], 10)
-    if (!isNaN(val) && val > 0) return val
-  }
-
-  // 6. Word numbers parsing (e.g. "besh yuz ming", "ellik ming", "bir million")
-  const words = text.split(/\s+/)
-  let total = 0
-  let current = 0
-  let hasNum = false
-
-  for (let i = 0; i < words.length; i++) {
-    const w = words[i].replace(/[^\w']/g, '')
-    if (w === 'yarim' && (words[i + 1] === 'million' || words[i + 1] === 'mln' || words[i + 1] === 'ming')) {
-      current += 0.5
-      hasNum = true
-      continue
+    if (!isNaN(val) && val > 0) finalVal = val
+  } else {
+    // Also check smaller numbers (e.g. 50, 100)
+    const anyDigitsMatch = cleanedDigits.match(/\b\d{1,12}\b/)
+    if (anyDigitsMatch) {
+      const val = parseInt(anyDigitsMatch[0], 10)
+      if (!isNaN(val) && val > 0) finalVal = val
     }
+  }
 
-    const val = WORD_NUMBERS[w]
-    if (val !== undefined) {
-      hasNum = true
-      if (val === 1000 || val === 1000000) {
-        if (current === 0) current = 1
-        total += current * val
-        current = 0
-      } else if (val === 100) {
-        if (current === 0) current = 1
-        current = current * 100
-      } else {
-        current += val
+  if (!finalVal) {
+    // 6. Word numbers parsing (e.g. "besh yuz ming", "ellik ming", "bir million")
+    const words = text.split(/\s+/)
+    let total = 0
+    let current = 0
+    let hasNum = false
+
+    for (let i = 0; i < words.length; i++) {
+      const w = words[i].replace(/[^\w']/g, '')
+      if (w === 'yarim' && (words[i + 1] === 'million' || words[i + 1] === 'mln' || words[i + 1] === 'ming')) {
+        current += 0.5
+        hasNum = true
+        continue
+      }
+
+      const val = WORD_NUMBERS[w]
+      if (val !== undefined) {
+        hasNum = true
+        if (val === 1000 || val === 1000000) {
+          if (current === 0) current = 1
+          total += current * val
+          current = 0
+        } else if (val === 100) {
+          if (current === 0) current = 1
+          current = current * 100
+        } else {
+          current += val
+        }
       }
     }
+
+    total += current
+    if (hasNum && total > 0) {
+      finalVal = total
+    }
   }
 
-  total += current
-  if (hasNum && total > 0) {
-    return total
+  if (finalVal && finalVal > 0) {
+    if (convertForeign && currInfo.isForeign) {
+      return convertCurrencyToUzs(finalVal, currInfo.currency).uzsAmount
+    }
+    return finalVal
   }
 
   return null
@@ -287,8 +306,9 @@ export function parseLocalAIText(text: string, cardsList: any[] = []): ParsedTra
   if (!clean) return null
   const lower = clean.toLowerCase().replace(/[`ʻ‘’]/g, "'")
 
-  // 1. Extract Amount
-  const amountNum = extractAmountFromText(lower)
+  // 1. Extract Amount & Currency
+  const currInfo = detectCurrency(clean)
+  const amountNum = extractAmountFromText(lower, true)
   if (!amountNum || amountNum <= 0) {
     return null
   }
@@ -356,18 +376,31 @@ export function parseLocalAIText(text: string, cardsList: any[] = []): ParsedTra
     dateIso = yesterday.toISOString().slice(0, 16)
   }
 
-  // 6. Title formatting
+  // 6. Title and Note formatting with currency annotation
+  let noteText = clean
+  if (currInfo.isForeign) {
+    const rawVal = extractAmountFromText(lower, false)
+    if (rawVal) {
+      const conv = convertCurrencyToUzs(rawVal, currInfo.currency)
+      if (!clean.includes('≈') && !clean.includes('so\'m') && !clean.includes('som')) {
+        noteText = `${clean} ${conv.noteAnnotation}`
+      }
+    }
+  }
+
   const title = clean.slice(0, 80)
 
   return {
     type: detectedType,
     amount: formattedAmount,
     category: detectedCategory,
-    note: clean,
+    note: noteText,
     title,
     debtWho: detectedType === 'debt' || detectedType === 'lending' ? clean.split(' ')[0] : '',
     date: dateIso,
     cardId,
+    currency: currInfo.currency,
+    originalAmount: currInfo.isForeign ? extractAmountFromText(lower, false) || undefined : undefined,
     isLocalParsed: true
   }
 }

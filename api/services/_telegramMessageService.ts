@@ -25,15 +25,31 @@ export async function logBotMessage(userId: string, entry: BotMessageEntry): Pro
     const ob = u?.onboarding || {};
     const existingMsgs: BotMessageEntry[] = Array.isArray(ob.bot_messages) ? ob.bot_messages : [];
 
-    // Idempotency check
-    const isDuplicate = existingMsgs.some(m =>
+    // Check if entry already exists (for edits, transcription updates, status transitions)
+    const existingIndex = existingMsgs.findIndex(m =>
       (entry.update_id && m.update_id === entry.update_id) ||
-      (m.message_id === entry.message_id && m.direction === entry.direction && String(m.chat_id) === String(entry.chat_id))
+      (Number(m.message_id) === Number(entry.message_id) && m.direction === entry.direction && String(m.chat_id) === String(entry.chat_id))
     );
-    if (isDuplicate) return;
 
-    // Keep last 500 entries
-    const updatedMsgs = [...existingMsgs, entry].slice(-500);
+    let updatedMsgs: BotMessageEntry[];
+    if (existingIndex >= 0) {
+      const existing = existingMsgs[existingIndex];
+      existingMsgs[existingIndex] = {
+        ...existing,
+        ...entry,
+        text: entry.text || existing.text,
+        caption: entry.caption || existing.caption,
+        type: entry.type || existing.type,
+        metadata: {
+          ...(existing.metadata || {}),
+          ...(entry.metadata || {})
+        }
+      };
+      updatedMsgs = existingMsgs;
+    } else {
+      updatedMsgs = [...existingMsgs, entry].slice(-500);
+    }
+
     const numMsgId = Number(entry.message_id) || 0;
     const currentLastId = Number(ob.last_message_id) || 0;
     const updatedOb = {

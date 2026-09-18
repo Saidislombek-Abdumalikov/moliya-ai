@@ -397,7 +397,7 @@ export default function AnalyticsScreen({ onboarding }: Props) {
             border: `1.5px solid ${c.border}`,
           }}>
             <p style={{ fontSize: 12, color: '#8B82C4', marginBottom: 8, fontWeight: 500 }}>{c.label}</p>
-            <p style={{ fontSize: 24, fontWeight: 700, color: c.color, letterSpacing: -0.5, marginBottom: 2 }}>{c.val}</p>
+            <p style={{ fontSize: 'clamp(18px, 5.5vw, 24px)', fontWeight: 700, color: c.color, letterSpacing: -0.5, marginBottom: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.val}</p>
             <p style={{ fontSize: 11, color: '#B8B0DC' }}>{c.sub}</p>
           </div>
         ))}

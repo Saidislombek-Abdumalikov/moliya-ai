@@ -8,7 +8,9 @@ import { createSupabaseAuthSession } from "./api/_authHelper.js";
 import {
   parseTurboFinancialText,
   normalizeUzbekFinancialText,
-  correctAiMultiplierHallucination
+  correctAiMultiplierHallucination,
+  detectCurrency,
+  convertCurrencyToUzs
 } from "./api/_uzbekFinancialNormalizer.js";
 
 // Supabase client for local dev server (replaces Firebase)
@@ -546,6 +548,11 @@ Sana aniqlash qoidalari (Date Parsing Rules):
 4. Agar foydalanuvchi umuman hech qanday sana tilga olmagan bo'lsa, "date" maydoniga joriy vaqtni ("${currentIso}") yozing.
 5. "date" har doim qaytarilishi shart.
 
+CRITICAL CURRENCY CONVERSION RULES:
+- If amount is in USD ($ / dollar / usd / доллар), convert to Uzbek So'm at rate 1 USD = 12,900 UZS. E.g. "400$" -> 5160000. "100 dollar" -> 1290000. "50$" -> 645000. Always include the original dollar amount in the note (e.g. note: "telefon 400$ (~5 160 000 so'm)").
+- If amount is in RUB (rubl / руб / ₽), convert at rate 1 RUB = 140 UZS. E.g. "1000 rubl" -> 140000.
+- If amount is in EUR (€ / euro / yevro), convert at rate 1 EUR = 14,000 UZS.
+
 CRITICAL UZBEK NUMBER RULES:
 - "ming" / "минг" / "k" = THOUSAND (1,000 UZS). E.g. "500 ming" = 500000 (500 thousand, NEVER 500 million!). E.g. "30 ming" = 30000.
 - "million" / "млн" / "mln" = MILLION (1,000,000 UZS). E.g. "14 mln" = 14000000.
@@ -595,6 +602,14 @@ Input text: "${cleanText}"
         let rawNum = parseInt(String(data.amount).replace(/\s+/g, ''), 10);
         if (!isNaN(rawNum) && rawNum > 0) {
           rawNum = correctAiMultiplierHallucination(rawNum, cleanText, data.note);
+          const currInfo = detectCurrency(cleanText);
+          if (currInfo.isForeign && rawNum < 10000) {
+            const conv = convertCurrencyToUzs(rawNum, currInfo.currency);
+            rawNum = conv.uzsAmount;
+            if (!data.note?.includes('≈')) {
+              data.note = `${data.note || cleanText} ${conv.noteAnnotation}`;
+            }
+          }
           data.amount = rawNum.toLocaleString('en-US').replace(/,/g, ' ');
         }
       }

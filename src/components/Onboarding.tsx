@@ -19,6 +19,7 @@ export interface OnboardingResult {
   unlimitedAi?: boolean
   trialEndsAt?: string | null
   completed?: boolean
+  tour_completed?: boolean
   notifications?: { opt1: boolean; opt2: boolean; opt3: boolean }
   registration_status?: string
 }
@@ -289,11 +290,12 @@ export default function Onboarding({ onComplete }: Props) {
 
   return (
     <div
+      className="app-container"
       style={{
         position: 'relative',
         minHeight: '100dvh',
         width: '100%',
-        maxWidth: 430,
+        maxWidth: 'var(--app-max-width, 430px)',
         margin: '0 auto',
         background: '#FAF8FE',
         display: 'flex',

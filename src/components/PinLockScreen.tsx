@@ -131,12 +131,13 @@ export default function PinLockScreen({ language, onUnlock, onReset }: Props) {
 
   return (
     <div
+      className="app-container"
       style={{
         position: 'fixed',
         inset: 0,
         zIndex: 9999,
         background: '#FFFFFF',
-        maxWidth: 430,
+        maxWidth: 'var(--app-max-width, 430px)',
         margin: '0 auto',
         display: 'flex',
         flexDirection: 'column',

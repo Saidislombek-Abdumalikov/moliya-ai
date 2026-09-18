@@ -8,7 +8,7 @@ import ProfileScreen from './components/ProfileScreen'
 import BottomNav from './components/BottomNav'
 import AIButton from './components/AIButton'
 import AppTour from './components/AppTour'
-import { useFinance, isTelegramMiniApp } from './FinanceContext'
+import { useFinance, isTelegramMiniApp, isAllowedClient, isWebApp } from './FinanceContext'
 
 import InstallPromptModal from './components/InstallPromptModal'
 import OfflineStatusBanner from './components/OfflineStatusBanner'
@@ -17,7 +17,7 @@ export type Screen = 'home' | 'calendar' | 'analytics' | 'profile'
 type Stage = 'onboarding' | 'app'
 
 export default function App() {
-  const { onboarding, updateOnboarding, setHasSampleData, logout, isAuthReady, userId, authError } = useFinance()
+  const { onboarding, updateOnboarding, setHasSampleData, logout, isAuthReady, userId, authError, enableWebAppMode } = useFinance()
 
   const getInitialStage = (): Stage => {
     try {
@@ -148,28 +148,43 @@ export default function App() {
     );
   }
 
-  // 2. Block normal browsers outside Telegram — require entering through Telegram
-  if (!isTelegramMiniApp()) {
+  // 2. Client Access Gate: Allow Telegram Mini App AND standalone / active Web App
+  if (!isAllowedClient()) {
     return (
-      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#FAF8FE] text-[#1E1A3C] p-6 text-center select-none font-sans">
-        <div className="w-20 h-20 mb-6 rounded-3xl bg-[#EDE9FE] border border-[#DDD6FE] flex items-center justify-center text-4xl shadow-xl shadow-purple-500/10">
-          ✈️
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#FAF8FE] text-[#1E1A3C] p-6 text-center select-none font-sans overflow-y-auto">
+        <div className="w-20 h-20 mb-5 rounded-3xl bg-[#EDE9FE] border border-[#DDD6FE] flex items-center justify-center text-4xl shadow-xl shadow-purple-500/10">
+          💎
         </div>
-        <h2 className="text-2xl font-bold text-[#1E1A3C] mb-2 tracking-tight">
-          Telegram orqali kiring
+        <h2 className="text-2xl font-black text-[#1E1A3C] mb-2 tracking-tight">
+          Moliya AI
         </h2>
-        <p className="text-[#64748B] text-sm max-w-xs leading-relaxed mb-8">
-          Moliya AI ilovasi xavfsiz Telegram Mini App sifatida ishlaydi. Ilovadan foydalanish uchun Telegram botimizga o'ting.
+        <p className="text-[#64748B] text-sm max-w-xs leading-relaxed mb-6">
+          Shaxsiy va oilaviy moliyangizni sun'iy intellekt yordamida oson va aqlli boshqaring.
         </p>
-        <a
-          href="https://t.me/moliya_v2bot?start=open"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="w-full max-w-xs py-4 rounded-2xl bg-gradient-to-r from-[#7C3AED] to-[#6D28D9] text-white font-bold text-base shadow-lg shadow-purple-500/25 active:scale-95 transition-transform flex items-center justify-center gap-2"
-        >
-          <span>Telegramni ochish</span>
-          <span>🚀</span>
-        </a>
+
+        <div className="w-full max-w-xs flex flex-col gap-3">
+          <a
+            href="https://t.me/moliya_v2bot?start=open"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-[#7C3AED] to-[#6D28D9] text-white font-bold text-base shadow-lg shadow-purple-500/25 active:scale-95 transition-transform flex items-center justify-center gap-2"
+          >
+            <span>Telegram orqali kirish</span>
+            <span>🚀</span>
+          </a>
+
+          <button
+            onClick={() => enableWebAppMode()}
+            className="w-full py-3.5 rounded-2xl bg-white border-2 border-[#DDD6FE] text-[#7C3AED] font-bold text-base shadow-sm hover:bg-[#F5F3FF] active:scale-95 transition flex items-center justify-center gap-2"
+          >
+            <span>Veb-ilovada davom etish</span>
+            <span>🌐</span>
+          </button>
+        </div>
+
+        <p className="text-xs text-[#94A3B8] mt-6 max-w-xs">
+          💡 Veb-versiyada ochib, brauzer orqali <span className="font-semibold text-[#7C3AED]">"Bosh ekranga qo'shish"</span> (Add to Home Screen) qilib Telegramsiz bevosita foydalanishingiz mumkin.
+        </p>
       </div>
     );
   }
@@ -217,11 +232,12 @@ export default function App() {
 
   return (
     <div
+      className="app-container"
       style={{
         position: 'relative',
         minHeight: '100dvh',
         width: '100%',
-        maxWidth: 430,
+        maxWidth: 'var(--app-max-width, 430px)',
         margin: '0 auto',
         background: '#FAF8FE',
         paddingBottom: 95,

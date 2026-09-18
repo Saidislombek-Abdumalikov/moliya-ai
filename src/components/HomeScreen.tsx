@@ -709,7 +709,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
           <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.65)', marginBottom: 6, fontWeight: 500 }}>
             {t.totalBalance}
           </p>
-          <h1 style={{ fontSize: 34, fontWeight: 700, color: '#fff', letterSpacing: -1, marginBottom: 22 }}>
+          <h1 style={{ fontSize: 'clamp(24px, 7.5vw, 34px)', fontWeight: 700, color: '#fff', letterSpacing: -1, marginBottom: 22, wordBreak: 'break-word' }}>
             {fmtFull(baseBalance)} <span style={{ fontSize: 17, fontWeight: 500 }}>{t.currency}</span>
           </h1>
 

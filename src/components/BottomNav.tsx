@@ -99,7 +99,7 @@ export default function BottomNav({ active, onChange, language = 'uz' }: Props) 
         left: '50%',
         transform: 'translateX(-50%)',
         width: '100%',
-        maxWidth: 430,
+        maxWidth: 'var(--app-max-width, 430px)',
         background: 'rgba(255,255,255,0.97)',
         WebkitBackdropFilter: 'blur(16px)',
         backdropFilter: 'blur(16px)',
@@ -119,7 +119,7 @@ export default function BottomNav({ active, onChange, language = 'uz' }: Props) 
               style={{
                 display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
                 background: 'none', border: 'none', cursor: 'pointer',
-                padding: '6px 20px', borderRadius: 12, transition: 'opacity 0.15s',
+                padding: '6px clamp(8px, 3.5vw, 20px)', borderRadius: 12, transition: 'opacity 0.15s',
               }}
             >
               {tab.icon(isActive)}

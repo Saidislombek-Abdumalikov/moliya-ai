@@ -397,10 +397,10 @@ export default function AppTour({ isOpen, onClose, language = 'uz', onNavigateSc
           transition={{ duration: 0.25, ease: 'easeOut' }}
           style={{
             position: 'fixed',
-            left: 'calc(50% - 180px)',
+            left: 'max(16px, calc(50% - min(360px, calc(100vw - 32px)) / 2))',
             top: `${tooltipTop}px`,
-            width: 360,
-            maxWidth: 'calc(100vw - 40px)',
+            width: 'min(360px, calc(100vw - 32px))',
+            maxWidth: 'calc(100vw - 32px)',
             background: '#FFFFFF',
             borderRadius: 24,
             padding: '18px 18px',

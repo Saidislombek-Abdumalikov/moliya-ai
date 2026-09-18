@@ -19,6 +19,78 @@
   --font-sans: 'Plus Jakarta Sans', 'SF Pro Display', 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Inter', system-ui, sans-serif;
 }
 
+/* ── Universal Responsive App Resolution System ───────────────────── */
+:root {
+  --app-max-width: 430px;
+  --app-scale: 1;
+}
+
+/* 1. Small Phones (iPhone SE 2nd/3rd gen 375px, compact Android 360px, short screens <= 680px) */
+@media screen and (max-width: 380px), screen and (max-height: 680px) and (max-width: 440px) {
+  :root {
+    --app-scale: 0.93;
+    --app-max-width: 100%;
+  }
+  html {
+    zoom: 0.93;
+  }
+}
+
+/* Very compact displays (iPhone 5/5s/SE 1st gen <= 340px, or ultra-short screens) */
+@media screen and (max-width: 340px), screen and (max-height: 580px) and (max-width: 440px) {
+  :root {
+    --app-scale: 0.85;
+    --app-max-width: 100%;
+  }
+  html {
+    zoom: 0.85;
+  }
+}
+
+/* 2. Normal Phones (381px - 479px, iPhone 12/13/14/15/16, modern Androids): 100% untouched */
+@media screen and (min-width: 381px) and (max-width: 479px) and (min-height: 681px) {
+  :root {
+    --app-scale: 1;
+    --app-max-width: 100%;
+  }
+}
+
+/* 3. Big Displayed Phones & Phablets (480px - 640px, Foldables) */
+@media screen and (min-width: 480px) and (max-width: 640px) {
+  :root {
+    --app-scale: 1;
+    --app-max-width: 480px;
+  }
+}
+
+/* 4. Tablets & Desktops (>= 641px, iPads, Android tablets, desktop Telegram) */
+@media screen and (min-width: 641px) {
+  :root {
+    --app-scale: 1.04;
+    --app-max-width: 540px;
+  }
+}
+
+@media screen and (min-width: 1025px) {
+  :root {
+    --app-scale: 1.05;
+    --app-max-width: 560px;
+  }
+}
+
+/* Tablet container aesthetic & modal matching */
+@media screen and (min-width: 641px) {
+  .app-container {
+    box-shadow: 0 0 50px rgba(124, 58, 237, 0.07), 0 20px 40px rgba(30, 26, 60, 0.04);
+    border-left: 1px solid rgba(220, 214, 240, 0.5);
+    border-right: 1px solid rgba(220, 214, 240, 0.5);
+  }
+  div[style*="borderTopLeftRadius"],
+  div[style*="border-top-left-radius"] {
+    max-width: var(--app-max-width, 540px) !important;
+  }
+}
+
 * {
   -webkit-tap-highlight-color: transparent;
   -webkit-font-smoothing: antialiased;

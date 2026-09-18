@@ -69,33 +69,100 @@ const lastLinkMessageByUser = new Map<string, number>();
 
 async function cleanPreviousLinkButton(chatId: number | string, userId?: string, newMsgIdWithLink?: number) {
   const chatKey = String(chatId);
-  let prevMsgId = lastLinkMessageByUser.get(chatKey);
+  const idsToClean = new Set<number>();
 
-  if (!prevMsgId && userId) {
-    try {
-      const { data: u } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
-      const dbId = Number(u?.onboarding?.last_link_message_id);
-      if (Number.isInteger(dbId) && dbId > 0) {
-        prevMsgId = dbId;
-      }
-    } catch {}
+  // 1. In-memory cache
+  const cachedId = lastLinkMessageByUser.get(chatKey);
+  if (cachedId && cachedId > 0 && cachedId !== newMsgIdWithLink) {
+    idsToClean.add(cachedId);
   }
 
-  if (prevMsgId && prevMsgId !== newMsgIdWithLink) {
-    const delRes = await deleteTelegramMessage(chatId, prevMsgId);
-    if (!delRes || !delRes.ok) {
-      await editTelegramMessageReplyMarkup(chatId, prevMsgId, { inline_keyboard: [] });
+  // 2. Database records from users.onboarding
+  let dbLastMsgId: number | null = null;
+  if (userId) {
+    try {
+      const { data: u } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
+      const dbLinkId = Number(u?.onboarding?.last_link_message_id);
+      const dbSysId = Number(u?.onboarding?.last_system_message_id);
+      const dbTempId = Number(u?.onboarding?.last_temp_msg_id);
+      const dbLastId = Number(u?.onboarding?.last_message_id);
+
+      if (Number.isInteger(dbLinkId) && dbLinkId > 0 && dbLinkId !== newMsgIdWithLink) idsToClean.add(dbLinkId);
+      if (Number.isInteger(dbSysId) && dbSysId > 0 && dbSysId !== newMsgIdWithLink) idsToClean.add(dbSysId);
+      if (Number.isInteger(dbTempId) && dbTempId > 0 && dbTempId !== newMsgIdWithLink) idsToClean.add(dbTempId);
+      if (Number.isInteger(dbLastId) && dbLastId > 0) dbLastMsgId = dbLastId;
+
+      const bMsgs: any[] = Array.isArray(u?.onboarding?.bot_messages) ? u.onboarding.bot_messages : [];
+      for (const bm of bMsgs.slice(-35)) {
+        const mId = Number(bm.message_id);
+        if (
+          Number.isInteger(mId) &&
+          mId > 0 &&
+          mId !== newMsgIdWithLink &&
+          (bm.hasLinkButton ||
+            bm.type === 'broadcast' ||
+            bm.type === 'welcome_card' ||
+            bm.type === 'admin_direct' ||
+            bm.type === 'ai_response' ||
+            bm.type === 'bot_response')
+        ) {
+          idsToClean.add(mId);
+        }
+      }
+    } catch (err) {
+      console.warn('[BOT] Error querying onboarding for link cleanup:', err);
     }
   }
 
+  // 3. Backward sweep: In Telegram bot chats, message IDs are strictly sequential integers.
+  // Sweeping preceding message IDs guarantees that ANY previous message with an inline
+  // button link (e.g. admin broadcast reminder, previous transaction card, system card)
+  // has its reply markup stripped, leaving only the latest message with active buttons.
+  const sweepAnchor = (newMsgIdWithLink && Number.isInteger(newMsgIdWithLink) && newMsgIdWithLink > 0)
+    ? newMsgIdWithLink
+    : dbLastMsgId;
+
+  if (sweepAnchor && sweepAnchor > 0) {
+    for (let offset = 1; offset <= 10; offset++) {
+      const targetId = sweepAnchor - offset;
+      if (targetId > 0 && targetId !== newMsgIdWithLink) {
+        idsToClean.add(targetId);
+      }
+    }
+  }
+
+  // 4. Concurrently remove inline keyboards/link buttons from all identified messages
+  if (idsToClean.size > 0) {
+    await Promise.allSettled(
+      Array.from(idsToClean).map(mId =>
+        editTelegramMessageReplyMarkup(chatId, mId, { inline_keyboard: [] }).catch(() => {})
+      )
+    );
+  }
+
+  // 5. Update state with new active link message
   if (newMsgIdWithLink && newMsgIdWithLink > 0) {
     lastLinkMessageByUser.set(chatKey, newMsgIdWithLink);
     if (userId) {
       try {
         const { data: curr } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
-        const updatedOb = { ...(curr?.onboarding || {}), last_link_message_id: newMsgIdWithLink };
+        const ob = curr?.onboarding || {};
+        const bMsgs: any[] = Array.isArray(ob.bot_messages) ? ob.bot_messages : [];
+        const updatedMsgs = bMsgs.map((m: any) => {
+          if (m.message_id !== newMsgIdWithLink && m.hasLinkButton) {
+            return { ...m, hasLinkButton: false };
+          }
+          return m;
+        });
+        const updatedOb = {
+          ...ob,
+          last_link_message_id: newMsgIdWithLink,
+          bot_messages: updatedMsgs
+        };
         await supabase.from('users').update({ onboarding: updatedOb }).eq('id', userId);
-      } catch {}
+      } catch (err) {
+        console.warn('[BOT] Error updating last_link_message_id in DB:', err);
+      }
     }
   }
 }
@@ -159,13 +226,16 @@ async function sendOrReplaceSystemMessage(
     const data = await res.json();
     if (data?.ok && data?.result?.message_id) {
       const newMsgId = data.result.message_id;
+      if (isLink) {
+        await cleanPreviousLinkButton(chatId, userId, newMsgId);
+      }
       if (userId) {
         try {
           const { data: curr } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
           const updatedOb = {
             ...(curr?.onboarding || {}),
             last_system_message_id: newMsgId,
-            last_link_message_id: isLink ? newMsgId : null
+            last_link_message_id: isLink ? newMsgId : (curr?.onboarding?.last_link_message_id || null)
           };
           await supabase.from('users').update({ onboarding: updatedOb }).eq('id', userId);
         } catch {}
@@ -223,7 +293,7 @@ async function sendTelegramMessage(
     if (data?.ok && data?.result?.message_id) {
       const msgId = data.result.message_id;
       if (isLinkMsg) {
-        cleanPreviousLinkButton(chatId, userId, msgId).catch(() => {});
+        await cleanPreviousLinkButton(chatId, userId, msgId);
       }
       if (userId) {
         await logBotMessage(userId, {
@@ -277,7 +347,7 @@ async function editTelegramMessage(
     const data = await res.json();
     if (data?.ok) {
       if (isLinkMsg) {
-        cleanPreviousLinkButton(chatId, userId, messageId).catch(() => {});
+        await cleanPreviousLinkButton(chatId, userId, messageId);
       }
       if (userId) {
         await logBotMessage(userId, {
