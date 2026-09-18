@@ -465,6 +465,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
 
   const [showPremium, setShowPremium] = useState(false)
   const [showNotifications, setShowNotifications] = useState(false)
+  const [expandedNotificationId, setExpandedNotificationId] = useState<string | null>(null)
   const [notificationsList, setNotificationsList] = useState<AppNotificationItem[]>([])
   const [notificationsLoading, setNotificationsLoading] = useState(false)
   const [incomingToast, setIncomingToast] = useState<AppNotificationItem | null>(null)
@@ -520,8 +521,11 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
     }
   }, [incomingToast])
 
-  const handleOpenNotifications = () => {
+  const handleOpenNotifications = (targetId?: string) => {
     setShowNotifications(true)
+    if (targetId) {
+      setExpandedNotificationId(targetId)
+    }
     if (notificationsList.some(n => !n.isRead)) {
       const allIds = notificationsList.map(n => n.id)
       markAllNotificationsAsRead(allIds, userId)
@@ -687,8 +691,9 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
         notification={incomingToast}
         onClose={() => setIncomingToast(null)}
         onClick={() => {
+          const targetId = incomingToast?.id
           setIncomingToast(null)
-          handleOpenNotifications()
+          handleOpenNotifications(targetId)
         }}
       />
       <div style={{ height: 54 }} />
@@ -1349,80 +1354,143 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                   </p>
                 </div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                  {notificationsList.map((not) => (
-                    <div
-                      key={not.id}
-                      style={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 8,
-                        padding: '16px',
-                        borderRadius: 18,
-                        background: not.isRead ? '#FBFBFE' : '#F5F2FF',
-                        border: not.isRead ? '1px solid #ECE7F6' : '1.5px solid #DDD6FE',
-                        transition: 'all 0.2s ease',
-                      }}
-                    >
-                      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-                        <div style={{
-                          width: 36,
-                          height: 36,
-                          borderRadius: 12,
-                          background: not.isPinned ? '#FEF3C7' : not.priority === 'high' ? '#EDE9FE' : '#F1EEF9',
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {notificationsList.map((not) => {
+                    const isExpanded = expandedNotificationId === not.id;
+                    return (
+                      <div
+                        key={not.id}
+                        onClick={() => setExpandedNotificationId(isExpanded ? null : not.id)}
+                        style={{
                           display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: 16,
-                          flexShrink: 0
-                        }}>
-                          {not.isPinned ? '📌' : not.priority === 'high' ? '🔔' : '💬'}
-                        </div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 3 }}>
-                            <p style={{ fontSize: 13.5, fontWeight: 700, color: '#1A1538', margin: 0 }}>
+                          flexDirection: 'column',
+                          padding: isExpanded ? '14px 16px' : '11px 14px',
+                          borderRadius: 16,
+                          background: isExpanded ? '#FFFFFF' : not.isRead ? '#FAF9FD' : '#F5F2FF',
+                          border: isExpanded ? '1.5px solid #7C3AED' : not.isRead ? '1px solid #ECE7F6' : '1.5px solid #DDD6FE',
+                          boxShadow: isExpanded ? '0 6px 20px rgba(124, 58, 237, 0.12)' : 'none',
+                          cursor: 'pointer',
+                          userSelect: 'none',
+                          transition: 'all 0.2s ease',
+                        }}
+                      >
+                        {/* Compact Header Row */}
+                        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                          <div style={{
+                            width: 32,
+                            height: 32,
+                            borderRadius: 10,
+                            background: not.isPinned ? '#FEF3C7' : not.priority === 'high' ? '#EDE9FE' : '#F1EEF9',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: 15,
+                            flexShrink: 0
+                          }}>
+                            {not.isPinned ? '📌' : not.priority === 'high' ? '🔔' : '💬'}
+                          </div>
+
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <p style={{
+                              fontSize: 13,
+                              fontWeight: 700,
+                              color: '#1A1538',
+                              margin: 0,
+                              whiteSpace: isExpanded ? 'normal' : 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              lineHeight: 1.3
+                            }}>
                               {not.title}
                             </p>
-                            <span style={{ fontSize: 11, color: '#94A3B8', flexShrink: 0 }}>
+                            <span style={{ fontSize: 10.5, color: '#94A3B8', display: 'block', marginTop: 1 }}>
                               {formatNotificationTime(not.createdAt, lang)}
                             </span>
                           </div>
-                          <p style={{ fontSize: 12.5, color: '#475569', margin: 0, lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                            {not.message}
-                          </p>
 
-                          {not.imageUrl && (
-                            <img
-                              src={not.imageUrl}
-                              alt={not.title}
-                              style={{ width: '100%', maxHeight: 160, objectFit: 'cover', borderRadius: 12, marginTop: 8 }}
-                            />
-                          )}
-
-                          {not.actionUrl && (
-                            <a
-                              href={not.actionUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: 4,
-                                marginTop: 8,
-                                fontSize: 12,
-                                fontWeight: 700,
-                                color: '#7C3AED',
-                                textDecoration: 'none'
-                              }}
-                            >
-                              <span>Batafsil ko'rish</span>
-                              <span>↗</span>
-                            </a>
-                          )}
+                          {/* Expand indicator button */}
+                          <div style={{
+                            fontSize: 11,
+                            fontWeight: 700,
+                            color: isExpanded ? '#6D28D9' : '#7C3AED',
+                            background: isExpanded ? '#EDE9FE' : '#F5F3FF',
+                            padding: '3px 8px',
+                            borderRadius: 8,
+                            flexShrink: 0,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 3
+                          }}>
+                            <span>{isExpanded ? 'Yopish' : 'Ochish'}</span>
+                            <span style={{ fontSize: 9 }}>{isExpanded ? '▲' : '▼'}</span>
+                          </div>
                         </div>
+
+                        {/* Full Details Section (visible only when pressed) */}
+                        {isExpanded && (
+                          <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: 'auto' }}
+                            exit={{ opacity: 0, height: 0 }}
+                            transition={{ duration: 0.2 }}
+                            style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #F1EEF9' }}
+                          >
+                            <p style={{
+                              fontSize: 12.5,
+                              color: '#334155',
+                              margin: 0,
+                              lineHeight: 1.5,
+                              whiteSpace: 'pre-wrap',
+                              wordBreak: 'break-word'
+                            }}>
+                              {not.message}
+                            </p>
+
+                            {not.imageUrl && (
+                              <img
+                                src={not.imageUrl}
+                                alt={not.title}
+                                style={{
+                                  width: '100%',
+                                  maxHeight: 180,
+                                  objectFit: 'cover',
+                                  borderRadius: 12,
+                                  marginTop: 10,
+                                  border: '1px solid #E2E8F0'
+                                }}
+                              />
+                            )}
+
+                            {not.actionUrl && (
+                              <a
+                                href={not.actionUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 5,
+                                  marginTop: 10,
+                                  padding: '7px 13px',
+                                  borderRadius: 10,
+                                  background: 'linear-gradient(135deg, #7C3AED 0%, #6D28D9 100%)',
+                                  fontSize: 11.5,
+                                  fontWeight: 700,
+                                  color: '#FFFFFF',
+                                  textDecoration: 'none',
+                                  boxShadow: '0 3px 10px rgba(124, 58, 237, 0.25)'
+                                }}
+                              >
+                                <span>Batafsil o'tish</span>
+                                <span>↗</span>
+                              </a>
+                            )}
+                          </motion.div>
+                        )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </motion.div>
