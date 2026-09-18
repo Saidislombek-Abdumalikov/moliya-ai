@@ -1,10 +1,18 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 
 import type { OnboardingResult } from './Onboarding'
-import { useFinance, baseTransactions, Transaction } from '../FinanceContext'
+import { useFinance, baseTransactions, Transaction, isTelegramMiniApp } from '../FinanceContext'
 import BankCard from './BankCard'
 import { PremiumCountdownBadge, PremiumCountdownTimer } from './PremiumCountdown'
+import {
+  fetchUserNotifications,
+  subscribeToNotifications,
+  markAllNotificationsAsRead,
+  requestWebNotificationPermission,
+  type AppNotificationItem
+} from '../services/appNotificationService'
+import NotificationToast from './NotificationToast'
 
 interface Props {
   onboarding?: OnboardingResult | null
@@ -322,8 +330,37 @@ function fmtFull(n: number) {
   return n.toLocaleString('en-US').replace(/,/g, ' ')
 }
 
+function formatNotificationTime(dateStr?: string, lang: string = 'uz') {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return '';
+  const now = new Date();
+  const diffMinutes = Math.floor((now.getTime() - d.getTime()) / (60 * 1000));
+  if (diffMinutes < 1) {
+    return lang === 'ru' ? 'Только что' : lang === 'en' ? 'Just now' : 'Hozirgina';
+  }
+  if (diffMinutes < 60) {
+    return `${diffMinutes} ${lang === 'ru' ? 'мин назад' : lang === 'en' ? 'min ago' : 'daqiqa oldin'}`;
+  }
+  const isToday = d.getDate() === now.getDate() && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+  const hours = String(d.getHours()).padStart(2, '0');
+  const minutes = String(d.getMinutes()).padStart(2, '0');
+  if (isToday) {
+    const bugun = lang === 'ru' ? 'Сегодня' : lang === 'en' ? 'Today' : 'Bugun';
+    return `${bugun}, ${hours}:${minutes}`;
+  }
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const isYesterday = d.getDate() === yesterday.getDate() && d.getMonth() === yesterday.getMonth() && d.getFullYear() === yesterday.getFullYear();
+  if (isYesterday) {
+    const kecha = lang === 'ru' ? 'Вчера' : lang === 'en' ? 'Yesterday' : 'Kecha';
+    return `${kecha}, ${hours}:${minutes}`;
+  }
+  return `${d.getDate()}.${String(d.getMonth() + 1).padStart(2, '0')} ${hours}:${minutes}`;
+}
+
 export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
-  const { onboarding: contextOnboarding, customTransactions, cards, saveCards, deleteTransaction, addTransaction, deletedTxIds, hasSampleData, isPremium, isVip, premiumExpiresAt, unlimitedAi } = useFinance()
+  const { onboarding: contextOnboarding, customTransactions, cards, saveCards, deleteTransaction, addTransaction, deletedTxIds, hasSampleData, isPremium, isVip, premiumExpiresAt, unlimitedAi, userId } = useFinance()
   const currentOnboarding = onboarding || contextOnboarding
   const initialLang = currentOnboarding?.language || 'uz'
   const lang = (initialLang in translations) ? initialLang : 'uz'
@@ -428,7 +465,69 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
 
   const [showPremium, setShowPremium] = useState(false)
   const [showNotifications, setShowNotifications] = useState(false)
-  const [hasNewNotifications, setHasNewNotifications] = useState(true)
+  const [notificationsList, setNotificationsList] = useState<AppNotificationItem[]>([])
+  const [notificationsLoading, setNotificationsLoading] = useState(false)
+  const [incomingToast, setIncomingToast] = useState<AppNotificationItem | null>(null)
+
+  const unreadCount = notificationsList.filter(n => !n.isRead).length
+  const hasNewNotifications = unreadCount > 0
+
+  const loadNotifications = async () => {
+    setNotificationsLoading(true)
+    const list = await fetchUserNotifications({
+      userId,
+      isPremium,
+      isTelegram: isTelegramMiniApp()
+    })
+    setNotificationsList(list)
+    setNotificationsLoading(false)
+  }
+
+  useEffect(() => {
+    loadNotifications()
+
+    // Gracefully ask for Web push notification permission if on Web App
+    if (!isTelegramMiniApp() && typeof window !== 'undefined') {
+      setTimeout(() => {
+        requestWebNotificationPermission().catch(() => {})
+      }, 3500)
+    }
+
+    // Subscribe to live notifications from Supabase Realtime
+    const unsubscribe = subscribeToNotifications(
+      { userId, isPremium, isTelegram: isTelegramMiniApp() },
+      (newNotif) => {
+        setNotificationsList(prev => [newNotif, ...prev.filter(x => x.id !== newNotif.id)])
+        setIncomingToast(newNotif)
+      }
+    )
+
+    const onFocus = () => loadNotifications()
+    window.addEventListener('focus', onFocus)
+
+    return () => {
+      unsubscribe()
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [userId, isPremium])
+
+  useEffect(() => {
+    if (incomingToast) {
+      const timer = setTimeout(() => {
+        setIncomingToast(null)
+      }, 7000)
+      return () => clearTimeout(timer)
+    }
+  }, [incomingToast])
+
+  const handleOpenNotifications = () => {
+    setShowNotifications(true)
+    if (notificationsList.some(n => !n.isRead)) {
+      const allIds = notificationsList.map(n => n.id)
+      markAllNotificationsAsRead(allIds, userId)
+      setNotificationsList(prev => prev.map(n => ({ ...n, isRead: true })))
+    }
+  }
 
   // States for limit calculator modal
   const [showLimitModal, setShowLimitModal] = useState(false)
@@ -584,6 +683,14 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
 
   return (
     <div>
+      <NotificationToast
+        notification={incomingToast}
+        onClose={() => setIncomingToast(null)}
+        onClick={() => {
+          setIncomingToast(null)
+          handleOpenNotifications()
+        }}
+      />
       <div style={{ height: 54 }} />
 
       {/* Header */}
@@ -639,10 +746,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
           )}
           <div style={{ position: 'relative' }}>
             <button
-              onClick={async () => {
-                setShowNotifications(true)
-                setHasNewNotifications(false)
-              }}
+              onClick={handleOpenNotifications}
               style={{
                 width: 38,
                 height: 38,
@@ -662,17 +766,26 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                 <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
               </svg>
             </button>
-            {hasNewNotifications && (
+            {unreadCount > 0 && (
               <div style={{
                 position: 'absolute',
-                top: -2,
-                right: -2,
-                width: 10,
-                height: 10,
-                borderRadius: '50%',
+                top: -4,
+                right: -4,
+                minWidth: 16,
+                height: 16,
+                borderRadius: 8,
                 background: '#EF4444',
                 border: '2px solid #FFFFFF',
-              }} />
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#FFFFFF',
+                fontSize: 9,
+                fontWeight: 800,
+                padding: '0 3px',
+              }}>
+                {unreadCount > 9 ? '9+' : unreadCount}
+              </div>
             )}
           </div>
         </div>
@@ -1195,36 +1308,123 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                 </button>
               </div>
 
-              <h3 style={{ fontSize: 18, fontWeight: 700, color: '#1E1A3C', marginBottom: 18 }}>
-                {t.notificationsTitle}
-              </h3>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                {[
-                  { title: t.notiCashback, time: 'Bugun, 10:15', emoji: '💰', bg: '#F0FDF4', color: '#16A34A' },
-                  { title: t.notiMaosh, time: 'Dushanba, 09:00', emoji: '💼', bg: '#F0FDF4', color: '#16A34A' },
-                  { title: t.notiLimit, time: 'Juma, 18:40', emoji: '🎯', bg: '#FFFBEB', color: '#D97706' }
-                ].map((not, idx) => (
-                  <div key={idx} style={{
-                    display: 'flex', gap: 14, padding: '16px', borderRadius: 16,
-                    background: '#F9F8FF', border: '1px solid #F3F0FF'
-                  }}>
-                    <div style={{
-                      width: 38, height: 38, borderRadius: 12, background: not.bg,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: 18, flexShrink: 0
-                    }}>
-                      {not.emoji}
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <p style={{ fontSize: 13, fontWeight: 600, color: '#1E1A3C', marginBottom: 4, lineHeight: 1.4 }}>
-                        {not.title}
-                      </p>
-                      <p style={{ fontSize: 11, color: '#B8B0DC' }}>{not.time}</p>
-                    </div>
-                  </div>
-                ))}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+                <h3 style={{ fontSize: 18, fontWeight: 700, color: '#1E1A3C', margin: 0 }}>
+                  {t.notificationsTitle}
+                </h3>
+                {notificationsList.length > 0 && (
+                  <button
+                    onClick={() => {
+                      const allIds = notificationsList.map(n => n.id);
+                      markAllNotificationsAsRead(allIds, userId);
+                      setNotificationsList(prev => prev.map(n => ({ ...n, isRead: true })));
+                    }}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: '#7C3AED',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      padding: 0
+                    }}
+                  >
+                    {lang === 'ru' ? 'Прочитать все' : lang === 'en' ? 'Mark all as read' : "Hammasi o'qildi"}
+                  </button>
+                )}
               </div>
+
+              {notificationsLoading && notificationsList.length === 0 ? (
+                <div style={{ padding: '36px 0', display: 'flex', justifyContent: 'center' }}>
+                  <div className="w-8 h-8 border-3 border-[#DDD6FE] border-t-[#7C3AED] rounded-full animate-spin" />
+                </div>
+              ) : notificationsList.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '36px 16px', color: '#8B82C4' }}>
+                  <div style={{ fontSize: 36, marginBottom: 8 }}>📭</div>
+                  <p style={{ fontSize: 14, fontWeight: 700, color: '#1E1A3C', margin: '0 0 4px' }}>
+                    {t.notificationsEmpty || "Sizda yangi bildirishnomalar yo'q"}
+                  </p>
+                  <p style={{ fontSize: 12, color: '#A098D5', margin: 0 }}>
+                    {lang === 'ru' ? 'Здесь появятся важные новости и напоминания' : lang === 'en' ? 'Important updates and reminders will appear here' : "Muhim yangiliklar va eslatmalar shu yerda ko'rinadi"}
+                  </p>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {notificationsList.map((not) => (
+                    <div
+                      key={not.id}
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 8,
+                        padding: '16px',
+                        borderRadius: 18,
+                        background: not.isRead ? '#FBFBFE' : '#F5F2FF',
+                        border: not.isRead ? '1px solid #ECE7F6' : '1.5px solid #DDD6FE',
+                        transition: 'all 0.2s ease',
+                      }}
+                    >
+                      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                        <div style={{
+                          width: 36,
+                          height: 36,
+                          borderRadius: 12,
+                          background: not.isPinned ? '#FEF3C7' : not.priority === 'high' ? '#EDE9FE' : '#F1EEF9',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: 16,
+                          flexShrink: 0
+                        }}>
+                          {not.isPinned ? '📌' : not.priority === 'high' ? '🔔' : '💬'}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 3 }}>
+                            <p style={{ fontSize: 13.5, fontWeight: 700, color: '#1A1538', margin: 0 }}>
+                              {not.title}
+                            </p>
+                            <span style={{ fontSize: 11, color: '#94A3B8', flexShrink: 0 }}>
+                              {formatNotificationTime(not.createdAt, lang)}
+                            </span>
+                          </div>
+                          <p style={{ fontSize: 12.5, color: '#475569', margin: 0, lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                            {not.message}
+                          </p>
+
+                          {not.imageUrl && (
+                            <img
+                              src={not.imageUrl}
+                              alt={not.title}
+                              style={{ width: '100%', maxHeight: 160, objectFit: 'cover', borderRadius: 12, marginTop: 8 }}
+                            />
+                          )}
+
+                          {not.actionUrl && (
+                            <a
+                              href={not.actionUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 4,
+                                marginTop: 8,
+                                fontSize: 12,
+                                fontWeight: 700,
+                                color: '#7C3AED',
+                                textDecoration: 'none'
+                              }}
+                            >
+                              <span>Batafsil ko'rish</span>
+                              <span>↗</span>
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </motion.div>
           </div>
         )}
