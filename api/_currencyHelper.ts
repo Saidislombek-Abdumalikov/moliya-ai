@@ -91,32 +91,44 @@ export async function fetchLiveBankUzRates(): Promise<BankUzRatesResponse> {
           const tabMatch = html.match(tabRe);
           const tabHtml = tabMatch ? tabMatch[0] : '';
 
-          // Buy section
+          const bankRegex = /<a[^>]*href=[^>]*\/currency\/bank\/[^>]*>[\s\S]*?<span class=["']medium-text["']>\s*([^<]+)<\/span>[\s\S]*?<span class=["']medium-text green-date["']>\s*([\d\s.,]+)/gi;
+
+          // Buy section (Sotib olish — eng yuqori)
           let bestBuyRate: number | null = null;
           let bestBuyBank: string | null = null;
           const buyBlock = tabHtml.match(/Sotib\s+olish[\s\S]*?(Sotish|$)/i);
           if (buyBlock) {
-            const item = buyBlock[0].match(/<a[^>]*href=[^>]*\/currency\/bank\/[^>]*>[\s\S]*?<span class=["']medium-text["']>\s*([^<]+)<\/span>[\s\S]*?<span class=["']medium-text green-date["']>\s*([\d\s.,]+)/i);
-            if (item) {
-              bestBuyBank = item[1].trim();
-              bestBuyRate = parseFloat(item[2].replace(/\s+/g, '').replace(',', '.'));
+            let m: RegExpExecArray | null;
+            while ((m = bankRegex.exec(buyBlock[0])) !== null) {
+              const bName = m[1].trim();
+              const bRate = parseFloat(m[2].replace(/\s+/g, '').replace(',', '.'));
+              if (!isNaN(bRate) && (bestBuyRate === null || bRate > bestBuyRate)) {
+                bestBuyRate = bRate;
+                bestBuyBank = bName;
+              }
             }
           }
 
-          // Sell section
+          // Sell section (Sotish — eng past)
           let bestSellRate: number | null = null;
           let bestSellBank: string | null = null;
           const sellIndex = tabHtml.indexOf('Sotish');
           if (sellIndex !== -1) {
             const sellBlock = tabHtml.slice(sellIndex);
-            const item = sellBlock.match(/<a[^>]*href=[^>]*\/currency\/bank\/[^>]*>[\s\S]*?<span class=["']medium-text["']>\s*([^<]+)<\/span>[\s\S]*?<span class=["']medium-text green-date["']>\s*([\d\s.,]+)/i);
-            if (item) {
-              bestSellBank = item[1].trim();
-              bestSellRate = parseFloat(item[2].replace(/\s+/g, '').replace(',', '.'));
+            let m: RegExpExecArray | null;
+            bankRegex.lastIndex = 0;
+            while ((m = bankRegex.exec(sellBlock)) !== null) {
+              const bName = m[1].trim();
+              const bRate = parseFloat(m[2].replace(/\s+/g, '').replace(',', '.'));
+              if (!isNaN(bRate) && (bestSellRate === null || bRate < bestSellRate)) {
+                bestSellRate = bRate;
+                bestSellBank = bName;
+              }
             }
           }
 
-          const activeRate = bestSellRate || cbuRate || bestBuyRate || DEFAULT_RATES[code];
+          // When user converts foreign currency to UZS (e.g. 400$ expense/income), use the best bank exchange rate
+          const activeRate = bestBuyRate || bestSellRate || cbuRate || DEFAULT_RATES[code];
 
           return {
             code,

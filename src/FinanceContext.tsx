@@ -177,52 +177,21 @@ export const useFinance = () => {
 }
 
 // Helper: Detect if running in standalone PWA or Web App mode
+// Helper: Detect if running in Web App mode (outside Telegram Mini App)
 export function isWebApp(): boolean {
-  if (typeof window === 'undefined') return false
-
-  // 1. Standalone display mode (PWA installed on home screen)
-  if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) return true
-  if ((navigator as any).standalone === true) return true
-  if (document.referrer && document.referrer.includes('android-app://')) return true
-
-  // 2. User chose web app mode in this browser
-  if (localStorage.getItem('moliya_web_app_mode') === 'true') return true
-
-  // 3. URL explicitly requests web mode
-  const search = window.location.search || ''
-  const hash = window.location.hash || ''
-  if (search.includes('mode=web') || hash.includes('mode=web')) return true
-
-  // 4. Stored user ID exists and is logged in
-  const storedId = localStorage.getItem('user_id_v1')
-  if (storedId && localStorage.getItem('user_logged_in_v1') === 'true') return true
-
-  return false
+  return !isTelegramMiniApp();
 }
 
-// Helper: Check if client is either Telegram Mini App or Web App
+// Helper: Check if client is allowed (both Telegram and Web App supported)
 export function isAllowedClient(): boolean {
-  return isTelegramMiniApp() || isWebApp()
+  return true;
 }
 
 // Helper: Enable standalone Web App mode
 export function enableWebAppMode(): void {
-  if (typeof window === 'undefined') return
-  localStorage.setItem('moliya_web_app_mode', 'true')
-  window.dispatchEvent(new Event('moliya_web_mode_enabled'))
-}
-
-// Helper: Generate or retrieve persistent web user ID
-export function getOrCreateWebUserId(): string {
-  if (typeof window === 'undefined') return 'moliya_user_web_anon'
-  let current = localStorage.getItem('user_id_v1')
-  if (current) return current
-
-  const rand = Math.random().toString(36).substring(2, 10) + Date.now().toString(36)
-  const newId = `moliya_user_web_${rand}`
-  localStorage.setItem('user_id_v1', newId)
-  localStorage.setItem('moliya_web_app_mode', 'true')
-  return newId
+  if (typeof window === 'undefined') return;
+  localStorage.setItem('moliya_web_app_mode', 'true');
+  window.dispatchEvent(new Event('moliya_web_mode_enabled'));
 }
 
 // Helper: Detect if running inside a legitimate Telegram Mini App
@@ -302,13 +271,18 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const defaultTgUserId = tgUser?.id ? `moliya_user_tg_${tgUser.id}` : null
 
   const [userId, setUserId] = useState<string | null>(() => {
-    if (!isClientAllowed) return null
-    const stored = localStorage.getItem('user_id_v1')
-    if (stored) return stored
-    if (defaultTgUserId) return defaultTgUserId
-    if (isWeb) return getOrCreateWebUserId()
-    return null
-  })
+    if (isTg) {
+      if (defaultTgUserId) return defaultTgUserId;
+      const stored = localStorage.getItem('user_id_v1');
+      if (stored?.startsWith('moliya_user_tg_')) return stored;
+    } else {
+      // In Web App mode: Only allow if a cryptographically signed session token exists
+      const storedToken = localStorage.getItem('user_session_token_v1');
+      const stored = localStorage.getItem('user_id_v1');
+      if (storedToken && stored && stored.startsWith('moliya_user_tg_')) return stored;
+    }
+    return null;
+  });
 
   const [onboarding, setOnboarding] = useState<OnboardingResult | null>(() => {
     if (!isClientAllowed) return null
@@ -498,26 +472,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           try { if (typeof tg.enableClosingConfirmation === 'function') tg.enableClosingConfirmation() } catch {}
         }
 
-        // If outside Telegram and web mode not active, pause and let UI offer Telegram or Web entry
-        if (!isAllowedClient()) {
-          console.log('[AUTH] Browser outside Telegram and web mode not active.');
-          setIsAuthReady(true);
-          return;
-        }
 
-        // Web mode active outside Telegram
-        if (isWebApp() && !isTelegramMiniApp()) {
-          const webId = getOrCreateWebUserId();
-          setUserId(webId);
-          const savedOb = localStorage.getItem('user_onboarding_v1');
-          if (savedOb) {
-            try {
-              const ob = JSON.parse(savedOb);
-              setOnboarding(ob);
-              setAccessState(computeAccessState(ob));
-            } catch {}
-          }
-        }
         const initData = tg?.initData || ''
         const initDataUnsafe = tg?.initDataUnsafe
         const currentTgId = initDataUnsafe?.user?.id ? String(initDataUnsafe.user.id) : null
@@ -716,12 +671,21 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           resumePolling(pendingRequestId)
         }
 
-        // ===== STEP 7: Local fallback =====
-        const savedUserId = localStorage.getItem('user_id_v1')
-        if (savedUserId && localStorage.getItem('user_logged_in_v1') === 'true') {
-          setUserId(savedUserId)
-          localStorage.setItem('user_onboarding_completed_v1', 'true')
-          console.log('[AUTH] Restored from localStorage fallback')
+        // ===== STEP 7: Local fallback (Telegram Mini App only) =====
+        if (isTelegramMiniApp()) {
+          const savedUserId = localStorage.getItem('user_id_v1');
+          if (savedUserId && savedUserId.startsWith('moliya_user_tg_')) {
+            setUserId(savedUserId);
+            localStorage.setItem('user_onboarding_completed_v1', 'true');
+            console.log('[AUTH] Restored from Telegram localStorage fallback');
+          }
+        } else {
+          // In Web App: If sessionToken is not valid, wipe unauthenticated/forged data
+          if (!sessionToken) {
+            localStorage.removeItem('user_id_v1');
+            localStorage.removeItem('user_logged_in_v1');
+            setUserId(null);
+          }
         }
       } catch (e) {
         console.error('[AUTH] Authentication error:', e)
@@ -899,11 +863,10 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   // ═══════════════════════════════════════════════════════════
   const getEffectiveUserId = (): string | null => {
     if (userId) return userId;
+    if (isTelegramMiniApp() && defaultTgUserId) return defaultTgUserId;
+    const storedToken = localStorage.getItem('user_session_token_v1');
     const stored = localStorage.getItem('user_id_v1');
-    if (stored) return stored;
-    if (defaultTgUserId) return defaultTgUserId;
-    if (isWebApp()) return getOrCreateWebUserId();
-    if (!isAllowedClient()) return null;
+    if (storedToken && stored && stored.startsWith('moliya_user_tg_')) return stored;
     return null;
   };
 

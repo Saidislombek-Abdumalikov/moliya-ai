@@ -8,8 +8,8 @@ import ProfileScreen from './components/ProfileScreen'
 import BottomNav from './components/BottomNav'
 import AIButton from './components/AIButton'
 import AppTour from './components/AppTour'
-import { useFinance, isTelegramMiniApp, isAllowedClient, isWebApp } from './FinanceContext'
-
+import { useFinance, isTelegramMiniApp } from './FinanceContext'
+import WebLoginScreen from './components/WebLoginScreen'
 import InstallPromptModal from './components/InstallPromptModal'
 import OfflineStatusBanner from './components/OfflineStatusBanner'
 
@@ -17,7 +17,7 @@ export type Screen = 'home' | 'calendar' | 'analytics' | 'profile'
 type Stage = 'onboarding' | 'app'
 
 export default function App() {
-  const { onboarding, updateOnboarding, setHasSampleData, logout, isAuthReady, userId, authError, enableWebAppMode } = useFinance()
+  const { onboarding, updateOnboarding, setHasSampleData, logout, isAuthReady, userId, authError } = useFinance()
 
   const getInitialStage = (): Stage => {
     try {
@@ -148,43 +148,17 @@ export default function App() {
     );
   }
 
-  // 2. Client Access Gate: Allow Telegram Mini App AND standalone / active Web App
-  if (!isAllowedClient()) {
+  // 2. Web App Authentication Gate: If outside Telegram and user is not authenticated, show WebLoginScreen
+  if (!isTelegramMiniApp() && !userId) {
+    return <WebLoginScreen />;
+  }
+
+  // 3. Telegram Mini App Loading: If inside Telegram Mini App but user ID hasn't loaded yet
+  if (isTelegramMiniApp() && !userId) {
     return (
-      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#FAF8FE] text-[#1E1A3C] p-6 text-center select-none font-sans overflow-y-auto">
-        <div className="w-20 h-20 mb-5 rounded-3xl bg-[#EDE9FE] border border-[#DDD6FE] flex items-center justify-center text-4xl shadow-xl shadow-purple-500/10">
-          💎
-        </div>
-        <h2 className="text-2xl font-black text-[#1E1A3C] mb-2 tracking-tight">
-          Moliya AI
-        </h2>
-        <p className="text-[#64748B] text-sm max-w-xs leading-relaxed mb-6">
-          Shaxsiy va oilaviy moliyangizni sun'iy intellekt yordamida oson va aqlli boshqaring.
-        </p>
-
-        <div className="w-full max-w-xs flex flex-col gap-3">
-          <a
-            href="https://t.me/moliya_v2bot?start=open"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-[#7C3AED] to-[#6D28D9] text-white font-bold text-base shadow-lg shadow-purple-500/25 active:scale-95 transition-transform flex items-center justify-center gap-2"
-          >
-            <span>Telegram orqali kirish</span>
-            <span>🚀</span>
-          </a>
-
-          <button
-            onClick={() => enableWebAppMode()}
-            className="w-full py-3.5 rounded-2xl bg-white border-2 border-[#DDD6FE] text-[#7C3AED] font-bold text-base shadow-sm hover:bg-[#F5F3FF] active:scale-95 transition flex items-center justify-center gap-2"
-          >
-            <span>Veb-ilovada davom etish</span>
-            <span>🌐</span>
-          </button>
-        </div>
-
-        <p className="text-xs text-[#94A3B8] mt-6 max-w-xs">
-          💡 Veb-versiyada ochib, brauzer orqali <span className="font-semibold text-[#7C3AED]">"Bosh ekranga qo'shish"</span> (Add to Home Screen) qilib Telegramsiz bevosita foydalanishingiz mumkin.
-        </p>
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#FAF8FE] text-[#1E1A3C] p-6 text-center select-none font-sans">
+        <div className="w-12 h-12 border-4 border-[#DDD6FE] border-t-[#7C3AED] rounded-full animate-spin mb-4" />
+        <p className="text-sm text-[#64748B] font-medium">Telegram hisobi yuklanmoqda...</p>
       </div>
     );
   }
@@ -237,7 +211,7 @@ export default function App() {
         position: 'relative',
         minHeight: '100dvh',
         width: '100%',
-        maxWidth: 'var(--app-max-width, 430px)',
+        maxWidth: 430,
         margin: '0 auto',
         background: '#FAF8FE',
         paddingBottom: 95,
