@@ -10,7 +10,8 @@ import {
   normalizeUzbekFinancialText,
   correctAiMultiplierHallucination,
   detectCurrency,
-  convertCurrencyToUzs
+  convertCurrencyToUzs,
+  fetchLiveBankUzRates
 } from "./api/_uzbekFinancialNormalizer.js";
 
 // Supabase client for local dev server (replaces Firebase)
@@ -450,6 +451,15 @@ async function startServer() {
     }
   });
 
+  app.get("/api/currency-rates", async (_req, res) => {
+    try {
+      const data = await fetchLiveBankUzRates();
+      res.json({ success: true, ...data });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
   app.post("/api/parse-expense", async (req, res) => {
     try {
       const { text, cards = [] } = req.body;
@@ -548,10 +558,12 @@ Sana aniqlash qoidalari (Date Parsing Rules):
 4. Agar foydalanuvchi umuman hech qanday sana tilga olmagan bo'lsa, "date" maydoniga joriy vaqtni ("${currentIso}") yozing.
 5. "date" har doim qaytarilishi shart.
 
-CRITICAL CURRENCY CONVERSION RULES:
-- If amount is in USD ($ / dollar / usd / доллар), convert to Uzbek So'm at rate 1 USD = 12,900 UZS. E.g. "400$" -> 5160000. "100 dollar" -> 1290000. "50$" -> 645000. Always include the original dollar amount in the note (e.g. note: "telefon 400$ (~5 160 000 so'm)").
-- If amount is in RUB (rubl / руб / ₽), convert at rate 1 RUB = 140 UZS. E.g. "1000 rubl" -> 140000.
-- If amount is in EUR (€ / euro / yevro), convert at rate 1 EUR = 14,000 UZS.
+CRITICAL CURRENCY CONVERSION RULES (Live Bank.uz rates):
+- If amount is in USD ($ / dollar / usd / доллар), convert to Uzbek So'm at live market rate from bank.uz (~11,850 UZS). E.g. "400$" -> 4740000. "100 dollar" -> 1185000. "50$" -> 592500. Always include the original dollar amount in the note (e.g. note: "telefon 400$ (~4 740 000 so'm)").
+- If amount is in RUB (rubl / руб / ₽), convert at live rate 1 RUB ≈ 136 UZS. E.g. "1000 rubl" -> 136000.
+- If amount is in EUR (€ / euro / yevro), convert at live rate 1 EUR ≈ 13,620 UZS.
+- If amount is in GBP (£ / funt), convert at live rate 1 GBP ≈ 15,980 UZS.
+- If amount is in KZT (₸ / tenge), convert at live rate 1 KZT ≈ 27 UZS.
 
 CRITICAL UZBEK NUMBER RULES:
 - "ming" / "минг" / "k" = THOUSAND (1,000 UZS). E.g. "500 ming" = 500000 (500 thousand, NEVER 500 million!). E.g. "30 ming" = 30000.

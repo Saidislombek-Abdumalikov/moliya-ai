@@ -3,7 +3,8 @@
  * Handles numbers, multipliers, abbreviations, colloquial phrases, and mixed languages.
  */
 
-export { detectCurrency, convertCurrencyToUzs, type SupportedCurrency } from './_currencyHelper.js';
+import { detectCurrency, convertCurrencyToUzs, fetchLiveBankUzRates, type SupportedCurrency } from './_currencyHelper.js';
+export { detectCurrency, convertCurrencyToUzs, fetchLiveBankUzRates, type SupportedCurrency };
 
 export interface TurboTransaction {
   type: 'expense' | 'income' | 'debt' | 'lending';
@@ -250,11 +251,34 @@ export function extractUzbekNumber(raw: string): number | null {
     return `${whole}${paddedFrac}`;
   });
 
-  // Extract explicit digits first
+  // Extract currency-associated numbers first (e.g. 5$, 50$, $50, 50 euro, 20 dollar, 1500 rubl)
+  const currNumMatch = text.match(/(?:[\$€₽£₸])\s*(\d+(?:[.,]\d+)?)\b|\b(\d+(?:[.,]\d+)?)\s*(?:[\$€₽£₸]|dollar|dollor|dolir|usd|euro|evro|yevro|eur|rubl|rub|funt|pound|tenge|тенге|доллар|евро|рубл)/i);
+  if (currNumMatch) {
+    const rawVal = (currNumMatch[1] || currNumMatch[2]).replace(',', '.');
+    const parsed = parseFloat(rawVal);
+    if (!isNaN(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+
+  // Explicit so'm match (e.g. 50 so'm, 1000 so'm)
+  const somNumMatch = text.match(/\b(\d+(?:[.,]\d+)?)\s*(?:so'm|som|sum|сўм|сум)\b/i);
+  if (somNumMatch) {
+    const parsed = parseFloat(somNumMatch[1].replace(',', '.'));
+    if (!isNaN(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+
+  // Extract explicit digits: if foreign currency is present, accept 1-12 digits, else standard 3-12 digits
   const cleanedDigits = text.replace(/(\d+)\s+(\d{3})\b/g, '$1$2');
-  const numberMatch = cleanedDigits.match(/\b\d{3,12}\b/);
+  const isForeign = detectCurrency(text).isForeign;
+  const numberMatch = cleanedDigits.match(isForeign ? /\b\d{1,12}(?:[.,]\d+)?\b/ : /\b\d{3,12}\b/);
   if (numberMatch) {
-    return parseInt(numberMatch[0].replace(/\s+/g, ''), 10);
+    const parsed = parseFloat(numberMatch[0].replace(/\s+/g, '').replace(',', '.'));
+    if (!isNaN(parsed) && parsed > 0) {
+      return parsed;
+    }
   }
 
   // Fallback to spoken words
@@ -667,10 +691,12 @@ Categories: 'Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\\'liq', 'Ta\\'l
 Types: 'expense', 'income', 'debt', 'lending'.
 Currency: Default is Uzbek So'm (UZS). Extract amount as integer in UZS.
 
-CRITICAL CURRENCY CONVERSION RULES:
-- If amount is in USD ($ / dollar / usd / доллар), convert to Uzbek So'm at rate 1 USD = 12,900 UZS. E.g. "400$" -> 5160000. "100 dollar" -> 1290000. "50$" -> 645000. Always include the original dollar amount in the note (e.g. note: "telefon 400$ (~5 160 000 so'm)").
-- If amount is in RUB (rubl / руб / ₽), convert at rate 1 RUB = 140 UZS. E.g. "1000 rubl" -> 140000.
-- If amount is in EUR (€ / euro / yevro), convert at rate 1 EUR = 14,000 UZS.
+CRITICAL CURRENCY CONVERSION RULES (Live Bank.uz rates):
+- If amount is in USD ($ / dollar / usd / доллар), convert to Uzbek So'm at live market rate from bank.uz (~11,850 UZS). E.g. "400$" -> 4740000. "100 dollar" -> 1185000. "50$" -> 592500. Always include the original dollar amount in the note (e.g. note: "telefon 400$ (~4 740 000 so'm)").
+- If amount is in RUB (rubl / руб / ₽), convert at live rate 1 RUB ≈ 136 UZS. E.g. "1000 rubl" -> 136000.
+- If amount is in EUR (€ / euro / yevro), convert at live rate 1 EUR ≈ 13,620 UZS.
+- If amount is in GBP (£ / funt), convert at live rate 1 GBP ≈ 15,980 UZS.
+- If amount is in KZT (₸ / tenge), convert at live rate 1 KZT ≈ 27 UZS.
 
 CRITICAL UZBEK NUMBER & CATEGORY RULES:
 - "ming" / "минг" / "k" = THOUSAND (1,000 UZS). E.g. "500 ming" = 500000 (500 thousand, NEVER 500 million!). E.g. "30 ming" = 30000.

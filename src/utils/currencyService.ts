@@ -1,11 +1,12 @@
 /**
- * Moliya AI — Multi-Currency & CBU Exchange Rate Engine
+ * Moliya AI — Live Bank.uz Multi-Currency Exchange Rate Engine
  * 
- * Supports USD ($), EUR (€), RUB (₽) conversion into base currency Uzbek So'm (UZS).
- * Integrates with Central Bank of Uzbekistan (CBU) JSON API with instant offline fallback.
+ * Fetches live commercial & Central Bank rates from https://bank.uz/uz/currency
+ * Supports USD ($), EUR (€), RUB (₽), GBP (£), KZT (₸) conversion into base currency Uzbek So'm (UZS).
+ * Seamlessly caches in localStorage and falls back to offline rates if disconnected.
  */
 
-export type SupportedCurrency = 'UZS' | 'USD' | 'EUR' | 'RUB';
+export type SupportedCurrency = 'UZS' | 'USD' | 'EUR' | 'RUB' | 'GBP' | 'KZT';
 
 export interface CurrencyDetectionResult {
   currency: SupportedCurrency;
@@ -14,28 +15,54 @@ export interface CurrencyDetectionResult {
   rate: number;
 }
 
-// Fallback rates (updated 2026)
+export interface BankUzCurrencyDetail {
+  code: SupportedCurrency;
+  rate: number;
+  cbuRate?: number | null;
+  buy?: number | null;
+  buyBank?: string | null;
+  sell?: number | null;
+  sellBank?: string | null;
+}
+
+// Live fallback rates based on bank.uz market data
 export const DEFAULT_RATES: Record<SupportedCurrency, number> = {
   UZS: 1,
-  USD: 12900,
-  EUR: 14000,
-  RUB: 140,
+  USD: 11850,
+  EUR: 13620,
+  RUB: 136,
+  GBP: 15980,
+  KZT: 27,
+};
+
+let cachedDetailedRates: Record<SupportedCurrency, BankUzCurrencyDetail> = {
+  UZS: { code: 'UZS', rate: 1, cbuRate: 1, buy: 1, sell: 1 },
+  USD: { code: 'USD', rate: 11850, cbuRate: 11833.37, buy: 11830, buyBank: 'Tenge Bank', sell: 11850, sellBank: 'Asia Alliance Bank' },
+  EUR: { code: 'EUR', rate: 13620, cbuRate: 13577.61, buy: 13420, buyBank: 'O‘zbekiston Milliy banki', sell: 13620, sellBank: 'Ipak Yuli Bank' },
+  RUB: { code: 'RUB', rate: 136, cbuRate: 139.79, buy: 112, buyBank: 'Kapitalbank', sell: 136, sellBank: 'Kapitalbank' },
+  GBP: { code: 'GBP', rate: 15980, cbuRate: 15821.22, buy: 15600, buyBank: 'O‘zbekiston Milliy banki', sell: 15980, sellBank: 'Ipak Yuli Bank' },
+  KZT: { code: 'KZT', rate: 27, cbuRate: 26.52, buy: 25, buyBank: 'Tenge Bank', sell: 27, sellBank: 'O‘zbekiston Milliy banki' },
 };
 
 let cachedRates: Record<SupportedCurrency, number> = { ...DEFAULT_RATES };
 let lastFetchTime = 0;
-const CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
+const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
 
 /**
  * Loads cached rates from localStorage if available
  */
 if (typeof window !== 'undefined') {
   try {
-    const saved = localStorage.getItem('moliya_cbu_rates');
+    const saved = localStorage.getItem('moliya_bankuz_rates');
     if (saved) {
       const parsed = JSON.parse(saved);
       if (parsed.rates && parsed.timestamp && (Date.now() - parsed.timestamp < CACHE_TTL_MS)) {
-        cachedRates = { ...DEFAULT_RATES, ...parsed.rates };
+        cachedDetailedRates = { ...cachedDetailedRates, ...parsed.rates };
+        for (const [k, v] of Object.entries(parsed.rates)) {
+          if ((v as any)?.rate) {
+            cachedRates[k as SupportedCurrency] = (v as any).rate;
+          }
+        }
         lastFetchTime = parsed.timestamp;
       }
     }
@@ -43,54 +70,58 @@ if (typeof window !== 'undefined') {
 }
 
 /**
- * Fetch latest rates from Central Bank of Uzbekistan (async, non-blocking)
+ * Fetch latest rates from live Bank.uz endpoint (async, non-blocking)
  */
-export async function refreshCbuRates(): Promise<Record<SupportedCurrency, number>> {
+export async function refreshLiveRates(): Promise<Record<SupportedCurrency, number>> {
   if (Date.now() - lastFetchTime < CACHE_TTL_MS) {
     return cachedRates;
   }
 
   try {
-    const res = await fetch('https://cbu.uz/oz/arkhiv-kursov-valyut/json/', {
-      signal: AbortSignal.timeout(3000)
+    const res = await fetch('/api/currency-rates', {
+      signal: AbortSignal.timeout(4000)
     });
     if (res.ok) {
-      const list = await res.json();
-      if (Array.isArray(list)) {
+      const data = await res.json();
+      if (data.rates && typeof data.rates === 'object') {
         const newRates = { ...DEFAULT_RATES };
-        for (const item of list) {
-          const ccy = item.Ccy as string;
-          const rateVal = parseFloat(item.Rate);
-          if (!isNaN(rateVal) && rateVal > 0) {
-            if (ccy === 'USD') newRates.USD = Math.round(rateVal);
-            if (ccy === 'EUR') newRates.EUR = Math.round(rateVal);
-            if (ccy === 'RUB') newRates.RUB = Math.round(rateVal);
+        const newDetails = { ...cachedDetailedRates };
+
+        for (const [code, info] of Object.entries(data.rates)) {
+          const item = info as BankUzCurrencyDetail;
+          if (item && item.rate > 0) {
+            newRates[code as SupportedCurrency] = Math.round(item.rate);
+            newDetails[code as SupportedCurrency] = item;
           }
         }
+
         cachedRates = newRates;
+        cachedDetailedRates = newDetails;
         lastFetchTime = Date.now();
+
         if (typeof window !== 'undefined') {
-          localStorage.setItem('moliya_cbu_rates', JSON.stringify({
-            rates: cachedRates,
-            timestamp: lastFetchTime
+          localStorage.setItem('moliya_bankuz_rates', JSON.stringify({
+            rates: cachedDetailedRates,
+            timestamp: lastFetchTime,
+            source: data.source || 'bank.uz'
           }));
         }
       }
     }
   } catch (e) {
-    // Graceful fallback to default rates
+    // Graceful fallback to default/cached rates
   }
 
   return cachedRates;
 }
 
-// Trigger background refresh on init if in browser
+// Background prefetch when app loads
 if (typeof window !== 'undefined') {
-  setTimeout(() => { refreshCbuRates().catch(() => {}); }, 2000);
+  setTimeout(() => { refreshLiveRates().catch(() => {}); }, 1500);
 }
 
 /**
- * Detects if a string mentions foreign currency (USD, EUR, RUB)
+ * Detects if a string mentions foreign currency (USD, EUR, RUB, GBP, KZT)
  */
 export function detectCurrency(text: string): CurrencyDetectionResult {
   if (!text || typeof text !== 'string') {
@@ -129,6 +160,26 @@ export function detectCurrency(text: string): CurrencyDetectionResult {
     };
   }
 
+  // 4. GBP: "£", "funt", "pound", "gbp"
+  if (/£|(?:\b(?:funt|pound|gbp)\b)/i.test(clean)) {
+    return {
+      currency: 'GBP',
+      symbol: '£',
+      isForeign: true,
+      rate: cachedRates.GBP || DEFAULT_RATES.GBP
+    };
+  }
+
+  // 5. KZT: "₸", "tenge", "тенге", "kzt"
+  if (/₸|(?:\b(?:tenge|тенге|kzt)\b)/i.test(clean)) {
+    return {
+      currency: 'KZT',
+      symbol: '₸',
+      isForeign: true,
+      rate: cachedRates.KZT || DEFAULT_RATES.KZT
+    };
+  }
+
   return {
     currency: 'UZS',
     symbol: "so'm",
@@ -138,7 +189,7 @@ export function detectCurrency(text: string): CurrencyDetectionResult {
 }
 
 /**
- * Converts a detected amount in foreign currency to Uzbek So'm (UZS).
+ * Converts a detected amount in foreign currency to Uzbek So'm (UZS) using live bank.uz rate
  */
 export function convertCurrencyToUzs(amount: number, currency: SupportedCurrency, customRate?: number): {
   uzsAmount: number;
@@ -163,6 +214,12 @@ export function convertCurrencyToUzs(amount: number, currency: SupportedCurrency
   } else if (currency === 'RUB') {
     originalFormatted = `${amount} ₽`;
     noteAnnotation = `(${amount} ₽ ≈ ${formattedUzs} so'm)`;
+  } else if (currency === 'GBP') {
+    originalFormatted = `${amount}£`;
+    noteAnnotation = `(${amount}£ ≈ ${formattedUzs} so'm)`;
+  } else if (currency === 'KZT') {
+    originalFormatted = `${amount} ₸`;
+    noteAnnotation = `(${amount} ₸ ≈ ${formattedUzs} so'm)`;
   }
 
   return {
@@ -172,4 +229,8 @@ export function convertCurrencyToUzs(amount: number, currency: SupportedCurrency
     originalFormatted,
     noteAnnotation
   };
+}
+
+export function getCachedBankUzDetails(): Record<SupportedCurrency, BankUzCurrencyDetail> {
+  return cachedDetailedRates;
 }
