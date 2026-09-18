@@ -454,7 +454,7 @@ function getMainAppKeyboard(appUrl: string, webUrl?: string) {
     inline_keyboard: [
       [
         { text: "📱 Moliya Mini App", web_app: { url: appUrl } },
-        { text: "🌐 Veb-Ilova", url: targetWeb }
+        { text: "🌐 Veb-Ilova (Ekranga o'rnatish)", url: targetWeb }
       ],
       [
         { text: "💳 Kartalarim", callback_data: "menu_cards" },
@@ -684,7 +684,7 @@ async function completePhoneRegistration(fromUser: any, phoneNumber: string) {
 
   const updatedOnboarding = {
     ...existingOb,  // Preserve existing onboarding data (bot_messages, etc.)
-    completed: false,
+    completed: true,
     tour_completed: false, // Fresh registration: Tour Guide will trigger automatically on first Mini App open!
     language: 'uz',
     name: fullName,
@@ -1490,6 +1490,74 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           timestamp: new Date().toISOString()
         });
 
+        // 0. Handle Language Selection (Til tanlash)
+        if (data.startsWith('set_lang_')) {
+          const langCode = data.replace('set_lang_', '');
+          const { data: currUser } = await supabase.from('users').select('onboarding, phone').eq('id', userId).maybeSingle();
+          const updatedOb = {
+            ...(currUser?.onboarding || {}),
+            language: langCode
+          };
+          await supabase.from('users').update({
+            language: langCode,
+            onboarding: updatedOb,
+            updated_at: new Date().toISOString()
+          }).eq('id', userId);
+
+          await answerCallbackQuery(cb.id, "✅ Til tanlandi!");
+
+          // Next Step: Check Oferta
+          const hasOferta = Boolean(updatedOb.oferta_accepted === true || updatedOb.privacy_consent?.accepted === true);
+          if (!hasOferta) {
+            const ofertaText =
+              `📄 <b>Foydalanish shartlari (Ommaviy oferta) va Maxfiylik siyosati</b>\n\n` +
+              `Moliya AI xizmatlaridan foydalanishdan oldin, iltimos, rasmiy shartlar bilan tanishib chiqing:\n\n` +
+              `<blockquote>• Xizmat shaxsiy daromad va xarajatlaringizni tahlil qilish uchun mo'ljallangan.\n` +
+              `• Kiritilgan barcha moliyaviy ma'lumotlar shifrlangan va xavfsiz holda saqlanadi.\n` +
+              `• Ma'lumotlaringiz uchinchi shaxslarga aslo taqdim etilmaydi.\n` +
+              `• <b>Admin:</b> @moliya_admin | <b>Tel:</b> +998 94 948 05 42\n` +
+              `• <b>Email:</b> saidislomabdumalikov1234@gmail.com | <b>Bot:</b> @moliya_v2bot</blockquote>\n\n` +
+              `👇 <i>Davom etish uchun quyidagi tugmani bosing va rozilik bildiring:</i>`;
+
+            const ofertaKeyboard = {
+              inline_keyboard: [
+                [{ text: "✅ Roziman va qabul qilaman", callback_data: "accept_oferta" }]
+              ]
+            };
+            await sendOrReplaceSystemMessage(chatId, ofertaText, ofertaKeyboard, userId, 'oferta_request');
+            return res.status(200).json({ status: 'ok' });
+          }
+
+          // If Oferta already accepted, check phone
+          const alreadyHasPhone = isValidPhoneNumber(currUser?.phone) || isValidPhoneNumber(currUser?.onboarding?.phone);
+          if (!alreadyHasPhone) {
+            const phoneReqText =
+              `🎉 <b>Til tanlandi!</b>\n\n` +
+              `Endi botdan to'liq foydalanish va hisobingizni faollashtirish uchun telefon raqamingizni tasdiqlang.\n\n` +
+              `<blockquote>💎 <b>1 kunlik CHEKSIZ VIP PREMIUM:</b>\n` +
+              `Raqamingiz tasdiqlangach, sizga darhol bepul sinov muddati taqdim etiladi!</blockquote>\n\n` +
+              `👇 <i>Pastdagi tugmani bosing va telefon raqamingizni yuboring:</i>`;
+
+            await sendOrReplaceSystemMessage(
+              chatId,
+              phoneReqText,
+              {
+                keyboard: [[{ text: "📞 Telefon raqamni yuborish", request_contact: true }]],
+                resize_keyboard: true,
+                one_time_keyboard: true
+              },
+              userId,
+              'phone_request'
+            );
+            return res.status(200).json({ status: 'ok' });
+          }
+
+          const quickCode = await createQuickExchangeCode(fromUser.id);
+          const quickWebUrl = quickCode ? `${appUrl}?code=${quickCode}` : appUrl;
+          await sendOrReplaceSystemMessage(chatId, "✅ <b>Muvaffaqiyatli faollashtirildi!</b>", getMainAppKeyboard(appUrl, quickWebUrl), userId, 'welcome_card');
+          return res.status(200).json({ status: 'ok' });
+        }
+
         // 1. Handle Oferta / Privacy Acceptance (must be handled before phone gate!)
         if (data === 'accept_oferta' || data === 'privacy_accept') {
           const consentData = {
@@ -1874,6 +1942,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const quickWebUrl = quickCode ? `${appUrl}?code=${quickCode}` : appUrl;
       await sendOrReplaceSystemMessage(chatId, successMsg, getMainAppKeyboard(appUrl, quickWebUrl), userId, 'welcome_card');
       return res.status(200).json({ status: 'ok' });
+    }
+
+    // ── 0. LANGUAGE SELECTION (TIL TANLASH) ───────────────────────
+    const hasChosenLanguage = Boolean(user?.language || user?.onboarding?.language);
+
+    if (!hasChosenLanguage) {
+      const langText =
+        `🌐 <b>Assalomu alaykum, ${fromUser.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
+        `<b>Moliya AI</b> ga xush kelibsiz!\n` +
+        `Davom etish uchun iltimos, bot tilini tanlang:\n\n` +
+        `<i>Пожалуйста, выберите язык для продолжения:</i>\n` +
+        `<i>Please choose your language to continue:</i>`;
+
+      const langKeyboard = {
+        inline_keyboard: [
+          [
+            { text: "🇺🇿 O'zbekcha (Lotin)", callback_data: "set_lang_uz" },
+            { text: "🇺🇿 Ўзбекча (Кирилл)", callback_data: "set_lang_uz_cyrl" }
+          ],
+          [
+            { text: "🇷🇺 Русский", callback_data: "set_lang_ru" },
+            { text: "🇬🇧 English", callback_data: "set_lang_en" }
+          ]
+        ]
+      };
+
+      await sendOrReplaceSystemMessage(chatId, langText, langKeyboard, userId, 'lang_request');
+      return res.status(200).json({ status: 'lang_required' });
     }
 
     // ── 1. OFERTA & ROZILIK (TERMS & PRIVACY) AGREEMENT ───────────

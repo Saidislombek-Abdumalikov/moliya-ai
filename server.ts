@@ -211,14 +211,22 @@ async function startServer() {
         .eq('id', userId)
         .maybeSingle();
 
+      const hasPhone = Boolean(existingUser?.phone && String(existingUser.phone).replace(/\D/g, '').length >= 9);
+      const hasOferta = Boolean(
+        existingUser?.onboarding?.oferta_accepted === true ||
+        existingUser?.onboarding?.privacy_consent?.accepted === true
+      );
+      const isRegisteredInDb = Boolean(hasPhone && hasOferta && existingUser?.onboarding?.completed === true);
+
       const updatedOnboarding = {
         ...(existingUser?.onboarding || {}),
-        completed: true,
+        completed: isRegisteredInDb,
         language: existingUser?.language || tgUser.language_code || "uz",
         name: tgName,
         phone: existingUser?.phone || '',
         telegram: tgUsername,
         telegramId: tgId,
+        registration_status: isRegisteredInDb ? 'completed' : 'pending_registration'
       };
 
       await supabase.from('users').upsert({
@@ -232,6 +240,7 @@ async function startServer() {
         session_token: sessionToken,
         session_expires_at: expiresAt,
         onboarding: updatedOnboarding,
+        registration_status: updatedOnboarding.registration_status,
         updated_at: now.toISOString()
       }, { onConflict: 'id' });
 

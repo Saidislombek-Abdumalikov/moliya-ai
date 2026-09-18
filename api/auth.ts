@@ -134,7 +134,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           telegramId: tgId,
           trial_started_at: nowStr,
           trial_ends_at: trialEnd,
-          registration_status: 'completed'
+          registration_status: 'pending_registration',
+          oferta_accepted: false
         };
 
         const newRecord = {
@@ -152,7 +153,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           cards: [],
           transactions: [],
           onboarding: newOnboarding,
-          registration_status: 'completed',
+          registration_status: 'pending_registration',
           created_at: nowStr,
           updated_at: nowStr
         };
@@ -207,9 +208,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const tgName = [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') || 'Telegram Foydalanuvchi';
       const tgUsername = tgUser.username ? '@' + tgUser.username : '@moliya_user';
 
+      const hasPhone = Boolean(userDoc?.phone && String(userDoc.phone).replace(/\D/g, '').length >= 9);
+      const hasOferta = Boolean(
+        userDoc?.onboarding?.oferta_accepted === true ||
+        userDoc?.onboarding?.privacy_consent?.accepted === true
+      );
+      const isRegisteredInDb = Boolean(hasPhone && hasOferta && userDoc?.onboarding?.completed === true);
+
       const updatedOnboarding = {
         ...(userDoc?.onboarding || {}),
-        completed: userDoc?.onboarding?.completed === true,
+        completed: isRegisteredInDb,
         tour_completed: userDoc?.onboarding?.tour_completed === true,
         language: userDoc?.language || tgUser.language_code || 'uz',
         name: tgName,
@@ -218,7 +226,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         telegramId: tgId,
         session_token: sessionToken,
         session_expires_at: expiresAt,
-        registration_status: 'completed'
+        registration_status: isRegisteredInDb ? 'completed' : 'pending_registration'
       };
 
       await supabase.from('users').update({

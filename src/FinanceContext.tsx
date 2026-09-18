@@ -44,6 +44,24 @@ export interface UserAccessState {
   isTrial: boolean
 }
 
+export function isValidPhoneNumber(p?: string | null): boolean {
+  if (!p) return false;
+  const digits = String(p).replace(/\D/g, '');
+  return (digits.length === 12 && digits.startsWith('998')) || (digits.length === 9);
+}
+
+export function isUserFullyRegistered(userDoc: any): boolean {
+  if (!userDoc) return false;
+  const phone = userDoc.phone || userDoc.onboarding?.phone;
+  const hasPhone = isValidPhoneNumber(phone);
+  const hasOferta = Boolean(
+    userDoc.onboarding?.oferta_accepted === true ||
+    userDoc.onboarding?.privacy_consent?.accepted === true
+  );
+  const hasLang = Boolean(userDoc.language || userDoc.onboarding?.language);
+  return Boolean(hasPhone && hasOferta && hasLang && userDoc.onboarding?.completed === true);
+}
+
 export function computeAccessState(raw: any): UserAccessState {
   if (!raw) {
     return {
@@ -287,11 +305,18 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const [onboarding, setOnboarding] = useState<OnboardingResult | null>(() => {
     if (!isClientAllowed) return null
+    let saved: any = null
     try {
-      const saved = localStorage.getItem('user_onboarding_v1')
-      if (saved) return JSON.parse(saved)
+      const rawSaved = localStorage.getItem('user_onboarding_v1')
+      if (rawSaved) saved = JSON.parse(rawSaved)
     } catch {}
+
+    // Multi-account guard: If opened in Telegram, ensure cached data belongs to CURRENT Telegram user
     if (tgUser) {
+      if (saved && saved.telegramId && String(saved.telegramId) === String(tgUser.id)) {
+        return saved
+      }
+      // Fresh or different account on same device!
       const tgName = [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') || 'Foydalanuvchi'
       const tgUsername = tgUser.username ? `@${tgUser.username}` : '@moliya_user'
       return {
@@ -302,11 +327,12 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         phone: '',
         telegram: tgUsername,
         telegramId: String(tgUser.id),
-        registration_status: 'completed',
+        registration_status: 'pending_registration',
         isPremium: true
       } as any
     }
-    return null
+
+    return saved || null
   })
 
   const [accessState, setAccessState] = useState<UserAccessState>(() => {
@@ -412,10 +438,18 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
     localStorage.setItem('user_logged_in_v1', 'true')
     // Authoritative onboarding and tour completion state from DB
-    if (data.onboarding?.completed === true) {
-      localStorage.setItem('user_onboarding_completed_v1', 'true')
+    const isRegistered = Boolean(
+      (data.onboarding?.phone && isValidPhoneNumber(data.onboarding.phone)) &&
+      (data.onboarding?.oferta_accepted === true || data.onboarding?.privacy_consent?.accepted === true) &&
+      data.onboarding?.completed === true
+    );
+
+    if (isRegistered) {
+      localStorage.setItem(`user_onboarding_completed_${data.userId}`, 'true');
+      localStorage.setItem('user_onboarding_completed_v1', 'true');
     } else {
-      localStorage.removeItem('user_onboarding_completed_v1')
+      localStorage.removeItem(`user_onboarding_completed_${data.userId}`);
+      localStorage.removeItem('user_onboarding_completed_v1');
     }
     if (data.onboarding?.tour_completed === true) {
       localStorage.setItem('user_tour_completed_v2', 'true')
@@ -1024,6 +1058,9 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setOnboarding(updated);
     localStorage.setItem('user_onboarding_v1', JSON.stringify(updated));
     if (updated.completed === true) {
+      if (targetUserId) {
+        localStorage.setItem(`user_onboarding_completed_${targetUserId}`, 'true');
+      }
       localStorage.setItem('user_onboarding_completed_v1', 'true');
     }
     if (updated.tour_completed === true) {
@@ -1057,6 +1094,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       };
       if (updated.name && updated.name !== '—') payload.name = updated.name;
       if (updated.language) payload.language = updated.language;
+      if (updated.registration_status) payload.registration_status = updated.registration_status;
 
       if (isDbVipActive) {
         // Protect active VIP from being wiped by client onboarding

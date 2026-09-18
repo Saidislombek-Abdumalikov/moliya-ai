@@ -22,13 +22,19 @@ export interface OnboardingResult {
   tour_completed?: boolean
   notifications?: { opt1: boolean; opt2: boolean; opt3: boolean }
   registration_status?: string
+  oferta_accepted?: boolean
+  privacy_consent?: {
+    accepted: boolean
+    accepted_at: string
+    policy_version: string
+  }
 }
 
 interface Props {
   onComplete: (result: OnboardingResult) => void
 }
 
-type Step = 'welcome' | 'language' | 'goal' | 'ai_ask' | 'ai_nlp' | 'trial' | 'ready'
+type Step = 'language' | 'oferta' | 'phone' | 'goal' | 'ready'
 
 const languages: { code: 'uz' | 'uz_cyrl' | 'ru' | 'en'; label: string; tag: string }[] = [
   { code: 'uz', label: "O'zbekcha", tag: '🇺🇿' },
@@ -43,13 +49,23 @@ const uzbekScriptTypes: { code: 'uz' | 'uz_cyrl'; label: string; sublabel: strin
 
 const translations = {
   uz: {
-    welcomeTitle: "Moliya AI ga xush kelibsiz!",
-    welcomeSub: "Shaxsiy moliyangizni sun'iy intellekt yordamida oson, tezkor va professional nazorat qiling.",
-    welcomeFeat1: "Ovozli va matnli xarajatlarni avtomatik qayd qilish",
-    welcomeFeat2: "To'liq oylik va yillik aqlli hisobotlar",
-    welcomeFeat3: "1 kunlik cheksiz Premium va AI imkoniyati",
-    selectLanguage: "Tilni tanlang",
-    selectLangSub: "Iltimos, dastur tilini tanlang",
+    selectLanguage: "Ilova tilini tanlang",
+    selectLangSub: "Barcha hisob-kitoblar va AI siz tanlagan tilda ishlaydi",
+    continueBtn: "Davom etish →",
+    ofertaTitle: "Ommaviy Oferta & Xavfsizlik",
+    ofertaSub: "Moliya AI xizmatlaridan foydalanish uchun rasmiy oferta shartlarini qabul qiling",
+    ofertaPoint1: "Barcha moliyaviy ma'lumotlaringiz shifrlangan va xavfsiz saqlanadi",
+    ofertaPoint2: "Ma'lumotlaringiz uchinchi shaxslarga aslo taqdim etilmaydi",
+    ofertaPoint3: "Sun'iy intellekt faqat sizning hisob-kitoblaringizni yuritish uchun xizmat qiladi",
+    readFullOferta: "To'liq Ofertani o'qish ↗",
+    acceptOfertaLabel: "Ommaviy oferta va Maxfiylik siyosatiga to'liq roziman",
+    phoneTitle: "Telefon raqamingizni kiriting",
+    phoneSub: "Hisobingizni faollashtirish va qurilmalaringizni ulash uchun raqamingizni tasdiqlang",
+    phoneLabel: "Telefon raqam",
+    phonePlaceholder: "90 123 45 67",
+    phoneBenefitTitle: "1 Kunlik Cheksiz VIP Premium!",
+    phoneBenefitSub: "Telefon raqamingiz tasdiqlangach, darhol barcha AI imkoniyatlari bepul va cheksiz ochiladi.",
+    phoneError: "Iltimos, 9 xonali to'g'ri telefon raqam kiriting",
     setGoalTitle: "Moliyaviy maqsadingiz",
     setGoalSub: "Har oy qancha mablag' tejashni rejalashtiryapsiz?",
     starter: "Boshlang'ich",
@@ -60,41 +76,28 @@ const translations = {
     otherAmount: "Boshqa summa",
     enterAmount: "Summani kiriting",
     saveGoalBtn: "Maqsadni saqlash →",
-    continueBtn: "Davom etish →",
-    askAiTitle: "Pulingiz haqida savol bering",
-    askAiSub: "Sun'iy intellekt xarajatlaringizni tahlil qilib, aqlli maslahatlar beradi.",
-    aiQuestions: [
-      "Pulim qayerga ketyapti?",
-      "Oyiga qancha tejay olaman?",
-      "Eng ko'p sarflagan kategoriyam?"
-    ],
-    aiPulseBadge: "✨ AI Yordamchi",
-    aiNlpTitle: "Tabiiy tilda AI tahlil",
-    aiNlpSub: "Oddiy so'zlar bilan yozsangiz yoki ovoz yuborsangiz yetarli",
-    aiNlpEx1Label: "Siz yozasiz:",
-    aiNlpEx1Text: "«Taksiga 25 000 so'm»",
-    aiNlpEx1Res: "🚕 Transport • 25 000 so'm",
-    aiNlpEx2Label: "Siz yozasiz:",
-    aiNlpEx2Text: "«14 mln maosh tushdi»",
-    aiNlpEx2Res: "💼 Maosh • 14 000 000 so'm",
-    trialBadge: "Maxsus Sovg'a",
-    trialTitle: "1 Kunlik Cheksiz Premium",
-    trialSub: "Yangi foydalanuvchimiz bo'lganingiz uchun 24 soat davomida barcha AI imkoniyatlari mutlaqo bepul va cheksiz berildi!",
-    trialItem1: "⚡ Cheksiz AI so'rovlar (5 ta chegarasisiz)",
-    trialItem2: "📊 To'liq tahlil va chek skanerlash",
-    trialItem3: "⏳ Sinovdan so'ng: kuniga 5 ta bepul AI so'rovi",
-    readyTitle: "Boshlashga tayyorsiz!",
-    readySub: "Moliya AI sizning moliyaviy barqarorligingiz va oqilona tejamkorligingiz yo'lida doimo yordamchi bo'ladi.",
-    readyAction: "Dasturni Boshlash 🚀",
+    readyTitle: "Hisobingiz faollashtirildi!",
+    readySub: "Moliya AI sizning shaxsiy moliyaviy barqarorligingiz yo'lida doimo yordamchi bo'ladi.",
+    readyAction: "Ilovani Boshlash 🚀",
   },
   uz_cyrl: {
-    welcomeTitle: "Moliya AI га хуш келибсиз!",
-    welcomeSub: "Шахсий молиянгизни сунъий интеллект ёрдамида осон, тезкор ва профессионал назорат қилинг.",
-    welcomeFeat1: "Овозли ва матнли харажатларни автоматик қайд қилиш",
-    welcomeFeat2: "Тўлиқ ойлик ва йиллик ақлли ҳисоботлар",
-    welcomeFeat3: "1 кунлик чексиз Premium ва AI имконияти",
-    selectLanguage: "Тилни танланг",
-    selectLangSub: "Илтимос, дастур тилини танланг",
+    selectLanguage: "Илова тилини танланг",
+    selectLangSub: "Барча ҳисоб-китоблар ва AI сиз танлаган тилда ишлайди",
+    continueBtn: "Давом этиш →",
+    ofertaTitle: "Оммавий Оферта & Хавфсизлик",
+    ofertaSub: "Moliya AI хизматларидан фойдаланиш учун расмий оферта шартларини қабул қилинг",
+    ofertaPoint1: "Барча молиявий маълумотларингиз шифрланган ва хавфсиз сақланади",
+    ofertaPoint2: "Маълумотларингиз учинчи шахсларга асло тақдим этилмайди",
+    ofertaPoint3: "Сунъий интеллект фақат сизнинг ҳисоб-китобларингизни юритиш учун хизмат қилади",
+    readFullOferta: "Тўлиқ Офертани ўқиш ↗",
+    acceptOfertaLabel: "Оммавий оферта ва Махфийлик сиёсатига тўлиқ розиман",
+    phoneTitle: "Телефон рақамингизни киритинг",
+    phoneSub: "Ҳисобингизни фаоллаштириш ва қурилмаларингизни улаш учун рақамингизни тасдиқланг",
+    phoneLabel: "Телефон рақам",
+    phonePlaceholder: "90 123 45 67",
+    phoneBenefitTitle: "1 Кунлик Чексиз VIP Premium!",
+    phoneBenefitSub: "Телефон рақамингиз тасдиқлангач, дарҳол барча AI имкониятлари бепул ва чексиз очилади.",
+    phoneError: "Илтимос, 9 хонали тўғри телефон рақам киритинг",
     setGoalTitle: "Молиявий мақсадингиз",
     setGoalSub: "Ҳар ой қанча маблағ тежашни режалаштиряпсиз?",
     starter: "Бошланғич",
@@ -105,121 +108,72 @@ const translations = {
     otherAmount: "Бошқа сумма",
     enterAmount: "Суммани киритинг",
     saveGoalBtn: "Мақсадни сақлаш →",
-    continueBtn: "Давом этиш →",
-    askAiTitle: "Пулингиз ҳақида савол беринг",
-    askAiSub: "Сунъий интеллект харажатларингизни таҳлил қилиб, ақлли маслаҳатлар беради.",
-    aiQuestions: [
-      "Пулим қаерга кетяпти?",
-      "Ойига қанча тежай оламан?",
-      "Энг кўп сарфлаган категоришам?"
-    ],
-    aiPulseBadge: "✨ AI Ёрдамчи",
-    aiNlpTitle: "Табиий тилда AI таҳлил",
-    aiNlpSub: "Оддий сўзлар билан ёзсангиз ёки овоз юборсангиз етарли",
-    aiNlpEx1Label: "Сиз ёзасиз:",
-    aiNlpEx1Text: "«Таксига 25 000 сўм»",
-    aiNlpEx1Res: "🚕 Транспорт • 25 000 сўм",
-    aiNlpEx2Label: "Сиз ёзасиз:",
-    aiNlpEx2Text: "«14 млн маош тушди»",
-    aiNlpEx2Res: "💼 Маош • 14 000 000 сўм",
-    trialBadge: "Махсус Совға",
-    trialTitle: "1 Кунлик Чексиз Premium",
-    trialSub: "Янги фойдаланувчимиз бўлганингиз учун 24 соат давомида барча AI имкониятлари мутлақо бепул ва чексиз берилди!",
-    trialItem1: "⚡ Чексиз AI сўровлар (5 та чегарасисиз)",
-    trialItem2: "📊 Тўлиқ таҳлил ва чек сканерлаш",
-    trialItem3: "⏳ Синовдан сўнг: кунига 5 та бепул AI сўрови",
-    readyTitle: "Бошлашга тайёрсиз!",
-    readySub: "Moliya AI сизнинг молиявий барқарорлигингиз ва оқилона тежамкорлигингиз йўлида доимо ёрдамчи бўлади.",
+    readyTitle: "Ҳисобингиз фаоллаштирилди!",
+    readySub: "Moliya AI сизнинг шахсий молиявий барқарорлигингиз йўлида доимо ёрдамчи бўлади.",
     readyAction: "Дастурни Бошлаш 🚀",
   },
   ru: {
-    welcomeTitle: "Добро пожаловать в Moliya AI!",
-    welcomeSub: "Управляйте личными финансами легко, быстро и профессионально с помощью искусственного интеллекта.",
-    welcomeFeat1: "Автоматический учет расходов голосом и текстом",
-    welcomeFeat2: "Полные ежемесячные и годовые умные отчеты",
-    welcomeFeat3: "1 день безлимитного Premium и AI бесплатно",
-    selectLanguage: "Выберите язык",
-    selectLangSub: "Пожалуйста, выберите язык приложения",
-    setGoalTitle: "Финансовая цель",
-    setGoalSub: "Сколько вы планируете экономить каждый месяц?",
-    starter: "Начальный",
-    recommended: "Рекомендуемый",
-    intensive: "Интенсивный",
+    selectLanguage: "Выберите язык приложения",
+    selectLangSub: "Все расчеты и ИИ-помощник будут работать на выбранном языке",
+    continueBtn: "Продолжить →",
+    ofertaTitle: "Публичная Оферта & Безопасность",
+    ofertaSub: "Для использования сервиса Moliya AI примите условия официальной оферты",
+    ofertaPoint1: "Все ваши финансовые данные зашифрованы и надежно защищены",
+    ofertaPoint2: "Ваши данные никогда не передаются третьим лицам",
+    ofertaPoint3: "Искусственный интеллект используется исключительно для ведения ваших финансов",
+    readFullOferta: "Читать полную Оферту ↗",
+    acceptOfertaLabel: "Я полностью согласен с условиями Оферты и Политики конфиденциальности",
+    phoneTitle: "Введите номер телефона",
+    phoneSub: "Подтвердите номер для активации аккаунта и синхронизации устройств",
+    phoneLabel: "Номер телефона",
+    phonePlaceholder: "90 123 45 67",
+    phoneBenefitTitle: "1 День Безлимитного VIP Premium!",
+    phoneBenefitSub: "После подтверждения номера вы сразу получаете 24 часа неограниченного ИИ-доступа.",
+    phoneError: "Пожалуйста, введите корректный 9-значный номер телефона",
+    setGoalTitle: "Ваша финансовая цель",
+    setGoalSub: "Сколько средств вы планируете сберегать каждый месяц?",
+    starter: "Базовая",
+    recommended: "Рекомендуемая",
+    intensive: "Интенсивная",
     perMonth: "сум / месяц",
-    customGoal: "Ввести вручную",
+    customGoal: "Введу свою сумму",
     otherAmount: "Другая сумма",
     enterAmount: "Введите сумму",
     saveGoalBtn: "Сохранить цель →",
-    continueBtn: "Продолжить →",
-    askAiTitle: "Задайте вопрос о деньгах",
-    askAiSub: "Искусственный интеллект проанализирует ваши расходы и даст умные советы.",
-    aiQuestions: [
-      "Куда уходят мои деньги?",
-      "Сколько я могу сэкономить в месяц?",
-      "Моя самая затратная категория?"
-    ],
-    aiPulseBadge: "✨ ИИ Помощник",
-    aiNlpTitle: "ИИ анализ на естественном языке",
-    aiNlpSub: "Просто напишите или отправьте голосовое сообщение",
-    aiNlpEx1Label: "Вы говорите:",
-    aiNlpEx1Text: "«Такси 25 000 сум»",
-    aiNlpEx1Res: "🚕 Транспорт • 25 000 сум",
-    aiNlpEx2Label: "Вы говорите:",
-    aiNlpEx2Text: "«Зарплата 14 млн»",
-    aiNlpEx2Res: "💼 Зарплата • 14 000 000 сум",
-    trialBadge: "Специальный Подарок",
-    trialTitle: "1 День Безлимитного Premium",
-    trialSub: "Как новому пользователю, вам предоставлен 24-часовой бесплатный и безлимитный доступ ко всем функциям ИИ!",
-    trialItem1: "⚡ Безлимитные запросы ИИ (без ограничения 5/день)",
-    trialItem2: "📊 Полная аналитика и сканирование чеков",
-    trialItem3: "⏳ После теста: 5 бесплатных ИИ запросов в день",
-    readyTitle: "Все готово к старту!",
-    readySub: "Moliya AI станет вашим надежным помощником на пути к финансовой стабильности.",
-    readyAction: "Запустить Приложение 🚀",
+    readyTitle: "Аккаунт активирован!",
+    readySub: "Moliya AI станет вашим надежным партнером на пути к финансовой стабильности.",
+    readyAction: "Запустить приложение 🚀",
   },
   en: {
-    welcomeTitle: "Welcome to Moliya AI!",
-    welcomeSub: "Manage your personal finances effortlessly, swiftly, and professionally with Artificial Intelligence.",
-    welcomeFeat1: "Automatic expense tracking via voice & text",
-    welcomeFeat2: "Comprehensive monthly & annual smart analytics",
-    welcomeFeat3: "1-Day Unlimited Premium & AI Trial included",
-    selectLanguage: "Choose Language",
-    selectLangSub: "Please select your preferred language",
-    setGoalTitle: "Your Savings Goal",
+    selectLanguage: "Select App Language",
+    selectLangSub: "All calculations and AI will operate in your selected language",
+    continueBtn: "Continue →",
+    ofertaTitle: "Public Offer & Privacy",
+    ofertaSub: "Please accept the official terms of service to start using Moliya AI",
+    ofertaPoint1: "All your financial records are securely encrypted and protected",
+    ofertaPoint2: "Your data is never shared with third parties",
+    ofertaPoint3: "Artificial Intelligence works solely for your private budgeting",
+    readFullOferta: "Read full Public Offer ↗",
+    acceptOfertaLabel: "I agree to the Public Offer & Privacy Policy terms",
+    phoneTitle: "Enter your phone number",
+    phoneSub: "Verify your phone number to activate your account and link devices",
+    phoneLabel: "Phone number",
+    phonePlaceholder: "90 123 45 67",
+    phoneBenefitTitle: "1-Day Unlimited VIP Premium!",
+    phoneBenefitSub: "Upon verifying your phone number, you get 24 hours of unlimited AI features completely free.",
+    phoneError: "Please enter a valid 9-digit phone number",
+    setGoalTitle: "Your monthly savings goal",
     setGoalSub: "How much would you like to save each month?",
     starter: "Starter",
     recommended: "Recommended",
     intensive: "Intensive",
     perMonth: "UZS / month",
-    customGoal: "Custom Amount",
-    otherAmount: "Other Amount",
+    customGoal: "Custom amount",
+    otherAmount: "Other amount",
     enterAmount: "Enter amount",
-    saveGoalBtn: "Save Goal →",
-    continueBtn: "Continue →",
-    askAiTitle: "Ask AI About Your Money",
-    askAiSub: "Artificial Intelligence analyzes your finances and delivers smart insights.",
-    aiQuestions: [
-      "Where does my money go?",
-      "How much can I save monthly?",
-      "What is my top spending category?"
-    ],
-    aiPulseBadge: "✨ AI Assistant",
-    aiNlpTitle: "Natural Language AI Tracking",
-    aiNlpSub: "Simply type or speak naturally to record expenses",
-    aiNlpEx1Label: "You say:",
-    aiNlpEx1Text: "“Taxi 25,000 UZS”",
-    aiNlpEx1Res: "🚕 Transport • 25,000 UZS",
-    aiNlpEx2Label: "You say:",
-    aiNlpEx2Text: "“Salary 14 mln”",
-    aiNlpEx2Res: "💼 Salary • 14,000,000 UZS",
-    trialBadge: "Special Welcome Gift",
-    trialTitle: "1-Day Unlimited Premium Trial",
-    trialSub: "As a new user, you receive 24 hours of unlimited AI queries and VIP features completely free!",
-    trialItem1: "⚡ Unlimited AI queries (no 5/day limit)",
-    trialItem2: "📊 Full reports & receipt scanner",
-    trialItem3: "⏳ After trial: 5 free AI queries daily",
-    readyTitle: "You're All Set!",
-    readySub: "Moliya AI will accompany you every step towards financial peace of mind.",
+    saveGoalBtn: "Save goal →",
+    readyTitle: "Account Activated!",
+    readySub: "Moliya AI is ready to help you achieve financial discipline and peace of mind.",
     readyAction: "Launch App 🚀",
   }
 }
@@ -232,23 +186,63 @@ const goalOptions = [
 
 export default function Onboarding({ onComplete }: Props) {
   const { onboarding, updateOnboarding } = useFinance()
-  const [step, setStep] = useState<Step>('welcome')
+  const [step, setStep] = useState<Step>('language')
   const [language, setLanguage] = useState<'uz' | 'uz_cyrl' | 'ru' | 'en'>(
     onboarding?.language || 'uz'
   )
+
+  // Oferta acceptance state
+  const [ofertaAccepted, setOfertaAccepted] = useState(
+    Boolean(onboarding?.oferta_accepted || (onboarding as any)?.privacy_consent?.accepted)
+  )
+  const [showPolicy, setShowPolicy] = useState(false)
+  const [policyTab, setPolicyTab] = useState<'privacy' | 'terms'>('terms')
+
+  // Phone number state
+  const initialPhoneDigits = (onboarding?.phone || '').replace(/\D/g, '').replace(/^998/, '').slice(0, 9)
+  const [phoneDigits, setPhoneDigits] = useState(initialPhoneDigits)
+  const [phoneError, setPhoneError] = useState('')
+
+  // Savings goal state
   const [selectedGoal, setSelectedGoal] = useState<number>(3000000)
   const [customGoalInput, setCustomGoalInput] = useState('')
   const [isCustomGoal, setIsCustomGoal] = useState(false)
-  const [selectedAiQuestion, setSelectedAiQuestion] = useState<number | null>(0)
-  const [showPolicy, setShowPolicy] = useState(false)
-  const [policyTab, setPolicyTab] = useState<'privacy' | 'terms'>('privacy')
 
   const t = translations[language] || translations.uz
 
-  const stepsList: Step[] = ['welcome', 'language', 'goal', 'ai_ask', 'ai_nlp', 'trial', 'ready']
+  const stepsList: Step[] = ['language', 'oferta', 'phone', 'goal', 'ready']
   const currentStepIndex = stepsList.indexOf(step) + 1
 
+  // Format phone display: 90 123 45 67
+  const formatPhoneInput = (val: string) => {
+    const digits = val.replace(/\D/g, '').slice(0, 9)
+    setPhoneDigits(digits)
+    if (phoneError) setPhoneError('')
+  }
+
+  const getFormattedPhoneDisplay = () => {
+    let res = ''
+    if (phoneDigits.length > 0) res += phoneDigits.slice(0, 2)
+    if (phoneDigits.length > 2) res += ' ' + phoneDigits.slice(2, 5)
+    if (phoneDigits.length > 5) res += ' ' + phoneDigits.slice(5, 7)
+    if (phoneDigits.length > 7) res += ' ' + phoneDigits.slice(7, 9)
+    return res
+  }
+
   const goNext = () => {
+    if (step === 'oferta') {
+      if (!ofertaAccepted) {
+        setOfertaAccepted(true)
+      }
+    }
+
+    if (step === 'phone') {
+      if (phoneDigits.length !== 9) {
+        setPhoneError(t.phoneError)
+        return
+      }
+    }
+
     const nextIdx = stepsList.indexOf(step) + 1
     if (nextIdx < stepsList.length) {
       setStep(stepsList[nextIdx])
@@ -269,6 +263,8 @@ export default function Onboarding({ onComplete }: Props) {
       ? parseInt(customGoalInput.replace(/\D/g, ''), 10) || 3000000
       : selectedGoal
 
+    const formattedFullPhone = `+998${phoneDigits}`
+
     const result: OnboardingResult = {
       language,
       monthlyGoal: goal,
@@ -276,14 +272,26 @@ export default function Onboarding({ onComplete }: Props) {
       monthlyIncome: 0,
       baseBalance: 0,
       name: onboarding?.name || '',
-      phone: onboarding?.phone || '',
+      phone: formattedFullPhone,
       telegram: onboarding?.telegram || '',
       telegramId: onboarding?.telegramId || '',
       isPremium: true,
-      completed: true
+      completed: true,
+      registration_status: 'completed',
+      oferta_accepted: true,
+      privacy_consent: {
+        accepted: true,
+        accepted_at: new Date().toISOString(),
+        policy_version: '1.0'
+      }
     }
 
+    const userId = onboarding?.telegramId ? `moliya_user_tg_${onboarding.telegramId}` : localStorage.getItem('user_id_v1')
+    if (userId) {
+      localStorage.setItem(`user_onboarding_completed_${userId}`, 'true')
+    }
     localStorage.setItem('user_onboarding_completed_v1', 'true')
+
     updateOnboarding(result).catch(() => {})
     onComplete(result)
   }
@@ -354,63 +362,10 @@ export default function Onboarding({ onComplete }: Props) {
         </div>
       </div>
 
-      {/* Main Step Cards (Original Design & Palette) */}
+      {/* Main Step Cards */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
         <AnimatePresence mode="wait">
-          {/* ── STEP 1: Welcome (Moliya AI Imkoniyatlari) ── */}
-          {step === 'welcome' && (
-            <motion.div
-              key="welcome"
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -12 }}
-              style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}
-            >
-              <div style={{
-                width: 72, height: 72, borderRadius: 24,
-                background: 'linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 32, boxShadow: '0 8px 24px rgba(124, 58, 237, 0.3)'
-              }}>
-                ✨
-              </div>
-              <h1 style={{ fontSize: 22, fontWeight: 800, color: '#1E1A3C', letterSpacing: -0.4, margin: 0 }}>
-                {t.welcomeTitle}
-              </h1>
-              <p style={{ fontSize: 13, color: '#8B82C4', lineHeight: 1.5, margin: 0, maxWidth: 320 }}>
-                {t.welcomeSub}
-              </p>
-
-              <div style={{ width: '100%', marginTop: 8, display: 'flex', flexDirection: 'column', gap: 10, textAlign: 'left' }}>
-                <div style={{
-                  padding: '12px 14px', borderRadius: 16, background: '#FFFFFF',
-                  border: '1.5px solid #E8E3F8', display: 'flex', alignItems: 'center', gap: 10,
-                  boxShadow: '0 2px 8px rgba(124, 58, 237, 0.04)'
-                }}>
-                  <span style={{ fontSize: 18 }}>🎙️</span>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: '#1E1A3C' }}>{t.welcomeFeat1}</span>
-                </div>
-                <div style={{
-                  padding: '12px 14px', borderRadius: 16, background: '#FFFFFF',
-                  border: '1.5px solid #E8E3F8', display: 'flex', alignItems: 'center', gap: 10,
-                  boxShadow: '0 2px 8px rgba(124, 58, 237, 0.04)'
-                }}>
-                  <span style={{ fontSize: 18 }}>📈</span>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: '#1E1A3C' }}>{t.welcomeFeat2}</span>
-                </div>
-                <div style={{
-                  padding: '12px 14px', borderRadius: 16, background: '#FFFFFF',
-                  border: '1.5px solid #E8E3F8', display: 'flex', alignItems: 'center', gap: 10,
-                  boxShadow: '0 2px 8px rgba(124, 58, 237, 0.04)'
-                }}>
-                  <span style={{ fontSize: 18 }}>👑</span>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: '#7C3AED' }}>{t.welcomeFeat3}</span>
-                </div>
-              </div>
-            </motion.div>
-          )}
-
-          {/* ── STEP 2: Language Selection (Original) ── */}
+          {/* ── STEP 1: Til Tanlash (Language Selection) ── */}
           {step === 'language' && (
             <motion.div
               key="language"
@@ -420,6 +375,13 @@ export default function Onboarding({ onComplete }: Props) {
               style={{ display: 'flex', flexDirection: 'column', gap: 14 }}
             >
               <div style={{ textAlign: 'center', marginBottom: 4 }}>
+                <div style={{
+                  width: 56, height: 56, borderRadius: 20, margin: '0 auto 12px',
+                  background: 'linear-gradient(135deg, rgba(124, 58, 237, 0.12) 0%, rgba(91, 33, 182, 0.12) 100%)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26
+                }}>
+                  🌐
+                </div>
                 <h1 style={{ fontSize: 21, fontWeight: 700, color: '#1E1A3C', letterSpacing: -0.3, margin: '0 0 4px' }}>
                   {t.selectLanguage}
                 </h1>
@@ -499,7 +461,190 @@ export default function Onboarding({ onComplete }: Props) {
             </motion.div>
           )}
 
-          {/* ── STEP 3: Moliyaviy Maqsadingiz (Original) ── */}
+          {/* ── STEP 2: Ommaviy Oferta & Xavfsizlik ── */}
+          {step === 'oferta' && (
+            <motion.div
+              key="oferta"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -12 }}
+              style={{ display: 'flex', flexDirection: 'column', gap: 14 }}
+            >
+              <div style={{ textAlign: 'center', marginBottom: 4 }}>
+                <div style={{
+                  width: 56, height: 56, borderRadius: 20, margin: '0 auto 12px',
+                  background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.12) 0%, rgba(5, 150, 105, 0.12) 100%)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26
+                }}>
+                  🛡️
+                </div>
+                <h1 style={{ fontSize: 21, fontWeight: 700, color: '#1E1A3C', letterSpacing: -0.3, margin: '0 0 4px' }}>
+                  {t.ofertaTitle}
+                </h1>
+                <p style={{ fontSize: 13, color: '#8B82C4', margin: 0, lineHeight: 1.4 }}>
+                  {t.ofertaSub}
+                </p>
+              </div>
+
+              {/* Guarantees Box */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{
+                  padding: '13px 14px', borderRadius: 16, background: '#FFFFFF',
+                  border: '1.5px solid #E8E3F8', display: 'flex', alignItems: 'flex-start', gap: 10,
+                  boxShadow: '0 2px 8px rgba(124, 58, 237, 0.04)'
+                }}>
+                  <span style={{ fontSize: 18, marginTop: 1 }}>🔒</span>
+                  <span style={{ fontSize: 12.5, fontWeight: 600, color: '#1E1A3C', lineHeight: 1.4 }}>
+                    {t.ofertaPoint1}
+                  </span>
+                </div>
+                <div style={{
+                  padding: '13px 14px', borderRadius: 16, background: '#FFFFFF',
+                  border: '1.5px solid #E8E3F8', display: 'flex', alignItems: 'flex-start', gap: 10,
+                  boxShadow: '0 2px 8px rgba(124, 58, 237, 0.04)'
+                }}>
+                  <span style={{ fontSize: 18, marginTop: 1 }}>👥</span>
+                  <span style={{ fontSize: 12.5, fontWeight: 600, color: '#1E1A3C', lineHeight: 1.4 }}>
+                    {t.ofertaPoint2}
+                  </span>
+                </div>
+                <div style={{
+                  padding: '13px 14px', borderRadius: 16, background: '#FFFFFF',
+                  border: '1.5px solid #E8E3F8', display: 'flex', alignItems: 'flex-start', gap: 10,
+                  boxShadow: '0 2px 8px rgba(124, 58, 237, 0.04)'
+                }}>
+                  <span style={{ fontSize: 18, marginTop: 1 }}>🤖</span>
+                  <span style={{ fontSize: 12.5, fontWeight: 600, color: '#1E1A3C', lineHeight: 1.4 }}>
+                    {t.ofertaPoint3}
+                  </span>
+                </div>
+              </div>
+
+              {/* Link to view modal */}
+              <div style={{ textAlign: 'center', marginTop: 2 }}>
+                <button
+                  type="button"
+                  onClick={() => { setPolicyTab('terms'); setShowPolicy(true); }}
+                  style={{
+                    background: 'none', border: 'none', color: '#7C3AED',
+                    fontSize: 12.5, fontWeight: 700, cursor: 'pointer', textDecoration: 'underline'
+                  }}
+                >
+                  {t.readFullOferta}
+                </button>
+              </div>
+
+              {/* Acceptance Consent Box */}
+              <div
+                onClick={() => setOfertaAccepted(!ofertaAccepted)}
+                style={{
+                  padding: '14px 16px', borderRadius: 16,
+                  border: ofertaAccepted ? '2px solid #7C3AED' : '1.5px solid #E8E3F8',
+                  background: ofertaAccepted ? '#F5F0FF' : '#FFFFFF',
+                  cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12,
+                  boxShadow: ofertaAccepted ? '0 4px 12px rgba(124, 58, 237, 0.12)' : 'none',
+                  transition: 'all 0.2s ease'
+                }}
+              >
+                <div style={{
+                  width: 22, height: 22, borderRadius: 6,
+                  border: ofertaAccepted ? '2px solid #7C3AED' : '2px solid #CBD5E1',
+                  background: ofertaAccepted ? '#7C3AED' : '#FFFFFF',
+                  color: '#FFFFFF', fontSize: 13, fontWeight: 800,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+                }}>
+                  {ofertaAccepted ? '✓' : ''}
+                </div>
+                <span style={{ fontSize: 13, fontWeight: 700, color: '#1E1A3C', lineHeight: 1.3 }}>
+                  {t.acceptOfertaLabel}
+                </span>
+              </div>
+            </motion.div>
+          )}
+
+          {/* ── STEP 3: Telefon Raqam (Phone Number Input) ── */}
+          {step === 'phone' && (
+            <motion.div
+              key="phone"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -12 }}
+              style={{ display: 'flex', flexDirection: 'column', gap: 14 }}
+            >
+              <div style={{ textAlign: 'center', marginBottom: 4 }}>
+                <div style={{
+                  width: 56, height: 56, borderRadius: 20, margin: '0 auto 12px',
+                  background: 'linear-gradient(135deg, rgba(124, 58, 237, 0.12) 0%, rgba(91, 33, 182, 0.12) 100%)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26
+                }}>
+                  📱
+                </div>
+                <h1 style={{ fontSize: 21, fontWeight: 700, color: '#1E1A3C', letterSpacing: -0.3, margin: '0 0 4px' }}>
+                  {t.phoneTitle}
+                </h1>
+                <p style={{ fontSize: 13, color: '#8B82C4', margin: 0, lineHeight: 1.4 }}>
+                  {t.phoneSub}
+                </p>
+              </div>
+
+              {/* Phone Input Box with fixed +998 */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <label style={{ fontSize: 12, fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  {t.phoneLabel}
+                </label>
+                <div style={{
+                  display: 'flex', alignItems: 'center', background: '#FFFFFF',
+                  border: phoneError ? '2px solid #EF4444' : '2px solid #7C3AED',
+                  borderRadius: 16, padding: '4px 14px',
+                  boxShadow: '0 4px 16px rgba(124, 58, 237, 0.08)'
+                }}>
+                  <span style={{ fontSize: 16, fontWeight: 800, color: '#7C3AED', marginRight: 8 }}>
+                    🇺🇿 +998
+                  </span>
+                  <input
+                    type="tel"
+                    inputMode="numeric"
+                    autoFocus
+                    value={getFormattedPhoneDisplay()}
+                    onChange={(e) => formatPhoneInput(e.target.value)}
+                    placeholder={t.phonePlaceholder}
+                    style={{
+                      flex: 1, border: 'none', outline: 'none', background: 'transparent',
+                      fontSize: 17, fontWeight: 700, color: '#1E1A3C', padding: '12px 0',
+                      letterSpacing: '0.04em'
+                    }}
+                  />
+                  {phoneDigits.length === 9 && (
+                    <span style={{ color: '#10B981', fontSize: 18, fontWeight: 800 }}>✓</span>
+                  )}
+                </div>
+                {phoneError && (
+                  <span style={{ fontSize: 12, color: '#EF4444', fontWeight: 600, marginTop: 2 }}>
+                    {phoneError}
+                  </span>
+                )}
+              </div>
+
+              {/* VIP Trial Benefit Card */}
+              <div style={{
+                marginTop: 6, padding: '14px 16px', borderRadius: 16,
+                background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.1) 0%, rgba(217, 119, 6, 0.06) 100%)',
+                border: '1.5px solid rgba(245, 158, 11, 0.3)', display: 'flex', alignItems: 'flex-start', gap: 10
+              }}>
+                <span style={{ fontSize: 20 }}>🎁</span>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: '#B45309', marginBottom: 2 }}>
+                    {t.phoneBenefitTitle}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: '#92400E', lineHeight: 1.4 }}>
+                    {t.phoneBenefitSub}
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {/* ── STEP 4: Savings Goal (Optional) ── */}
           {step === 'goal' && (
             <motion.div
               key="goal"
@@ -537,291 +682,83 @@ export default function Onboarding({ onComplete }: Props) {
                         transition: 'all 0.2s ease'
                       }}
                     >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                        <span style={{ fontSize: 22 }}>{opt.icon}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <span style={{ fontSize: 20 }}>{opt.icon}</span>
                         <div style={{ textAlign: 'left' }}>
                           <div style={{ fontSize: 15, fontWeight: 700, color: isSelected ? '#7C3AED' : '#1E1A3C' }}>
-                            {opt.amount.toLocaleString('en-US').replace(/,/g, ' ')} {t.perMonth}
+                            {opt.amount.toLocaleString()} {t.perMonth}
                           </div>
-                          <div style={{ fontSize: 11, color: '#8B82C4', fontWeight: 600 }}>
-                            {t[opt.labelKey as keyof typeof t] as string}
+                          <div style={{ fontSize: 11, color: '#8B82C4' }}>
+                            {(t as any)[opt.labelKey]}
                           </div>
                         </div>
                       </div>
-                      {isSelected && (
-                        <div style={{
-                          width: 20, height: 20, borderRadius: 10, background: '#7C3AED',
-                          color: '#FFFFFF', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center'
+                      {opt.isPopular && (
+                        <span style={{
+                          fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 8,
+                          background: '#7C3AED', color: '#FFFFFF'
                         }}>
-                          ✓
-                        </div>
+                          TOP
+                        </span>
                       )}
                     </button>
                   )
                 })}
-
-                {/* Custom Goal Option */}
-                <button
-                  onClick={() => setIsCustomGoal(true)}
-                  style={{
-                    width: '100%', padding: '14px 16px', borderRadius: 16,
-                    border: isCustomGoal ? '1.5px solid #7C3AED' : '1.5px solid #E8E3F8',
-                    background: isCustomGoal ? '#F3EEFF' : '#FFFFFF',
-                    cursor: 'pointer', fontFamily: 'inherit',
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    boxShadow: isCustomGoal ? '0 4px 12px rgba(124, 58, 237, 0.12)' : '0 2px 6px rgba(0,0,0,0.02)',
-                    transition: 'all 0.2s ease'
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <span style={{ fontSize: 22 }}>✏️</span>
-                    <span style={{ fontSize: 14, fontWeight: 700, color: isCustomGoal ? '#7C3AED' : '#1E1A3C' }}>
-                      {t.customGoal}
-                    </span>
-                  </div>
-                  {isCustomGoal && (
-                    <div style={{
-                      width: 20, height: 20, borderRadius: 10, background: '#7C3AED',
-                      color: '#FFFFFF', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center'
-                    }}>
-                      ✓
-                    </div>
-                  )}
-                </button>
-
-                {isCustomGoal && (
-                  <input
-                    type="number"
-                    placeholder={t.enterAmount}
-                    value={customGoalInput}
-                    onChange={(e) => setCustomGoalInput(e.target.value)}
-                    autoFocus
-                    style={{
-                      width: '100%', padding: '12px 16px', borderRadius: 14,
-                      border: '1.5px solid #7C3AED', background: '#FFFFFF',
-                      fontSize: 14, fontWeight: 700, color: '#1E1A3C',
-                      outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit'
-                    }}
-                  />
-                )}
               </div>
             </motion.div>
           )}
 
-          {/* ── STEP 4: Pulingiz Haqida Savol Bering (Original) ── */}
-          {step === 'ai_ask' && (
-            <motion.div
-              key="ai_ask"
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -12 }}
-              style={{ display: 'flex', flexDirection: 'column', gap: 14, textAlign: 'center' }}
-            >
-              <div style={{
-                width: 64, height: 64, borderRadius: 22,
-                background: 'linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                boxShadow: '0 8px 24px rgba(124, 58, 237, 0.35)', margin: '0 auto'
-              }}>
-                <span style={{ fontSize: 28 }}>🤖</span>
-              </div>
-
-              <div>
-                <h1 style={{ fontSize: 21, fontWeight: 700, color: '#1E1A3C', letterSpacing: -0.3, margin: '0 0 4px' }}>
-                  {t.askAiTitle}
-                </h1>
-                <p style={{ fontSize: 13, color: '#8B82C4', lineHeight: 1.4, margin: 0 }}>
-                  {t.askAiSub}
-                </p>
-              </div>
-
-              <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
-                {t.aiQuestions.map((q, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => setSelectedAiQuestion(idx)}
-                    style={{
-                      width: '100%', padding: '13px 16px', borderRadius: 16,
-                      border: selectedAiQuestion === idx ? '1.5px solid #7C3AED' : '1.5px solid #E8E3F8',
-                      background: selectedAiQuestion === idx ? '#F3EEFF' : '#FFFFFF',
-                      color: selectedAiQuestion === idx ? '#7C3AED' : '#1E1A3C',
-                      fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-                      textAlign: 'left', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                      boxShadow: '0 2px 6px rgba(0,0,0,0.02)', transition: 'all 0.2s ease'
-                    }}
-                  >
-                    <span>💬 {q}</span>
-                    <span style={{ color: '#7C3AED', fontWeight: 700 }}>→</span>
-                  </button>
-                ))}
-              </div>
-            </motion.div>
-          )}
-
-          {/* ── STEP 5: Tabiiy Tilda Yozish (New) ── */}
-          {step === 'ai_nlp' && (
-            <motion.div
-              key="ai_nlp"
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -12 }}
-              style={{ display: 'flex', flexDirection: 'column', gap: 14, textAlign: 'center' }}
-            >
-              <div style={{
-                width: 64, height: 64, borderRadius: 22,
-                background: 'linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                boxShadow: '0 8px 24px rgba(124, 58, 237, 0.35)', margin: '0 auto'
-              }}>
-                <span style={{ fontSize: 28 }}>💬</span>
-              </div>
-
-              <div>
-                <h1 style={{ fontSize: 21, fontWeight: 700, color: '#1E1A3C', letterSpacing: -0.3, margin: '0 0 4px' }}>
-                  {t.aiNlpTitle}
-                </h1>
-                <p style={{ fontSize: 13, color: '#8B82C4', lineHeight: 1.4, margin: 0 }}>
-                  {t.aiNlpSub}
-                </p>
-              </div>
-
-              <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 10, textAlign: 'left' }}>
-                <div style={{
-                  padding: '14px', borderRadius: 16, background: '#FFFFFF',
-                  border: '1.5px solid #E8E3F8', boxShadow: '0 2px 8px rgba(124, 58, 237, 0.04)'
-                }}>
-                  <div style={{ fontSize: 11, color: '#8B82C4', fontWeight: 600, marginBottom: 2 }}>
-                    {t.aiNlpEx1Label}
-                  </div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: '#1E1A3C', marginBottom: 8 }}>
-                    {t.aiNlpEx1Text}
-                  </div>
-                  <div style={{
-                    paddingTop: 8, borderTop: '1px solid #F3EEFF',
-                    fontSize: 12, fontWeight: 700, color: '#7C3AED', display: 'flex', alignItems: 'center', gap: 6
-                  }}>
-                    {t.aiNlpEx1Res}
-                  </div>
-                </div>
-
-                <div style={{
-                  padding: '14px', borderRadius: 16, background: '#FFFFFF',
-                  border: '1.5px solid #E8E3F8', boxShadow: '0 2px 8px rgba(124, 58, 237, 0.04)'
-                }}>
-                  <div style={{ fontSize: 11, color: '#8B82C4', fontWeight: 600, marginBottom: 2 }}>
-                    {t.aiNlpEx2Label}
-                  </div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: '#1E1A3C', marginBottom: 8 }}>
-                    {t.aiNlpEx2Text}
-                  </div>
-                  <div style={{
-                    paddingTop: 8, borderTop: '1px solid #F3EEFF',
-                    fontSize: 12, fontWeight: 700, color: '#10B981', display: 'flex', alignItems: 'center', gap: 6
-                  }}>
-                    {t.aiNlpEx2Res}
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          )}
-
-          {/* ── STEP 6: 1 Kunlik Cheksiz Premium Sinovi (New) ── */}
-          {step === 'trial' && (
-            <motion.div
-              key="trial"
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -12 }}
-              style={{ display: 'flex', flexDirection: 'column', gap: 14, textAlign: 'center', alignItems: 'center' }}
-            >
-              <div style={{
-                width: 72, height: 72, borderRadius: 24,
-                background: 'linear-gradient(135deg, #F59E0B 0%, #D97706 100%)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                boxShadow: '0 8px 24px rgba(245, 158, 11, 0.35)', fontSize: 32
-              }}>
-                👑
-              </div>
-
-              <div>
-                <span style={{
-                  display: 'inline-block', padding: '4px 10px', borderRadius: 20,
-                  background: '#FEF3C7', color: '#B45309', fontSize: 11, fontWeight: 800,
-                  textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6
-                }}>
-                  {t.trialBadge}
-                </span>
-                <h1 style={{ fontSize: 21, fontWeight: 800, color: '#1E1A3C', letterSpacing: -0.3, margin: '0 0 4px' }}>
-                  {t.trialTitle}
-                </h1>
-                <p style={{ fontSize: 13, color: '#8B82C4', lineHeight: 1.4, margin: 0, maxWidth: 320 }}>
-                  {t.trialSub}
-                </p>
-              </div>
-
-              <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 8, textAlign: 'left' }}>
-                <div style={{
-                  padding: '12px 14px', borderRadius: 16, background: '#FFFFFF',
-                  border: '1.5px solid #E8E3F8', fontSize: 13, fontWeight: 600, color: '#1E1A3C'
-                }}>
-                  {t.trialItem1}
-                </div>
-                <div style={{
-                  padding: '12px 14px', borderRadius: 16, background: '#FFFFFF',
-                  border: '1.5px solid #E8E3F8', fontSize: 13, fontWeight: 600, color: '#1E1A3C'
-                }}>
-                  {t.trialItem2}
-                </div>
-                <div style={{
-                  padding: '12px 14px', borderRadius: 16, background: '#FFFFFF',
-                  border: '1.5px solid #E8E3F8', fontSize: 12, fontWeight: 500, color: '#8B82C4'
-                }}>
-                  {t.trialItem3}
-                </div>
-              </div>
-            </motion.div>
-          )}
-
-          {/* ── STEP 7: Boshlashga Tayyorsiz! (New) ── */}
+          {/* ── STEP 5: Ready / All Set ── */}
           {step === 'ready' && (
             <motion.div
               key="ready"
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -12 }}
-              style={{ display: 'flex', flexDirection: 'column', gap: 14, textAlign: 'center', alignItems: 'center' }}
+              initial={{ opacity: 0, scale: 0.96 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.96 }}
+              style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}
             >
               <div style={{
-                width: 72, height: 72, borderRadius: 24,
+                width: 80, height: 80, borderRadius: 28,
                 background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                boxShadow: '0 8px 24px rgba(16, 185, 129, 0.35)', fontSize: 34
+                boxShadow: '0 12px 32px rgba(16, 185, 129, 0.3)', color: '#FFFFFF', fontSize: 36
               }}>
-                🚀
+                ✨
               </div>
 
               <div>
-                <h1 style={{ fontSize: 22, fontWeight: 800, color: '#1E1A3C', letterSpacing: -0.3, margin: '0 0 6px' }}>
+                <h1 style={{ fontSize: 22, fontWeight: 800, color: '#1E1A3C', margin: '0 0 6px' }}>
                   {t.readyTitle}
                 </h1>
-                <p style={{ fontSize: 13, color: '#8B82C4', lineHeight: 1.5, margin: 0, maxWidth: 320 }}>
+                <p style={{ fontSize: 13.5, color: '#64748B', lineHeight: 1.5, margin: 0, maxWidth: 300 }}>
                   {t.readySub}
                 </p>
               </div>
 
               <div style={{
-                width: '100%', padding: '16px', borderRadius: 18,
-                background: '#ECFDF5', border: '1.5px solid #A7F3D0',
-                color: '#065F46', fontSize: 13, fontWeight: 600, textAlign: 'center'
+                width: '100%', padding: '14px 16px', borderRadius: 16,
+                background: '#FFFFFF', border: '1.5px solid #E8E3F8', textAlign: 'left',
+                display: 'flex', flexDirection: 'column', gap: 8
               }}>
-                ✨ Birinchi xarajatingizni birgalikda kiritamiz!
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                  <span style={{ color: '#8B82C4' }}>Raqam:</span>
+                  <span style={{ fontWeight: 700, color: '#1E1A3C' }}>+998 {getFormattedPhoneDisplay()}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                  <span style={{ color: '#8B82C4' }}>Holat:</span>
+                  <span style={{ fontWeight: 700, color: '#10B981' }}>✅ Faollashtirilgan</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                  <span style={{ color: '#8B82C4' }}>Tarif:</span>
+                  <span style={{ fontWeight: 700, color: '#7C3AED' }}>⭐ 1 Kunlik VIP Sinov</span>
+                </div>
               </div>
             </motion.div>
           )}
         </AnimatePresence>
       </div>
 
-      {/* Bottom Action Button (Original Purple Gradient) */}
+      {/* Bottom Action Button */}
       <div style={{ paddingTop: 16 }}>
         <button
           onClick={goNext}
@@ -838,7 +775,7 @@ export default function Onboarding({ onComplete }: Props) {
           <span>{step === 'ready' ? t.readyAction : (step === 'goal' ? t.saveGoalBtn : t.continueBtn)}</span>
         </button>
 
-        {/* Public Offer & Privacy Policy Link */}
+        {/* Public Offer Link */}
         <p
           style={{
             textAlign: 'center',
@@ -848,21 +785,14 @@ export default function Onboarding({ onComplete }: Props) {
             lineHeight: 1.4
           }}
         >
-          Davom etish orqali siz{' '}
+          Moliya AI xizmatlaridan foydalanish rasmiy{' '}
           <span
             onClick={() => { setPolicyTab('terms'); setShowPolicy(true); }}
             style={{ textDecoration: 'underline', color: '#7C3AED', fontWeight: 600, cursor: 'pointer' }}
           >
             Ommaviy oferta
           </span>{' '}
-          va{' '}
-          <span
-            onClick={() => { setPolicyTab('privacy'); setShowPolicy(true); }}
-            style={{ textDecoration: 'underline', color: '#7C3AED', fontWeight: 600, cursor: 'pointer' }}
-          >
-            Maxfiylik siyosati
-          </span>
-          ga rozilik bildirasiz
+          shartlariga asoslangan
         </p>
       </div>
 

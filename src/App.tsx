@@ -8,7 +8,7 @@ import ProfileScreen from './components/ProfileScreen'
 import BottomNav from './components/BottomNav'
 import AIButton from './components/AIButton'
 import AppTour from './components/AppTour'
-import { useFinance, isTelegramMiniApp } from './FinanceContext'
+import { useFinance, isTelegramMiniApp, isValidPhoneNumber } from './FinanceContext'
 import WebLoginScreen from './components/WebLoginScreen'
 import InstallPromptModal from './components/InstallPromptModal'
 import OfflineStatusBanner from './components/OfflineStatusBanner'
@@ -21,7 +21,9 @@ export default function App() {
 
   const getInitialStage = (): Stage => {
     try {
-      const isOnboarded = localStorage.getItem('user_onboarding_completed_v1') === 'true';
+      const currentUserId = localStorage.getItem('user_id_v1');
+      const userKey = currentUserId ? `user_onboarding_completed_${currentUserId}` : 'user_onboarding_completed_v1';
+      const isOnboarded = localStorage.getItem(userKey) === 'true';
       if (isOnboarded) {
         return 'app';
       }
@@ -53,15 +55,28 @@ export default function App() {
   useEffect(() => {
     if (!isAuthReady) return;
     
-    // DB state is authoritative
+    const currentUserId = userId || localStorage.getItem('user_id_v1');
+    const userKey = currentUserId ? `user_onboarding_completed_${currentUserId}` : 'user_onboarding_completed_v1';
+
+    // Strict registration check: requires valid phone, accepted oferta, and completed flag
+    const hasValidPhone = Boolean(
+      onboarding?.phone && isValidPhoneNumber(onboarding.phone)
+    );
+    const hasAcceptedOferta = Boolean(
+      onboarding?.oferta_accepted === true ||
+      (onboarding as any)?.privacy_consent?.accepted === true
+    );
+    const isDbRegistered = Boolean(hasValidPhone && hasAcceptedOferta && onboarding?.completed === true);
+
     let isOnboarded = false;
-    if (onboarding && typeof onboarding.completed === 'boolean') {
-      isOnboarded = onboarding.completed;
+    if (onboarding && (onboarding.phone || onboarding.completed !== undefined)) {
+      isOnboarded = isDbRegistered;
       if (!isOnboarded) {
+        localStorage.removeItem(userKey);
         localStorage.removeItem('user_onboarding_completed_v1');
       }
     } else {
-      isOnboarded = localStorage.getItem('user_onboarding_completed_v1') === 'true';
+      isOnboarded = localStorage.getItem(userKey) === 'true';
     }
 
     if (isOnboarded) {
@@ -88,14 +103,27 @@ export default function App() {
   // Auto-transition to app/onboarding when user gets authenticated or logs out
   useEffect(() => {
     const checkLoggedIn = () => {
+      const currentUserId = userId || localStorage.getItem('user_id_v1');
+      const userKey = currentUserId ? `user_onboarding_completed_${currentUserId}` : 'user_onboarding_completed_v1';
+
+      const hasValidPhone = Boolean(
+        onboarding?.phone && isValidPhoneNumber(onboarding.phone)
+      );
+      const hasAcceptedOferta = Boolean(
+        onboarding?.oferta_accepted === true ||
+        (onboarding as any)?.privacy_consent?.accepted === true
+      );
+      const isDbRegistered = Boolean(hasValidPhone && hasAcceptedOferta && onboarding?.completed === true);
+
       let isOnboarded = false;
-      if (onboarding && typeof onboarding.completed === 'boolean') {
-        isOnboarded = onboarding.completed;
+      if (onboarding && (onboarding.phone || onboarding.completed !== undefined)) {
+        isOnboarded = isDbRegistered;
         if (!isOnboarded) {
+          localStorage.removeItem(userKey);
           localStorage.removeItem('user_onboarding_completed_v1');
         }
       } else {
-        isOnboarded = localStorage.getItem('user_onboarding_completed_v1') === 'true';
+        isOnboarded = localStorage.getItem(userKey) === 'true';
       }
 
       if (isOnboarded) {
@@ -110,7 +138,7 @@ export default function App() {
       window.removeEventListener('storage', checkLoggedIn);
       window.removeEventListener('user_logged_in_updated', checkLoggedIn);
     };
-  }, [isAuthReady, onboarding]);
+  }, [isAuthReady, userId, onboarding]);
 
   // If onboarding is null and user is authenticated, set clean defaults
   useEffect(() => {
