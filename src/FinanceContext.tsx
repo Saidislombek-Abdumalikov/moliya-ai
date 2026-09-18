@@ -508,33 +508,24 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
 
 
-        const initData = tg?.initData || ''
-        const initDataUnsafe = tg?.initDataUnsafe
-        const currentTgId = initDataUnsafe?.user?.id ? String(initDataUnsafe.user.id) : null
+        // ===== STEP 1: Check URL exchange code parameter (ONE-CLICK LOGIN FROM TELEGRAM BOT) =====
+        const urlParams = new URLSearchParams(window.location.search);
+        const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, '?'));
+        const exchangeCode = urlParams.get('code') || hashParams.get('code') || urlParams.get('startapp');
 
-        if (tg && (initData || currentTgId)) {
+        if (exchangeCode && exchangeCode.length >= 16) {
           try {
-            console.log('[AUTH] Telegram Mini App detected, active Telegram user:', currentTgId)
-            const cachedUserId = localStorage.getItem('user_id_v1')
-            if (currentTgId && cachedUserId && cachedUserId !== `moliya_user_tg_${currentTgId}`) {
-              console.log('[AUTH] User switch detected in Telegram Mini App:', cachedUserId, '->', `moliya_user_tg_${currentTgId}`)
-              localStorage.removeItem('user_session_token_v1')
-              localStorage.removeItem('user_cards_v1')
-              localStorage.removeItem('user_transactions_v1')
-              localStorage.removeItem('user_onboarding_v1')
-              await supabase.auth.signOut().catch(() => {})
-            }
-
-            const res = await fetch('/api/auth/telegram', {
+            console.log('[AUTH] Found code URL parameter, exchanging...');
+            const res = await fetch('/api/auth/exchange-code', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ initData, initDataUnsafe })
-            })
+              body: JSON.stringify({ code: exchangeCode }),
+            });
             if (res.ok) {
-              const data = await res.json()
+              const data = await res.json();
               if (data.userId) {
                 if (data.access_token && data.refresh_token) {
-                  await setSupabaseSession(data.access_token, data.refresh_token)
+                  await setSupabaseSession(data.access_token, data.refresh_token);
                 }
                 persistAuthState({
                   userId: data.userId,
@@ -542,23 +533,107 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
                   onboarding: data.onboarding,
                   cards: data.cards,
                   transactions: data.transactions
-                })
-                console.log('[AUTH] ✅ Authenticated via Telegram Mini App initData for:', data.userId)
-                setIsAuthReady(true)
-                setAuthError(null)
-                return
-              }
-            } else {
-              const errData = await res.json().catch(() => ({}))
-              console.error('[AUTH] Telegram initData verification response:', errData)
-              if (errData.error === 'REGISTRATION_REQUIRED' || errData.error === 'ACCOUNT_RESTRICTED') {
-                setAuthError(errData.message || "Iltimos, avval Telegram botda telefon raqamingizni tasdiqlang.")
-                setIsAuthReady(true)
-                return
+                });
+                localStorage.removeItem('moliya_pending_request_id');
+                localStorage.removeItem('moliya_pending_request_time');
+                const cleanUrl = window.location.pathname;
+                window.history.replaceState({}, document.title, cleanUrl);
+                console.log('[AUTH] ✅ Authenticated via exchange code API');
+                setIsAuthReady(true);
+                return;
               }
             }
           } catch (err) {
-            console.error('[AUTH] Telegram initData auth error:', err)
+            console.error('[AUTH] Error exchanging code via API:', err);
+          }
+
+          // Bulletproof Fallback: Direct Supabase exchange code lookup
+          try {
+            console.log('[AUTH] Trying direct Supabase exchange code lookup...');
+            const codeId = `exchange_${exchangeCode}`;
+            const { data: codeDoc } = await supabase.from('users').select('*').eq('id', codeId).maybeSingle();
+            if (codeDoc && codeDoc.telegram_id) {
+              const targetUserId = `moliya_user_tg_${codeDoc.telegram_id}`;
+              const { data: targetUser } = await supabase.from('users').select('*').eq('id', targetUserId).maybeSingle();
+              if (targetUser) {
+                await supabase.from('users').update({ login_request_status: 'USED', updated_at: new Date().toISOString() }).eq('id', codeId);
+                persistAuthState({
+                  userId: targetUserId,
+                  sessionToken: codeDoc.session_token || targetUser.session_token,
+                  onboarding: targetUser.onboarding,
+                  cards: targetUser.cards,
+                  transactions: targetUser.transactions
+                });
+                localStorage.removeItem('moliya_pending_request_id');
+                localStorage.removeItem('moliya_pending_request_time');
+                const cleanUrl = window.location.pathname;
+                window.history.replaceState({}, document.title, cleanUrl);
+                console.log('[AUTH] ✅ Authenticated via direct Supabase exchange code fallback');
+                setIsAuthReady(true);
+                return;
+              }
+            }
+          } catch (fbErr) {
+            console.error('[AUTH] Exchange direct fallback error:', fbErr);
+          }
+
+          // Clean URL even if exchange failed
+          const cleanUrl = window.location.pathname;
+          window.history.replaceState({}, document.title, cleanUrl);
+        }
+
+        // ===== STEP 2: Telegram Mini App native container check =====
+        const initData = tg?.initData || '';
+        const initDataUnsafe = tg?.initDataUnsafe;
+        const currentTgId = initDataUnsafe?.user?.id ? String(initDataUnsafe.user.id) : null;
+
+        if (tg && (initData || currentTgId)) {
+          try {
+            console.log('[AUTH] Telegram Mini App detected, active Telegram user:', currentTgId);
+            const cachedUserId = localStorage.getItem('user_id_v1');
+            if (currentTgId && cachedUserId && cachedUserId !== `moliya_user_tg_${currentTgId}`) {
+              console.log('[AUTH] User switch detected in Telegram Mini App:', cachedUserId, '->', `moliya_user_tg_${currentTgId}`);
+              localStorage.removeItem('user_session_token_v1');
+              localStorage.removeItem('user_cards_v1');
+              localStorage.removeItem('user_transactions_v1');
+              localStorage.removeItem('user_onboarding_v1');
+              await supabase.auth.signOut().catch(() => {});
+            }
+
+            const res = await fetch('/api/auth/telegram', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ initData, initDataUnsafe })
+            });
+            if (res.ok) {
+              const data = await res.json();
+              if (data.userId) {
+                if (data.access_token && data.refresh_token) {
+                  await setSupabaseSession(data.access_token, data.refresh_token);
+                }
+                persistAuthState({
+                  userId: data.userId,
+                  sessionToken: data.sessionToken,
+                  onboarding: data.onboarding,
+                  cards: data.cards,
+                  transactions: data.transactions
+                });
+                console.log('[AUTH] ✅ Authenticated via Telegram Mini App initData for:', data.userId);
+                setIsAuthReady(true);
+                setAuthError(null);
+                return;
+              }
+            } else {
+              const errData = await res.json().catch(() => ({}));
+              console.error('[AUTH] Telegram initData verification response:', errData);
+              if (errData.error === 'REGISTRATION_REQUIRED' || errData.error === 'ACCOUNT_RESTRICTED') {
+                setAuthError(errData.message || "Iltimos, avval Telegram botda telefon raqamingizni tasdiqlang.");
+                setIsAuthReady(true);
+                return;
+              }
+            }
+          } catch (err) {
+            console.error('[AUTH] Telegram initData auth error:', err);
           }
 
           // Fallback for Telegram Mini App: direct Supabase lookup if network endpoint failed
@@ -583,46 +658,6 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
               console.error('[AUTH] Mini App direct profile fallback error:', fallbackErr);
             }
           }
-        }
-
-        // ===== STEP 1: Check for URL ?code= parameter (exchange code from bot) =====
-        const urlParams = new URLSearchParams(window.location.search)
-        const exchangeCode = urlParams.get('code')
-        if (exchangeCode && exchangeCode.length >= 16) {
-          try {
-            console.log('[AUTH] Found ?code= URL parameter, exchanging...')
-            const res = await fetch('/api/auth/exchange-code', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ code: exchangeCode }),
-            })
-            if (res.ok) {
-              const data = await res.json()
-              if (data.userId) {
-                if (data.access_token && data.refresh_token) {
-                  await setSupabaseSession(data.access_token, data.refresh_token)
-                }
-                persistAuthState({
-                  userId: data.userId,
-                  sessionToken: data.sessionToken,
-                  onboarding: data.onboarding,
-                  cards: data.cards,
-                  transactions: data.transactions
-                })
-                // Clean URL
-                const cleanUrl = window.location.pathname + window.location.hash
-                window.history.replaceState({}, document.title, cleanUrl)
-                console.log('[AUTH] ✅ Authenticated via exchange code')
-                setIsAuthReady(true)
-                return
-              }
-            }
-          } catch (err) {
-            console.error('[AUTH] Error exchanging code:', err)
-          }
-          // Clean URL even if exchange failed
-          const cleanUrl = window.location.pathname + window.location.hash
-          window.history.replaceState({}, document.title, cleanUrl)
         }
 
         // ===== STEP 2: Check for existing real Supabase Auth session =====
@@ -723,10 +758,16 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
 
         // ===== STEP 6: Resume polling for pending login request (mobile redirect recovery) =====
-        const pendingRequestId = localStorage.getItem('moliya_pending_request_id')
-        if (pendingRequestId) {
-          console.log('[AUTH] Found pending login request, resuming polling...')
-          resumePolling(pendingRequestId)
+        const pendingRequestId = localStorage.getItem('moliya_pending_request_id');
+        const pendingRequestTime = localStorage.getItem('moliya_pending_request_time');
+        const isRequestExpired = pendingRequestTime && (Date.now() - parseInt(pendingRequestTime, 10) > 5 * 60 * 1000);
+        if (pendingRequestId && !isRequestExpired) {
+          console.log('[AUTH] Found pending login request, resuming polling...');
+          resumePolling(pendingRequestId);
+        } else if (pendingRequestId && isRequestExpired) {
+          console.log('[AUTH] Stale pending login request cleaned up');
+          localStorage.removeItem('moliya_pending_request_id');
+          localStorage.removeItem('moliya_pending_request_time');
         }
 
         // ===== STEP 7: Local fallback (Telegram Mini App only) =====
@@ -821,11 +862,56 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
             })
 
             localStorage.removeItem('moliya_pending_request_id')
+            localStorage.removeItem('moliya_pending_request_time')
             if (onVerified) onVerified()
+            return
           }
         }
       } catch (err) {
-        console.error('[AUTH] Polling error:', err)
+        console.error('[AUTH] Polling API error:', err)
+      }
+
+      // Direct Supabase fallback in case API endpoint is slow or cold-starting
+      try {
+        const cleanId = requestId.replace(/^req_/, '').trim()
+        const { data: reqDoc } = await supabase.from('users').select('*').eq('id', `req_${cleanId}`).maybeSingle()
+        if (reqDoc && reqDoc.login_request_status === 'VERIFIED' && reqDoc.telegram_id) {
+          const targetUserId = `moliya_user_tg_${reqDoc.telegram_id}`
+          const { data: userDoc } = await supabase.from('users').select('*').eq('id', targetUserId).maybeSingle()
+          if (userDoc) {
+            isFinished = true
+            if (intervalId) clearInterval(intervalId)
+            window.removeEventListener('focus', onTabActive)
+            document.removeEventListener('visibilitychange', onTabActive)
+
+            await supabase.from('users').update({ login_request_status: 'CONSUMED' }).eq('id', `req_${cleanId}`)
+
+            const currentOnboarding = JSON.parse(localStorage.getItem('user_onboarding_v1') || '{}')
+            const savedLang = localStorage.getItem('user_selected_language_v1')
+            const updatedOnboarding = {
+              ...currentOnboarding,
+              ...(userDoc.onboarding || {}),
+              completed: true,
+              language: savedLang || userDoc.onboarding?.language || currentOnboarding.language || 'uz',
+              phone: userDoc.phone || userDoc.onboarding?.phone || currentOnboarding.phone || '',
+            }
+
+            persistAuthState({
+              userId: targetUserId,
+              sessionToken: reqDoc.session_token || userDoc.session_token,
+              onboarding: updatedOnboarding,
+              cards: userDoc.cards,
+              transactions: userDoc.transactions
+            })
+
+            localStorage.removeItem('moliya_pending_request_id')
+            localStorage.removeItem('moliya_pending_request_time')
+            if (onVerified) onVerified()
+            return
+          }
+        }
+      } catch (directErr) {
+        console.error('[AUTH] Polling direct fallback error:', directErr)
       }
     }
 
@@ -876,6 +962,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     // Save the request ID BEFORE navigating away so we can resume on return
     localStorage.setItem('moliya_pending_request_id', requestId)
+    localStorage.setItem('moliya_pending_request_time', String(Date.now()))
 
     // Register with backend first
     fetch('/api/auth/create-login-request', {
@@ -912,6 +999,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       requestId,
       cancel: () => {
         localStorage.removeItem('moliya_pending_request_id')
+        localStorage.removeItem('moliya_pending_request_time')
       }
     };
   };

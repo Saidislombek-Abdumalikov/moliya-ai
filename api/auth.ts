@@ -290,7 +290,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       if (codeDoc.login_request_status === 'USED') {
-        return res.status(400).json({ error: 'Code already used' });
+        const updatedAt = new Date(codeDoc.updated_at || codeDoc.created_at || 0).getTime();
+        if (Date.now() - updatedAt > 24 * 3600 * 1000) {
+          return res.status(400).json({ error: 'Code expired' });
+        }
       }
 
       const tgId = codeDoc.telegram_id;
@@ -304,11 +307,45 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }).eq('id', codeId);
 
       const userId = `moliya_user_tg_${tgId}`;
-      const { data: userDoc } = await supabase
+      let { data: userDoc } = await supabase
         .from('users')
         .select('*')
         .eq('id', userId)
         .maybeSingle();
+
+      if (!userDoc) {
+        const nowStr = new Date().toISOString();
+        const trialEnd = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+        const newOnboarding = {
+          completed: false,
+          tour_completed: false,
+          language: 'uz',
+          name: 'Telegram Foydalanuvchi',
+          telegram: '@moliya_user',
+          telegramId: String(tgId),
+          trial_started_at: nowStr,
+          trial_ends_at: trialEnd,
+          registration_status: 'pending_registration',
+          oferta_accepted: false
+        };
+        const newRecord = {
+          id: userId,
+          telegram_id: String(tgId),
+          name: 'Telegram Foydalanuvchi',
+          platform: 'web_app',
+          is_premium: true,
+          premium_expires_at: trialEnd,
+          session_token: codeDoc.session_token,
+          session_expires_at: new Date(Date.now() + 60 * 24 * 3600 * 1000).toISOString(),
+          onboarding: newOnboarding,
+          cards: [],
+          transactions: [],
+          created_at: nowStr,
+          updated_at: nowStr
+        };
+        await supabase.from('users').upsert(newRecord, { onConflict: 'id' });
+        userDoc = newRecord as any;
+      }
 
       let authSession: any = null;
       try {

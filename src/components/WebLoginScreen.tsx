@@ -6,7 +6,14 @@ export default function WebLoginScreen() {
   const { startTelegramLogin, userId } = useFinance();
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [currentRequestId, setCurrentRequestId] = useState<string | null>(() => {
-    return localStorage.getItem('moliya_pending_request_id');
+    const saved = localStorage.getItem('moliya_pending_request_id');
+    const savedTime = localStorage.getItem('moliya_pending_request_time');
+    if (saved && savedTime && Date.now() - parseInt(savedTime, 10) > 5 * 60 * 1000) {
+      localStorage.removeItem('moliya_pending_request_id');
+      localStorage.removeItem('moliya_pending_request_time');
+      return null;
+    }
+    return saved;
   });
   const [loginError, setLoginError] = useState<string | null>(null);
 
@@ -14,11 +21,20 @@ export default function WebLoginScreen() {
   if (userId) return null;
 
   useEffect(() => {
-    // Resume waiting if there's already a pending request
+    // Resume waiting ONLY if there's a recent pending request (less than 5 minutes old)
     const pending = localStorage.getItem('moliya_pending_request_id');
-    if (pending) {
-      setIsLoggingIn(true);
-      setCurrentRequestId(pending);
+    const savedTime = localStorage.getItem('moliya_pending_request_time');
+    if (pending && savedTime) {
+      const isExpired = Date.now() - parseInt(savedTime, 10) > 5 * 60 * 1000;
+      if (isExpired) {
+        localStorage.removeItem('moliya_pending_request_id');
+        localStorage.removeItem('moliya_pending_request_time');
+        setIsLoggingIn(false);
+        setCurrentRequestId(null);
+      } else {
+        setIsLoggingIn(true);
+        setCurrentRequestId(pending);
+      }
     }
   }, []);
 
@@ -41,6 +57,7 @@ export default function WebLoginScreen() {
 
   const handleCancelLogin = () => {
     localStorage.removeItem('moliya_pending_request_id');
+    localStorage.removeItem('moliya_pending_request_time');
     setIsLoggingIn(false);
     setCurrentRequestId(null);
   };

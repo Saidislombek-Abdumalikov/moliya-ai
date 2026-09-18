@@ -142,6 +142,119 @@ async function startServer() {
     }
   });
 
+  // 2.5 Exchange Code for Web App Auth
+  app.post("/api/auth/exchange-code", async (req, res) => {
+    try {
+      const { code } = req.body || {};
+      if (!code || typeof code !== 'string' || code.length < 16) {
+        res.status(400).json({ error: "Missing or invalid code" });
+        return;
+      }
+
+      const codeId = `exchange_${code}`;
+      const { data: codeDoc, error: lookupError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', codeId)
+        .maybeSingle();
+
+      if (lookupError || !codeDoc) {
+        res.status(400).json({ error: "Invalid or expired code" });
+        return;
+      }
+
+      if (codeDoc.session_expires_at && new Date(codeDoc.session_expires_at).getTime() < Date.now()) {
+        await supabase.from('users').delete().eq('id', codeId);
+        res.status(400).json({ error: "Code expired" });
+        return;
+      }
+
+      if (codeDoc.login_request_status === 'USED') {
+        const updatedAt = new Date(codeDoc.updated_at || codeDoc.created_at || 0).getTime();
+        if (Date.now() - updatedAt > 24 * 3600 * 1000) {
+          res.status(400).json({ error: "Code expired" });
+          return;
+        }
+      }
+
+      const tgId = codeDoc.telegram_id;
+      if (!tgId) {
+        res.status(400).json({ error: "Invalid code: no telegram_id" });
+        return;
+      }
+
+      await supabase.from('users').update({
+        login_request_status: 'USED',
+        updated_at: new Date().toISOString()
+      }).eq('id', codeId);
+
+      const userId = `moliya_user_tg_${tgId}`;
+      let { data: userDoc } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (!userDoc) {
+        const nowStr = new Date().toISOString();
+        const trialEnd = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+        const newOnboarding = {
+          completed: false,
+          tour_completed: false,
+          language: 'uz',
+          name: 'Telegram Foydalanuvchi',
+          telegram: '@moliya_user',
+          telegramId: String(tgId),
+          trial_started_at: nowStr,
+          trial_ends_at: trialEnd,
+          registration_status: 'pending_registration',
+          oferta_accepted: false
+        };
+        const newRecord = {
+          id: userId,
+          telegram_id: String(tgId),
+          name: 'Telegram Foydalanuvchi',
+          platform: 'web_app',
+          is_premium: true,
+          premium_expires_at: trialEnd,
+          session_token: codeDoc.session_token,
+          session_expires_at: new Date(Date.now() + 60 * 24 * 3600 * 1000).toISOString(),
+          onboarding: newOnboarding,
+          cards: [],
+          transactions: [],
+          created_at: nowStr,
+          updated_at: nowStr
+        };
+        await supabase.from('users').upsert(newRecord, { onConflict: 'id' });
+        userDoc = newRecord as any;
+      }
+
+      let authSession: any = null;
+      try {
+        authSession = await createSupabaseAuthSession(
+          String(tgId),
+          { name: userDoc?.name || '', telegram: userDoc?.telegram || '' }
+        );
+      } catch (authErr) {
+        console.warn('[EXCHANGE-CODE] Warning creating auth session in server.ts:', authErr);
+      }
+
+      res.json({
+        access_token: authSession?.access_token || null,
+        refresh_token: authSession?.refresh_token || null,
+        userId,
+        sessionToken: userDoc?.session_token || codeDoc.session_token || null,
+        onboarding: userDoc?.onboarding || null,
+        cards: userDoc?.cards || [],
+        transactions: userDoc?.transactions || [],
+        isPremium: userDoc?.is_premium || false
+      });
+    } catch (error: any) {
+      console.error('[EXCHANGE-CODE] Error in server.ts:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // 3. Validate Session Token
   app.post("/api/auth/validate-session", async (req, res) => {
     try {

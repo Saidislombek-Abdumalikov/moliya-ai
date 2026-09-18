@@ -429,8 +429,15 @@ async function createQuickExchangeCode(tgId: string | number): Promise<string> {
   try {
     const now = new Date();
     const exchangeCode = crypto.randomBytes(24).toString('hex');
-    const codeExpiresAt = new Date(now.getTime() + 15 * 60 * 1000).toISOString();
-    const sessionToken = 'sess_' + crypto.randomBytes(16).toString('hex');
+    const codeExpiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+    const sessionToken = 'sess_' + crypto.randomBytes(24).toString('hex');
+
+    const userId = `moliya_user_tg_${tgId}`;
+    await supabase.from('users').update({
+      session_token: sessionToken,
+      session_expires_at: new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString(),
+      updated_at: now.toISOString()
+    }).eq('id', userId);
 
     await supabase.from('users').upsert({
       id: `exchange_${exchangeCode}`,
@@ -759,9 +766,9 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any) {
       updated_at: now.toISOString()
     }, { onConflict: 'id' });
 
-    // Generate 15-minute single-use exchange code
+    // Generate 24-hour exchange code
     const exchangeCode = crypto.randomBytes(24).toString('hex');
-    const codeExpiresAt = new Date(now.getTime() + 15 * 60 * 1000).toISOString();
+    const codeExpiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
     await supabase.from('users').upsert({
       id: `exchange_${exchangeCode}`,
       telegram_id: tgId,
@@ -1582,10 +1589,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           // If user already has a verified phone, confirm and show main app
           const alreadyHasPhone = isValidPhoneNumber(currUser?.phone) || isValidPhoneNumber(currUser?.onboarding?.phone);
           if (alreadyHasPhone) {
+            const quickCode = await createQuickExchangeCode(fromUser.id);
+            const quickWebUrl = quickCode ? `${appUrl}?code=${quickCode}` : appUrl;
             await sendOrReplaceSystemMessage(
               chatId,
               `✅ <b>Ommaviy oferta va shartlar qabul qilindi!</b>\n\nEndi bot va Moliya Mini Appdan to'liq foydalanishingiz mumkin.`,
-              getMainAppKeyboard(appUrl),
+              getMainAppKeyboard(appUrl, quickWebUrl),
               userId,
               'welcome_card'
             );
@@ -1786,7 +1795,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             `• <b>📊 Oylik Limit</b> — Byudjet sarfi va nazorat\n` +
             `• <b>💎 Premium Pro</b> — VIP status va imkoniyatlar\n` +
             `• <b>📈 Statistika</b> — Oylik balans va xarajatlar`;
-          await editTelegramMessage(chatId, cb.message.message_id, helpText, getMainAppKeyboard(appUrl), userId);
+          const quickCode = await createQuickExchangeCode(cb.from.id);
+          const quickWebUrl = quickCode ? `${appUrl}?code=${quickCode}` : appUrl;
+          await editTelegramMessage(chatId, cb.message.message_id, helpText, getMainAppKeyboard(appUrl, quickWebUrl), userId);
           await answerCallbackQuery(cb.id);
           return res.status(200).json({ status: 'ok' });
         }
@@ -2030,7 +2041,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (removeRes?.result?.message_id) {
           setTimeout(() => deleteTelegramMessage(chatId, removeRes.result.message_id).catch(() => {}), 1500);
         }
-        await sendOrReplaceSystemMessage(chatId, successMsg, getMainAppKeyboard(appUrl), userId, 'welcome_card');
+        const quickCode = await createQuickExchangeCode(fromUser.id);
+        const quickWebUrl = quickCode ? `${appUrl}?code=${quickCode}` : appUrl;
+        await sendOrReplaceSystemMessage(chatId, successMsg, getMainAppKeyboard(appUrl, quickWebUrl), userId, 'welcome_card');
         return res.status(200).json({ status: 'ok' });
       }
     }
@@ -2219,7 +2232,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         `• VIP Premium: Cheksiz AI, to'liq tahlil va ustunliklar</blockquote>\n\n` +
         `👇 <i>Quyidagi menyu tugmalaridan foydalaning:</i>`;
 
-      await sendOrReplaceSystemMessage(chatId, helpText, getMainAppKeyboard(appUrl), userId, 'help_card');
+      const quickCode = await createQuickExchangeCode(fromUser.id);
+      const quickWebUrl = quickCode ? `${appUrl}?code=${quickCode}` : appUrl;
+      await sendOrReplaceSystemMessage(chatId, helpText, getMainAppKeyboard(appUrl, quickWebUrl), userId, 'help_card');
       return res.status(200).json({ status: 'ok' });
     }
 
