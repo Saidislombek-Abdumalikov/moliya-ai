@@ -720,23 +720,7 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
 
   const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8955141731:AAGILXzT69Vity8ZFi-H8XeZc_H6_BFaS8Y';
 
-  async function ensureChatMenuButton(chatId: string | number, appUrl: string) {
-    if (!BOT_TOKEN) return;
-    try {
-      await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setChatMenuButton`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: String(chatId),
-          menu_button: {
-            type: 'web_app',
-            text: '📱 Moliya App',
-            web_app: { url: appUrl }
-          }
-        })
-      });
-    } catch {}
-  }
+
 
   async function syncUserTxToFirestore(chatId: number, txs: any[]) {
     try {
@@ -1022,7 +1006,6 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
             console.error('Error verifying login request in server.ts:', e);
           }
 
-          ensureChatMenuButton(chatId, appUrl).catch(() => {});
           const successText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n✅ <b>Muvaffaqiyatli tasdiqlandi!</b> 🚀\nBrauzeringizdagi Moliya AI ilovasiga avtomatik kirdingiz.\n\n👇 <i>Ilovaga o'tish uchun quyidagi tugmani bosing:</i>`;
           await sendTelegramMessage(chatId, successText, getDualLinkInlineButtons(requestId, exchangeCode));
           await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard(requestId, exchangeCode));
@@ -1044,7 +1027,6 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
           }, { onConflict: 'id' });
         } catch {}
 
-        ensureChatMenuButton(chatId, appUrl).catch(() => {});
         const welcomeText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n<b>Moliya AI</b> botiga xush kelibsiz! 🚀\n\nPulingizni oson va aqlli boshqaring.\n\n👇 <b>Ilovani ochish uchun quyidagi linklardan foydalaning:</b>`;
         await sendTelegramMessage(chatId, welcomeText, getDualLinkInlineButtons(undefined, quickCode));
         await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard(undefined, quickCode));

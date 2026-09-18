@@ -423,23 +423,7 @@ async function sendChatAction(chatId: number | string, action: 'typing' | 'recor
   } catch {}
 }
 
-async function ensureChatMenuButton(chatId: string | number, appUrl: string) {
-  if (!BOT_TOKEN) return;
-  try {
-    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setChatMenuButton`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: String(chatId),
-        menu_button: {
-          type: 'web_app',
-          text: '📱 Moliya App',
-          web_app: { url: appUrl }
-        }
-      })
-    });
-  } catch {}
-}
+
 
 async function createQuickExchangeCode(tgId: string | number): Promise<string> {
   try {
@@ -1857,7 +1841,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
         const quickCode = await createQuickExchangeCode(fromUser.id);
         const quickWebUrl = quickCode ? `${appUrl}?code=${quickCode}` : appUrl;
-        ensureChatMenuButton(chatId, appUrl).catch(() => {});
         await sendOrReplaceSystemMessage(
           chatId,
           `✅ <b>Siz allaqachon ro'yxatdan o'tgansiz!</b>\n\nXarajat yozish uchun oddiy matn yuboring yoki quyidagi tugmalar orqali ilovalarga kiring.`,
@@ -1889,7 +1872,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       const quickCode = await createQuickExchangeCode(fromUser.id);
       const quickWebUrl = quickCode ? `${appUrl}?code=${quickCode}` : appUrl;
-      ensureChatMenuButton(chatId, appUrl).catch(() => {});
       await sendOrReplaceSystemMessage(chatId, successMsg, getMainAppKeyboard(appUrl, quickWebUrl), userId, 'welcome_card');
       return res.status(200).json({ status: 'ok' });
     }
@@ -1993,7 +1975,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const code = verifyResult?.exchangeCode;
           const webTargetUrl = code ? `${appUrl}?code=${code}` : appUrl;
 
-          ensureChatMenuButton(chatId, appUrl).catch(() => {});
           await sendOrReplaceSystemMessage(
             chatId,
             `<b>Assalomu alaykum, ${fromUser.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
@@ -2049,7 +2030,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const quickCode = await createQuickExchangeCode(fromUser.id);
       const quickWebUrl = quickCode ? `${appUrl}?code=${quickCode}` : appUrl;
-      ensureChatMenuButton(chatId, appUrl).catch(() => {});
       // Authoritative replacement so at most 1 welcome card stays in chat
       await sendOrReplaceSystemMessage(chatId, welcomeText, getMainAppKeyboard(appUrl, quickWebUrl), userId, 'welcome_card');
       return res.status(200).json({ status: 'ok' });
