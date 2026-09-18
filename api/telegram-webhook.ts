@@ -433,18 +433,40 @@ async function createQuickExchangeCode(tgId: string | number): Promise<string> {
     const sessionToken = 'sess_' + crypto.randomBytes(24).toString('hex');
 
     const userId = `moliya_user_tg_${tgId}`;
+    const { data: existingUser } = await supabase.from('users').select('onboarding, device_info, phone').eq('id', userId).maybeSingle();
+    const existingOb = existingUser?.onboarding || {};
+    const existingDev = existingUser?.device_info || {};
+
     await supabase.from('users').update({
-      session_token: sessionToken,
-      session_expires_at: new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString(),
+      onboarding: {
+        ...existingOb,
+        session_token: sessionToken,
+        session_expires_at: new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString(),
+        phone: existingUser?.phone || existingOb.phone || ''
+      },
+      device_info: {
+        ...existingDev,
+        session_token: sessionToken,
+        last_exchange_at: now.toISOString()
+      },
       updated_at: now.toISOString()
     }).eq('id', userId);
 
     await supabase.from('users').upsert({
       id: `exchange_${exchangeCode}`,
+      platform: 'exchange_code',
       telegram_id: String(tgId),
-      session_token: sessionToken,
-      login_request_status: 'VALID',
-      session_expires_at: codeExpiresAt,
+      device_info: {
+        code: exchangeCode,
+        status: 'VALID',
+        sessionToken: sessionToken,
+        sessionExpiresAt: codeExpiresAt
+      },
+      onboarding: {
+        login_request_status: 'VALID',
+        session_token: sessionToken,
+        session_expires_at: codeExpiresAt
+      },
       updated_at: now.toISOString()
     }, { onConflict: 'id' });
 
@@ -693,7 +715,7 @@ async function completePhoneRegistration(fromUser: any, phoneNumber: string) {
     ...existingOb,  // Preserve existing onboarding data (bot_messages, etc.)
     completed: true,
     tour_completed: false, // Fresh registration: Tour Guide will trigger automatically on first Mini App open!
-    language: 'uz',
+    language: existingOb.language || existingUser?.language || 'uz',
     name: fullName,
     phone: phoneNumber,
     telegram: username,
@@ -731,6 +753,17 @@ async function completePhoneRegistration(fromUser: any, phoneNumber: string) {
   if (saveErr) {
     console.error('[BOT] Error saving verified phone registration:', saveErr.message);
   }
+
+  // Auto-verify any pending login request from web app waiting for this user
+  const pendingReqId = existingUser?.device_info?.pending_login_request_id || existingOb.pending_login_request_id;
+  if (pendingReqId) {
+    try {
+      await verifyAndMarkLoginRequest(pendingReqId, fromUser);
+    } catch (vErr) {
+      console.error('[BOT] Error auto-verifying pending login request after phone registration:', vErr);
+    }
+  }
+
   return updatePayload;
 }
 
@@ -748,21 +781,47 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any) {
     const { isBlocked } = await resolveCanonicalUser(fromUser);
     if (isBlocked) return null;
 
-    // Persist session token to user record so that session validation works immediately
+    // Fetch existing user to preserve onboarding & device info
+    const { data: existingUser } = await supabase.from('users').select('onboarding, device_info, phone').eq('id', userId).maybeSingle();
+    const existingOb = existingUser?.onboarding || {};
+    const existingDev = existingUser?.device_info || {};
+
+    // Persist session token to user record inside onboarding & device_info
     await supabase.from('users').update({
-      session_token: sessionToken,
-      session_expires_at: expiresAt,
+      onboarding: {
+        ...existingOb,
+        session_token: sessionToken,
+        session_expires_at: expiresAt,
+        phone: existingUser?.phone || existingOb.phone || '',
+        completed: true,
+        oferta_accepted: true
+      },
+      device_info: {
+        ...existingDev,
+        session_token: sessionToken,
+        last_verified_at: now.toISOString()
+      },
       updated_at: now.toISOString()
     }).eq('id', userId);
 
-    // Mark login request as VERIFIED
+    // Mark login request as VERIFIED in users table with valid schema columns
     const cleanId = requestId.replace(/^req_/, '').trim();
     await supabase.from('users').upsert({
       id: `req_${cleanId}`,
-      login_request_id: cleanId,
-      login_request_status: 'VERIFIED',
+      platform: 'login_request',
       telegram_id: tgId,
-      session_token: sessionToken,
+      device_info: {
+        requestId: cleanId,
+        status: 'VERIFIED',
+        sessionToken: sessionToken,
+        verifiedAt: now.toISOString(),
+        verifiedBy: tgId
+      },
+      onboarding: {
+        login_request_id: cleanId,
+        login_request_status: 'VERIFIED',
+        session_token: sessionToken
+      },
       updated_at: now.toISOString()
     }, { onConflict: 'id' });
 
@@ -771,10 +830,19 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any) {
     const codeExpiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
     await supabase.from('users').upsert({
       id: `exchange_${exchangeCode}`,
+      platform: 'exchange_code',
       telegram_id: tgId,
-      session_token: sessionToken,
-      login_request_status: 'VALID',
-      session_expires_at: codeExpiresAt,
+      device_info: {
+        code: exchangeCode,
+        status: 'VALID',
+        sessionToken: sessionToken,
+        sessionExpiresAt: codeExpiresAt
+      },
+      onboarding: {
+        login_request_status: 'VALID',
+        session_token: sessionToken,
+        session_expires_at: codeExpiresAt
+      },
       updated_at: now.toISOString()
     }, { onConflict: 'id' });
 
@@ -1589,6 +1657,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           // If user already has a verified phone, confirm and show main app
           const alreadyHasPhone = isValidPhoneNumber(currUser?.phone) || isValidPhoneNumber(currUser?.onboarding?.phone);
           if (alreadyHasPhone) {
+            const pendingReqId = currUser?.device_info?.pending_login_request_id || currUser?.onboarding?.pending_login_request_id;
+            if (pendingReqId) {
+              try {
+                await verifyAndMarkLoginRequest(pendingReqId, fromUser);
+              } catch (vErr) {
+                console.error('[BOT] Error auto-verifying pending login request after oferta:', vErr);
+              }
+            }
+
             const quickCode = await createQuickExchangeCode(fromUser.id);
             const quickWebUrl = quickCode ? `${appUrl}?code=${quickCode}` : appUrl;
             await sendOrReplaceSystemMessage(
@@ -1625,6 +1702,52 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (data === 'privacy_decline') {
           await answerCallbackQuery(cb.id, "ℹ️ Botdan foydalanish uchun shartlarga rozilik bildirish lozim.");
+          return res.status(200).json({ status: 'ok' });
+        }
+
+        // 1.5 Handle 1-Tap Web Login Confirmation from Bot
+        if (data.startsWith('confirm_login_req_')) {
+          const reqCleanId = data.replace('confirm_login_req_', '').trim();
+          const verifyResult = await verifyAndMarkLoginRequest(reqCleanId, fromUser);
+          const code = verifyResult?.exchangeCode;
+          const webTargetUrl = code ? `${appUrl}?code=${code}` : appUrl;
+
+          await answerCallbackQuery(cb.id, "✅ Veb-ilovaga kirish tasdiqlandi!");
+          await sendOrReplaceSystemMessage(
+            chatId,
+            `✅ <b>Veb-ilovaga kirish muvaffaqiyatli tasdiqlandi!</b> 🚀\n\n` +
+            `Brauzeringizdagi Moliya AI sahifasi ochildi.\n\n` +
+            `👇 <i>Qulay usul orqali ilovaga kiring:</i>`,
+            {
+              inline_keyboard: [
+                [
+                  { text: "🌐 Veb-Ilovani ochish", url: webTargetUrl },
+                  { text: "📱 Moliya Mini App", web_app: { url: appUrl } }
+                ]
+              ]
+            },
+            userId,
+            'login_card'
+          );
+          return res.status(200).json({ status: 'ok' });
+        }
+
+        if (data.startsWith('cancel_login_req_')) {
+          const reqCleanId = data.replace('cancel_login_req_', '').trim();
+          await supabase.from('users').update({
+            device_info: { status: 'CANCELLED' },
+            onboarding: { login_request_status: 'CANCELLED' },
+            updated_at: new Date().toISOString()
+          }).eq('id', `req_${reqCleanId}`);
+
+          await answerCallbackQuery(cb.id, "❌ Kirish so'rovi bekor qilindi");
+          await sendOrReplaceSystemMessage(
+            chatId,
+            `❌ <b>Veb-ilovaga kirish so'rovi bekor qilindi.</b>`,
+            getMainAppKeyboard(appUrl),
+            userId,
+            'welcome_card'
+          );
           return res.status(200).json({ status: 'ok' });
         }
 
@@ -1884,6 +2007,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ status: 'restricted' });
     }
 
+    // ── Extract any start parameter (e.g. /start req_xxxxx) ────────
+    let incomingRequestId: string | null = null;
+    if (text && text.startsWith('/start')) {
+      const parts = text.split(' ');
+      if (parts.length > 1 && parts[1]) {
+        const rawArg = parts[1].trim();
+        if (rawArg.startsWith('req_')) {
+          incomingRequestId = rawArg.replace(/^req_/, '').trim();
+        } else if (rawArg.length >= 8 && !rawArg.includes(' ') && rawArg !== 'open') {
+          incomingRequestId = rawArg;
+        }
+      }
+    }
+
+    if (incomingRequestId) {
+      // Save pending request ID to user's record so it survives the registration sequence
+      const existingDev = user?.device_info || {};
+      const existingOb = user?.onboarding || {};
+      await supabase.from('users').update({
+        device_info: { ...existingDev, pending_login_request_id: incomingRequestId },
+        onboarding: { ...existingOb, pending_login_request_id: incomingRequestId },
+        updated_at: new Date().toISOString()
+      }).eq('id', userId);
+    }
+
     // ── Handle Contact Share (Phone Number Verification) ────────
     if (message.contact) {
       deleteTelegramMessage(chatId, message.message_id).catch(() => {});
@@ -1914,6 +2062,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // If user already has a verified phone, acknowledge cleanly without duplicate messages
       const alreadyRegistered = isValidPhoneNumber(user?.phone) || isValidPhoneNumber(user?.onboarding?.phone);
       if (alreadyRegistered) {
+        const pendingReq = incomingRequestId || user?.device_info?.pending_login_request_id || user?.onboarding?.pending_login_request_id;
+        if (pendingReq) {
+          try {
+            await verifyAndMarkLoginRequest(pendingReq, fromUser);
+          } catch (vErr) {
+            console.error('[BOT] Error auto-verifying pending request on contact:', vErr);
+          }
+        }
         const removeRes = await sendTelegramMessage(chatId, `✅ <i>Telefon raqamingiz allaqachon tasdiqlangan.</i>`, { remove_keyboard: true }, userId);
         if (removeRes?.result?.message_id) {
           setTimeout(() => deleteTelegramMessage(chatId, removeRes.result.message_id).catch(() => {}), 1500);
@@ -2073,35 +2229,101 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // ── Command: /start or 👤 Profile / 👤 Profil / 👤 Hisobim / /profile ──
     if (text.startsWith('/start') || text === '👤 Profile' || text === '👤 Profil' || text === '👤 Hisobim' || text.startsWith('/profile')) {
-      // Only check login request if explicitly /start with an argument (e.g. /start req_xxxx)
-      if (text.startsWith('/start') && text.trim().length > 6) {
-        const rawArg = text.replace('/start', '').trim();
-        const requestId = rawArg.replace('req_', '').trim();
+      // 1. Explicit /start req_xxxx or argument from incomingRequestId
+      const targetRequestId = incomingRequestId || (text.startsWith('/start') && text.trim().length > 6 ? text.replace('/start', '').trim().replace(/^req_/, '').trim() : null);
 
-        if (requestId && requestId.length >= 8 && !rawArg.includes(' ')) {
-          // Web login exchange flow
-          const verifyResult = await verifyAndMarkLoginRequest(requestId, fromUser);
-          const code = verifyResult?.exchangeCode;
-          const webTargetUrl = code ? `${appUrl}?code=${code}` : appUrl;
+      if (targetRequestId && targetRequestId.length >= 8 && !targetRequestId.includes(' ') && targetRequestId !== 'open') {
+        const verifyResult = await verifyAndMarkLoginRequest(targetRequestId, fromUser);
+        const code = verifyResult?.exchangeCode;
+        const webTargetUrl = code ? `${appUrl}?code=${code}` : appUrl;
 
-          await sendOrReplaceSystemMessage(
-            chatId,
-            `<b>Assalomu alaykum, ${fromUser.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
-            `✅ <b>Profilingiz tasdiqlandi!</b> 🚀\n` +
-            `Brauzeringizdagi Moliya AI sahifasiga qaytsangiz, profilingiz avtomatik ochiladi.\n\n` +
-            `👇 <i>Qulay usul orqali ilovaga kiring:</i>`,
-            {
-              inline_keyboard: [
-                [
-                  { text: "🌐 Veb-Ilovani ochish", url: webTargetUrl },
-                  { text: "📱 Moliya Mini App", web_app: { url: appUrl } }
-                ]
+        await sendOrReplaceSystemMessage(
+          chatId,
+          `<b>Assalomu alaykum, ${fromUser.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
+          `✅ <b>Profilingiz va Veb-ilovaga kirish tasdiqlandi!</b> 🚀\n` +
+          `Brauzeringizdagi Moliya AI sahifasi avtomatik ochildi.\n\n` +
+          `👇 <i>Qulay usul orqali ilovaga kiring:</i>`,
+          {
+            inline_keyboard: [
+              [
+                { text: "🌐 Veb-Ilovani ochish", url: webTargetUrl },
+                { text: "📱 Moliya Mini App", web_app: { url: appUrl } }
               ]
-            },
-            userId,
-            'login_card'
-          );
-          return res.status(200).json({ status: 'ok' });
+            ]
+          },
+          userId,
+          'login_card'
+        );
+        return res.status(200).json({ status: 'ok' });
+      }
+
+      // 2. Plain /start: Check for recent active pending login request (within last 5 minutes)
+      if (text.startsWith('/start')) {
+        try {
+          const fiveMinsAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+          const { data: recentReqs } = await supabase
+            .from('users')
+            .select('*')
+            .like('id', 'req_%')
+            .gte('updated_at', fiveMinsAgo)
+            .order('updated_at', { ascending: false })
+            .limit(3);
+
+          const pendingReq = (recentReqs || []).find((r: any) => {
+            const status = r.device_info?.status || r.onboarding?.login_request_status;
+            return status === 'PENDING';
+          });
+
+          if (pendingReq) {
+            const reqCleanId = pendingReq.id.replace(/^req_/, '').trim();
+            const isSameUser = pendingReq.device_info?.cachedUserId === userId || pendingReq.telegram_id === String(fromUser.id);
+
+            // If it's the recognized returning user on that device, auto-verify immediately!
+            if (isSameUser) {
+              const verifyResult = await verifyAndMarkLoginRequest(reqCleanId, fromUser);
+              const code = verifyResult?.exchangeCode;
+              const webTargetUrl = code ? `${appUrl}?code=${code}` : appUrl;
+
+              await sendOrReplaceSystemMessage(
+                chatId,
+                `<b>Assalomu alaykum, ${fromUser.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
+                `✅ <b>Qurilmangiz tanildi va Veb-ilovaga kirish tasdiqlandi!</b> 🚀\n` +
+                `Brauzeringizdagi Moliya AI sahifasi avtomatik ochildi.`,
+                {
+                  inline_keyboard: [
+                    [
+                      { text: "🌐 Veb-Ilovani ochish", url: webTargetUrl },
+                      { text: "📱 Moliya Mini App", web_app: { url: appUrl } }
+                    ]
+                  ]
+                },
+                userId,
+                'login_card'
+              );
+              return res.status(200).json({ status: 'ok' });
+            } else {
+              // Otherwise, prompt with a 1-tap confirmation card!
+              await sendOrReplaceSystemMessage(
+                chatId,
+                `💻 <b>Veb-ilovaga kirish so'rovi aniqlandi!</b>\n\n` +
+                `Brauzeringiz yoki kompyuteringizda Moliya AI ga kirish kutilmoqda.\n` +
+                `Kirishga ruxsat berasizmi?`,
+                {
+                  inline_keyboard: [
+                    [
+                      { text: "✅ Kirishga ruxsat berish", callback_data: `confirm_login_req_${reqCleanId}` },
+                      { text: "❌ Bekor qilish", callback_data: `cancel_login_req_${reqCleanId}` }
+                    ]
+                  ]
+                },
+                userId,
+                'confirm_login_request'
+              );
+              return res.status(200).json({ status: 'ok' });
+            }
+          }
+        } catch (checkErr) {
+          console.error('[BOT] Error checking recent pending login requests on /start:', checkErr);
         }
       }
 

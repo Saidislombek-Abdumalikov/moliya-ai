@@ -421,7 +421,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   void dateRange;
 
   // Helper: Persist auth state after successful verification
-  const persistAuthState = (data: { userId: string; sessionToken?: string; onboarding?: any; cards?: any[]; transactions?: any[] }) => {
+  const persistAuthState = (data: { userId: string; sessionToken?: string; onboarding?: any; cards?: any[]; transactions?: any[]; phone?: string }) => {
     const prevUserId = localStorage.getItem('user_id_v1')
     if (prevUserId && prevUserId !== data.userId) {
       console.log('[AUTH] Switching user profile cache from', prevUserId, 'to', data.userId)
@@ -438,10 +438,10 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
     localStorage.setItem('user_logged_in_v1', 'true')
     // Authoritative onboarding and tour completion state from DB
+    const phone = data.phone || data.onboarding?.phone;
     const isRegistered = Boolean(
-      (data.onboarding?.phone && isValidPhoneNumber(data.onboarding.phone)) &&
-      (data.onboarding?.oferta_accepted === true || data.onboarding?.privacy_consent?.accepted === true) &&
-      data.onboarding?.completed === true
+      (phone && isValidPhoneNumber(phone)) &&
+      (data.onboarding?.oferta_accepted === true || data.onboarding?.privacy_consent?.accepted === true || data.onboarding?.completed === true)
     );
 
     if (isRegistered) {
@@ -530,6 +530,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 persistAuthState({
                   userId: data.userId,
                   sessionToken: data.sessionToken,
+                  phone: data.phone || data.onboarding?.phone,
                   onboarding: data.onboarding,
                   cards: data.cards,
                   transactions: data.transactions
@@ -552,15 +553,32 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
             console.log('[AUTH] Trying direct Supabase exchange code lookup...');
             const codeId = `exchange_${exchangeCode}`;
             const { data: codeDoc } = await supabase.from('users').select('*').eq('id', codeId).maybeSingle();
-            if (codeDoc && codeDoc.telegram_id) {
-              const targetUserId = `moliya_user_tg_${codeDoc.telegram_id}`;
+            const codeTgId = codeDoc?.telegram_id || codeDoc?.device_info?.telegram_id;
+            if (codeDoc && codeTgId) {
+              const targetUserId = `moliya_user_tg_${codeTgId}`;
               const { data: targetUser } = await supabase.from('users').select('*').eq('id', targetUserId).maybeSingle();
               if (targetUser) {
-                await supabase.from('users').update({ login_request_status: 'USED', updated_at: new Date().toISOString() }).eq('id', codeId);
+                await supabase.from('users').update({
+                  device_info: { ...(codeDoc.device_info || {}), status: 'USED' },
+                  onboarding: { ...(codeDoc.onboarding || {}), login_request_status: 'USED' },
+                  updated_at: new Date().toISOString()
+                }).eq('id', codeId);
+
+                const resolvedSessionToken = codeDoc.device_info?.sessionToken || codeDoc.onboarding?.session_token || targetUser.onboarding?.session_token || targetUser.device_info?.session_token;
+                const userPhone = targetUser.phone || targetUser.onboarding?.phone || '';
+                const safeOnboarding = {
+                  ...(targetUser.onboarding || {}),
+                  phone: userPhone,
+                  completed: true,
+                  oferta_accepted: true,
+                  session_token: resolvedSessionToken
+                };
+
                 persistAuthState({
                   userId: targetUserId,
-                  sessionToken: codeDoc.session_token || targetUser.session_token,
-                  onboarding: targetUser.onboarding,
+                  sessionToken: resolvedSessionToken,
+                  phone: userPhone,
+                  onboarding: safeOnboarding,
                   cards: targetUser.cards,
                   transactions: targetUser.transactions
                 });
@@ -875,8 +893,12 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       try {
         const cleanId = requestId.replace(/^req_/, '').trim()
         const { data: reqDoc } = await supabase.from('users').select('*').eq('id', `req_${cleanId}`).maybeSingle()
-        if (reqDoc && reqDoc.login_request_status === 'VERIFIED' && reqDoc.telegram_id) {
-          const targetUserId = `moliya_user_tg_${reqDoc.telegram_id}`
+        const reqStatus = reqDoc?.device_info?.status || reqDoc?.onboarding?.login_request_status;
+        const tgId = reqDoc?.telegram_id || reqDoc?.device_info?.verifiedBy;
+        const reqSessionToken = reqDoc?.device_info?.sessionToken || reqDoc?.onboarding?.session_token;
+
+        if (reqDoc && reqStatus === 'VERIFIED' && tgId) {
+          const targetUserId = `moliya_user_tg_${tgId}`
           const { data: userDoc } = await supabase.from('users').select('*').eq('id', targetUserId).maybeSingle()
           if (userDoc) {
             isFinished = true
@@ -884,21 +906,30 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
             window.removeEventListener('focus', onTabActive)
             document.removeEventListener('visibilitychange', onTabActive)
 
-            await supabase.from('users').update({ login_request_status: 'CONSUMED' }).eq('id', `req_${cleanId}`)
+            await supabase.from('users').update({
+              device_info: { ...(reqDoc.device_info || {}), status: 'CONSUMED' },
+              onboarding: { ...(reqDoc.onboarding || {}), login_request_status: 'CONSUMED' },
+              updated_at: new Date().toISOString()
+            }).eq('id', `req_${cleanId}`)
 
             const currentOnboarding = JSON.parse(localStorage.getItem('user_onboarding_v1') || '{}')
             const savedLang = localStorage.getItem('user_selected_language_v1')
+            const userPhone = userDoc.phone || userDoc.onboarding?.phone || currentOnboarding.phone || ''
+            const userSessionToken = reqSessionToken || userDoc.onboarding?.session_token || userDoc.device_info?.session_token
             const updatedOnboarding = {
               ...currentOnboarding,
               ...(userDoc.onboarding || {}),
               completed: true,
+              oferta_accepted: true,
               language: savedLang || userDoc.onboarding?.language || currentOnboarding.language || 'uz',
-              phone: userDoc.phone || userDoc.onboarding?.phone || currentOnboarding.phone || '',
+              phone: userPhone,
+              session_token: userSessionToken
             }
 
             persistAuthState({
               userId: targetUserId,
-              sessionToken: reqDoc.session_token || userDoc.session_token,
+              sessionToken: userSessionToken,
+              phone: userPhone,
               onboarding: updatedOnboarding,
               cards: userDoc.cards,
               transactions: userDoc.transactions
@@ -953,26 +984,35 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   // but saves requestId to localStorage so polling resumes on return
   // ═══════════════════════════════════════════════════════════
   const startTelegramLogin = async (onVerified?: () => void) => {
+    // Generate clean alphanumeric request ID without hyphens (Telegram deep link parameters allow [a-zA-Z0-9_-])
     const requestId = typeof crypto !== 'undefined' && crypto.randomUUID
-      ? crypto.randomUUID()
-      : 'req_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+      ? crypto.randomUUID().replace(/-/g, '')
+      : Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 
     const botUrl = `https://t.me/moliya_v2bot?start=req_${requestId}`;
     const tgDeepLink = `tg://resolve?domain=moliya_v2bot&start=req_${requestId}`;
 
     // Save the request ID BEFORE navigating away so we can resume on return
-    localStorage.setItem('moliya_pending_request_id', requestId)
-    localStorage.setItem('moliya_pending_request_time', String(Date.now()))
+    localStorage.setItem('moliya_pending_request_id', requestId);
+    localStorage.setItem('moliya_pending_request_time', String(Date.now()));
+
+    // Multi-device and returning user recognition metadata
+    const cachedUserId = localStorage.getItem('user_id_v1') || null;
+    let clientDeviceId = localStorage.getItem('moliya_client_device_id');
+    if (!clientDeviceId) {
+      clientDeviceId = 'dev_' + Math.random().toString(36).substring(2, 15);
+      localStorage.setItem('moliya_client_device_id', clientDeviceId);
+    }
 
     // Register with backend first
     fetch('/api/auth/create-login-request', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ requestId }),
+      body: JSON.stringify({ requestId, cachedUserId, clientDeviceId }),
     }).catch(() => {});
 
     // Start polling immediately (works when desktop, also works when page isn't destroyed)
-    resumePolling(requestId, onVerified)
+    resumePolling(requestId, onVerified);
 
     try {
       const isMobile = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);

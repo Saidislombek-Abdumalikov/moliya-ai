@@ -77,20 +77,36 @@ async function startServer() {
   // API routes FIRST
 
   // 1. Create Login Request UUID
+  // 1. Create Login Request (Polling Handshake Initiation)
   app.post("/api/auth/create-login-request", async (req, res) => {
     try {
-      const { requestId } = req.body || {};
+      const { requestId, cachedUserId, clientDeviceId } = req.body || {};
       if (!requestId || typeof requestId !== 'string' || requestId.length < 8) {
         res.status(400).json({ error: "Invalid or missing requestId" });
         return;
       }
       const cleanId = requestId.replace(/^req_/, '').trim();
       const nowIso = new Date().toISOString();
+      const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket?.remoteAddress || '';
+      const userAgent = (req.headers['user-agent'] as string) || '';
 
       await supabase.from('users').upsert({
         id: `req_${cleanId}`,
-        login_request_id: cleanId,
-        login_request_status: 'PENDING',
+        platform: 'login_request',
+        device_info: {
+          requestId: cleanId,
+          status: 'PENDING',
+          cachedUserId: cachedUserId || null,
+          clientDeviceId: clientDeviceId || null,
+          clientIp,
+          userAgent,
+          createdAt: nowIso
+        },
+        onboarding: {
+          login_request_id: cleanId,
+          login_request_status: 'PENDING',
+          created_at: nowIso
+        },
         updated_at: nowIso
       }, { onConflict: 'id' });
 
@@ -117,22 +133,54 @@ async function startServer() {
         .maybeSingle();
 
       if (!error && reqDoc) {
-        if (reqDoc.login_request_status === 'VERIFIED' && reqDoc.telegram_id && reqDoc.session_token) {
-          const userId = `moliya_user_tg_${reqDoc.telegram_id}`;
+        const reqStatus = reqDoc.device_info?.status || reqDoc.onboarding?.login_request_status || 'PENDING';
+        const sessionToken = reqDoc.device_info?.sessionToken || reqDoc.onboarding?.session_token;
+        const tgId = reqDoc.telegram_id || reqDoc.device_info?.verifiedBy;
+
+        if (reqStatus === 'VERIFIED' && tgId && sessionToken) {
+          const userId = `moliya_user_tg_${tgId}`;
           const { data: userDoc } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
+
+          let authSession: any = null;
+          try {
+            authSession = await createSupabaseAuthSession(
+              String(tgId),
+              { name: userDoc?.name || '', telegram: userDoc?.telegram || '' }
+            );
+          } catch (sessionErr) {
+            console.warn('[CHECK-LOGIN] Warning creating auth session in server.ts:', sessionErr);
+          }
+
+          // Mark request as consumed in device_info and onboarding
+          await supabase.from('users').update({
+            device_info: { ...(reqDoc.device_info || {}), status: 'CONSUMED' },
+            onboarding: { ...(reqDoc.onboarding || {}), login_request_status: 'CONSUMED' },
+            updated_at: new Date().toISOString()
+          }).eq('id', `req_${cleanId}`);
+
+          const userPhone = userDoc?.phone || userDoc?.onboarding?.phone || '';
+          const safeOnboarding = {
+            ...(userDoc?.onboarding || {}),
+            phone: userPhone,
+            completed: true,
+            oferta_accepted: true,
+            session_token: sessionToken
+          };
 
           res.json({
             status: "VERIFIED",
             userId,
-            sessionToken: reqDoc.session_token,
-            onboarding: userDoc?.onboarding || null,
-            phone: userDoc?.phone || "",
+            sessionToken,
+            access_token: authSession?.access_token || null,
+            refresh_token: authSession?.refresh_token || null,
+            onboarding: safeOnboarding,
+            phone: userPhone,
             cards: userDoc?.cards || [],
             transactions: userDoc?.transactions || []
           });
           return;
         }
-        res.json({ status: reqDoc.login_request_status || "PENDING" });
+        res.json({ status: reqStatus });
         return;
       }
       res.json({ status: "PENDING" });
@@ -163,13 +211,15 @@ async function startServer() {
         return;
       }
 
-      if (codeDoc.session_expires_at && new Date(codeDoc.session_expires_at).getTime() < Date.now()) {
+      const expiresAt = codeDoc.device_info?.sessionExpiresAt || codeDoc.onboarding?.session_expires_at || codeDoc.session_expires_at;
+      if (expiresAt && new Date(expiresAt).getTime() < Date.now()) {
         await supabase.from('users').delete().eq('id', codeId);
         res.status(400).json({ error: "Code expired" });
         return;
       }
 
-      if (codeDoc.login_request_status === 'USED') {
+      const codeStatus = codeDoc.device_info?.status || codeDoc.onboarding?.login_request_status || 'VALID';
+      if (codeStatus === 'USED') {
         const updatedAt = new Date(codeDoc.updated_at || codeDoc.created_at || 0).getTime();
         if (Date.now() - updatedAt > 24 * 3600 * 1000) {
           res.status(400).json({ error: "Code expired" });
@@ -177,14 +227,16 @@ async function startServer() {
         }
       }
 
-      const tgId = codeDoc.telegram_id;
+      const tgId = codeDoc.telegram_id || codeDoc.device_info?.telegram_id;
       if (!tgId) {
         res.status(400).json({ error: "Invalid code: no telegram_id" });
         return;
       }
 
+      // Mark code as USED in device_info and onboarding
       await supabase.from('users').update({
-        login_request_status: 'USED',
+        device_info: { ...(codeDoc.device_info || {}), status: 'USED' },
+        onboarding: { ...(codeDoc.onboarding || {}), login_request_status: 'USED' },
         updated_at: new Date().toISOString()
       }).eq('id', codeId);
 
@@ -194,6 +246,8 @@ async function startServer() {
         .select('*')
         .eq('id', userId)
         .maybeSingle();
+
+      const sessionToken = userDoc?.device_info?.session_token || userDoc?.onboarding?.session_token || codeDoc.device_info?.sessionToken || codeDoc.onboarding?.session_token || ('sess_' + crypto.randomBytes(24).toString('hex'));
 
       if (!userDoc) {
         const nowStr = new Date().toISOString();
@@ -208,7 +262,9 @@ async function startServer() {
           trial_started_at: nowStr,
           trial_ends_at: trialEnd,
           registration_status: 'pending_registration',
-          oferta_accepted: false
+          oferta_accepted: true,
+          session_token: sessionToken,
+          session_expires_at: new Date(Date.now() + 60 * 24 * 3600 * 1000).toISOString()
         };
         const newRecord = {
           id: userId,
@@ -217,8 +273,10 @@ async function startServer() {
           platform: 'web_app',
           is_premium: true,
           premium_expires_at: trialEnd,
-          session_token: codeDoc.session_token,
-          session_expires_at: new Date(Date.now() + 60 * 24 * 3600 * 1000).toISOString(),
+          device_info: {
+            session_token: sessionToken,
+            last_exchange_at: nowStr
+          },
           onboarding: newOnboarding,
           cards: [],
           transactions: [],
@@ -239,12 +297,22 @@ async function startServer() {
         console.warn('[EXCHANGE-CODE] Warning creating auth session in server.ts:', authErr);
       }
 
+      const userPhone = userDoc?.phone || userDoc?.onboarding?.phone || '';
+      const safeOnboarding = {
+        ...(userDoc?.onboarding || {}),
+        phone: userPhone,
+        completed: Boolean(userPhone) || userDoc?.onboarding?.completed === true,
+        oferta_accepted: true,
+        session_token: sessionToken
+      };
+
       res.json({
         access_token: authSession?.access_token || null,
         refresh_token: authSession?.refresh_token || null,
         userId,
-        sessionToken: userDoc?.session_token || codeDoc.session_token || null,
-        onboarding: userDoc?.onboarding || null,
+        sessionToken,
+        phone: userPhone,
+        onboarding: safeOnboarding,
         cards: userDoc?.cards || [],
         transactions: userDoc?.transactions || [],
         isPremium: userDoc?.is_premium || false
@@ -263,21 +331,59 @@ async function startServer() {
         res.json({ valid: false, reason: "Missing sessionToken" });
         return;
       }
-      const { data: userDoc, error } = await supabase
+
+      // Query via JSONB onboarding->>session_token
+      let { data: userDoc, error } = await supabase
         .from('users')
         .select('*')
-        .eq('session_token', sessionToken)
+        .eq('onboarding->>session_token', sessionToken)
         .maybeSingle();
 
+      if (!userDoc) {
+        const { data: altDoc } = await supabase
+          .from('users')
+          .select('*')
+          .eq('device_info->>session_token', sessionToken)
+          .maybeSingle();
+        if (altDoc) userDoc = altDoc;
+      }
+
       if (!error && userDoc) {
-        if (userDoc.session_expires_at && new Date(userDoc.session_expires_at).getTime() < Date.now()) {
+        const isBlocked = Boolean(
+          userDoc.is_blocked ||
+          userDoc.is_restricted ||
+          userDoc.id?.startsWith('restricted_') ||
+          userDoc.device_info?.is_blocked ||
+          userDoc.device_info?.restricted ||
+          userDoc.onboarding?.is_blocked ||
+          userDoc.onboarding?.is_restricted
+        );
+
+        if (isBlocked) {
+          res.json({ valid: false, reason: "ACCOUNT_RESTRICTED", message: "Hisobingiz cheklangan" });
+          return;
+        }
+
+        const sessionExpiresAt = userDoc.onboarding?.session_expires_at || userDoc.device_info?.session_expires_at;
+        if (sessionExpiresAt && new Date(sessionExpiresAt).getTime() < Date.now()) {
           res.json({ valid: false, reason: "Session expired" });
           return;
         }
+
+        const userPhone = userDoc.phone || userDoc.onboarding?.phone || '';
+        const safeOnboarding = {
+          ...(userDoc.onboarding || {}),
+          phone: userPhone,
+          completed: Boolean(userPhone) || userDoc.onboarding?.completed === true,
+          oferta_accepted: true,
+          session_token: sessionToken
+        };
+
         res.json({
           valid: true,
           userId: userDoc.id,
-          onboarding: userDoc.onboarding || null,
+          phone: userPhone,
+          onboarding: safeOnboarding,
           cards: userDoc.cards || [],
           transactions: userDoc.transactions || [],
           isPremium: userDoc.is_premium || false
