@@ -34,6 +34,14 @@ export default function App() {
   const [showTour, setShowTour] = useState(false);
   const [stage, setStage] = useState<Stage>(getInitialStage);
   const [activeScreen, setActiveScreen] = useState<Screen>('home');
+  const [authWaitTimeout, setAuthWaitTimeout] = useState(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setAuthWaitTimeout(true);
+    }, 6000);
+    return () => clearTimeout(timer);
+  }, []);
 
   // ═══════════════════════════════════════════════════════════
   // ALL HOOKS MUST BE BEFORE ANY CONDITIONAL RETURNS
@@ -144,33 +152,27 @@ export default function App() {
       <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#FAF8FE] text-[#1E1A3C] p-6 text-center select-none font-sans">
         <div className="w-12 h-12 border-4 border-[#DDD6FE] border-t-[#7C3AED] rounded-full animate-spin mb-4" />
         <p className="text-sm text-[#64748B] font-medium">Moliya AI yuklanmoqda...</p>
+        {authWaitTimeout && (
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-4 px-4 py-2 rounded-xl bg-white border border-[#DDD6FE] text-[#7C3AED] text-xs font-bold shadow-sm active:scale-95 transition cursor-pointer"
+          >
+            Qayta yuklash 🔄
+          </button>
+        )}
       </div>
     );
   }
 
-  // 2. Web App Authentication Gate: If outside Telegram and user is not authenticated, show WebLoginScreen
-  if (!isTelegramMiniApp() && !userId) {
-    return <WebLoginScreen />;
-  }
-
-  // 3. Telegram Mini App Loading: If inside Telegram Mini App but user ID hasn't loaded yet
-  if (isTelegramMiniApp() && !userId) {
-    return (
-      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#FAF8FE] text-[#1E1A3C] p-6 text-center select-none font-sans">
-        <div className="w-12 h-12 border-4 border-[#DDD6FE] border-t-[#7C3AED] rounded-full animate-spin mb-4" />
-        <p className="text-sm text-[#64748B] font-medium">Telegram hisobi yuklanmoqda...</p>
-      </div>
-    );
-  }
-
+  // 2. Auth error screen (shown if account is restricted or registration needed)
   if (authError) {
     return (
-      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#0F172A] text-white p-6 text-center select-none">
-        <div className="w-20 h-20 mb-6 rounded-3xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-3xl shadow-xl shadow-indigo-500/10">
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#FAF8FE] text-[#1E1A3C] p-6 text-center select-none font-sans">
+        <div className="w-20 h-20 mb-5 rounded-3xl bg-purple-50 border border-purple-200 flex items-center justify-center text-3xl shadow-lg shadow-purple-500/10">
           🔒
         </div>
-        <h2 className="text-xl font-bold text-slate-100 mb-2">Kirish talab etiladi</h2>
-        <p className="text-slate-400 text-sm max-w-xs leading-relaxed mb-6">
+        <h2 className="text-xl font-bold text-[#1A1538] mb-2">Kirish talab etiladi</h2>
+        <p className="text-[#64748B] text-sm max-w-xs leading-relaxed mb-6">
           {authError}
         </p>
         <button
@@ -179,13 +181,48 @@ export default function App() {
             if (tg?.close) {
               tg.close();
             } else {
-              window.location.href = 'https://t.me/MoliyaAI_Bot';
+              window.location.href = 'https://t.me/moliya_v2bot';
             }
           }}
-          className="px-6 py-3.5 rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600 text-white font-bold text-sm shadow-lg shadow-indigo-500/25 active:scale-95 transition"
+          className="px-6 py-3.5 rounded-2xl bg-gradient-to-r from-[#7C3AED] to-[#6D28D9] text-white font-bold text-sm shadow-lg shadow-purple-500/25 active:scale-95 transition cursor-pointer"
         >
           Telegram Botga Qaytish ✈️
         </button>
+      </div>
+    );
+  }
+
+  // 3. Web App Authentication Gate: If outside Telegram and user is not authenticated, show WebLoginScreen
+  if (!isTelegramMiniApp() && !userId) {
+    return <WebLoginScreen />;
+  }
+
+  // 4. Telegram Mini App Loading: If inside Telegram Mini App but user ID hasn't loaded yet
+  if (isTelegramMiniApp() && !userId) {
+    return (
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#FAF8FE] text-[#1E1A3C] p-6 text-center select-none font-sans">
+        {authWaitTimeout ? (
+          <div className="flex flex-col items-center">
+            <div className="w-16 h-16 rounded-2xl bg-purple-50 text-purple-600 flex items-center justify-center text-3xl mb-4">
+              📱
+            </div>
+            <h3 className="text-base font-bold text-[#1E1A3C] mb-1">Telegram hisobi yuklanmadi</h3>
+            <p className="text-xs text-[#64748B] max-w-xs mb-5">
+              Aloqa sifatini tekshiring yoki sahifani qayta yuklang.
+            </p>
+            <button
+              onClick={() => window.location.reload()}
+              className="px-5 py-2.5 rounded-xl bg-[#7C3AED] text-white font-bold text-xs shadow-md active:scale-95 transition cursor-pointer"
+            >
+              Qayta yuklash 🔄
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="w-12 h-12 border-4 border-[#DDD6FE] border-t-[#7C3AED] rounded-full animate-spin mb-4" />
+            <p className="text-sm text-[#64748B] font-medium">Telegram hisobi yuklanmoqda...</p>
+          </>
+        )}
       </div>
     );
   }

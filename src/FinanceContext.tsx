@@ -200,32 +200,33 @@ export function isTelegramMiniApp(): boolean {
 
   const tg = (window as any).Telegram?.WebApp
 
-  // 1. Valid Telegram HMAC initData or Telegram user object (authoritative Telegram proof)
+  // 1. Valid non-empty Telegram HMAC initData (definitive Telegram proof)
   if (tg && typeof tg.initData === 'string' && tg.initData.trim().length > 0) return true
-  if (tg?.initDataUnsafe?.user?.id) return true
 
-  // 2. Native mobile Telegram client proxy (Android / iOS)
+  // 2. Native mobile Telegram client proxy (Android / iOS webview bridge)
   const hasNativeProxy = Boolean(
     (window as any).TelegramWebviewProxy ||
     (window as any).webkit?.messageHandlers?.TelegramWebviewProxy
   )
   if (hasNativeProxy) return true
 
-  // 3. Telegram Desktop / Web / Native platforms
+  // 3. Official Telegram desktop / native clients with known valid platform
   const platform = tg?.platform
-  const knownPlatforms = ['ios', 'android', 'tdesktop', 'macos', 'unigram', 'weba', 'webz', 'web', 'browser']
-  if (platform && platform !== 'unknown' && knownPlatforms.includes(platform)) return true
+  const knownNativePlatforms = ['ios', 'android', 'tdesktop', 'macos', 'unigram']
+  if (platform && knownNativePlatforms.includes(platform)) return true
 
-  // 4. Telegram Web running inside iframe or window
+  // 4. Telegram Web running inside iframe on web.telegram.org
   const isInsideIframe = window.self !== window.top
-  if (isInsideIframe && tg) return true
+  if (isInsideIframe && tg && tg.initDataUnsafe?.user?.id) return true
 
   // 5. URL explicitly carries Telegram WebApp data hash
   const hash = window.location.hash || ''
   if (hash.includes('tgWebAppData=') || hash.includes('tgWebAppVersion=')) return true
 
-  // 6. If user is already authenticated via Telegram session in this window
-  if (localStorage.getItem('user_id_v1')?.startsWith('moliya_user_tg_')) return true
+  // 6. initDataUnsafe has user AND platform is not unknown / plain browser
+  if (tg?.initDataUnsafe?.user?.id && platform && platform !== 'unknown' && platform !== 'browser') {
+    return true
+  }
 
   return false
 }
@@ -525,6 +526,29 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           } catch (err) {
             console.error('[AUTH] Telegram initData auth error:', err)
           }
+
+          // Fallback for Telegram Mini App: direct Supabase lookup if network endpoint failed
+          if (currentTgId) {
+            const fallbackUserId = `moliya_user_tg_${currentTgId}`;
+            console.log('[AUTH] Trying direct Supabase profile lookup for Mini App user:', fallbackUserId);
+            try {
+              const { data: dbUser } = await supabase.from('users').select('*').eq('id', fallbackUserId).maybeSingle();
+              if (dbUser) {
+                persistAuthState({
+                  userId: fallbackUserId,
+                  sessionToken: dbUser.session_token,
+                  onboarding: dbUser.onboarding,
+                  cards: dbUser.cards,
+                  transactions: dbUser.transactions
+                });
+                setIsAuthReady(true);
+                setAuthError(null);
+                return;
+              }
+            } catch (fallbackErr) {
+              console.error('[AUTH] Mini App direct profile fallback error:', fallbackErr);
+            }
+          }
         }
 
         // ===== STEP 1: Check for URL ?code= parameter (exchange code from bot) =====
@@ -673,7 +697,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
         // ===== STEP 7: Local fallback (Telegram Mini App only) =====
         if (isTelegramMiniApp()) {
-          const savedUserId = localStorage.getItem('user_id_v1');
+          const savedUserId = localStorage.getItem('user_id_v1') || defaultTgUserId;
           if (savedUserId && savedUserId.startsWith('moliya_user_tg_')) {
             setUserId(savedUserId);
             localStorage.setItem('user_onboarding_completed_v1', 'true');

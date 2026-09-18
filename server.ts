@@ -182,7 +182,7 @@ async function startServer() {
   app.post("/api/auth/telegram", async (req, res) => {
     try {
       const { initData, initDataUnsafe } = req.body || {};
-      const botToken = process.env.TELEGRAM_BOT_TOKEN || "";
+      const botToken = process.env.TELEGRAM_BOT_TOKEN || '8955141731:AAGILXzT69Vity8ZFi-H8XeZc_H6_BFaS8Y';
 
       let tgUser: any = null;
       if (initData && botToken) {
@@ -265,7 +265,7 @@ async function startServer() {
   app.post("/api/auth/delete-account", async (req, res) => {
     try {
       const { userId, telegramId, initData } = req.body || {};
-      const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
+      const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8955141731:AAGILXzT69Vity8ZFi-H8XeZc_H6_BFaS8Y';
 
       if (!userId && !telegramId) {
         res.status(400).json({ error: "Missing userId or telegramId" });
@@ -718,7 +718,25 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
   // Shared AI Usage tracker per user: 1-day free trial, then max 5 AI requests / month
   const tgUserAiUsage = new Map<number, { firstSeen: number; count: number }>();
 
-  const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
+  const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8955141731:AAGILXzT69Vity8ZFi-H8XeZc_H6_BFaS8Y';
+
+  async function ensureChatMenuButton(chatId: string | number, appUrl: string) {
+    if (!BOT_TOKEN) return;
+    try {
+      await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setChatMenuButton`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: String(chatId),
+          menu_button: {
+            type: 'web_app',
+            text: '📱 Moliya App',
+            web_app: { url: appUrl }
+          }
+        })
+      });
+    } catch {}
+  }
 
   async function syncUserTxToFirestore(chatId: number, txs: any[]) {
     try {
@@ -759,8 +777,8 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
 
   const appUrl = process.env.APP_URL || "https://moliya-ai-pi.vercel.app";
 
-  const getMainMenuKeyboard = (requestId?: string) => {
-    const webUrl = requestId ? `${appUrl}/?req=${requestId}` : appUrl;
+  const getMainMenuKeyboard = (requestId?: string, exchangeCode?: string) => {
+    const webUrl = exchangeCode ? `${appUrl}/?code=${exchangeCode}` : (requestId ? `${appUrl}/?req=${requestId}` : appUrl);
     return {
       keyboard: [
         [{ text: "📱 Telegram Mini App", web_app: { url: appUrl } }, { text: "🌐 Web App", url: webUrl }],
@@ -771,8 +789,8 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
     };
   };
 
-  const getDualLinkInlineButtons = (requestId?: string) => {
-    const webUrl = requestId ? `${appUrl}/?req=${requestId}` : appUrl;
+  const getDualLinkInlineButtons = (requestId?: string, exchangeCode?: string) => {
+    const webUrl = exchangeCode ? `${appUrl}/?code=${exchangeCode}` : (requestId ? `${appUrl}/?req=${requestId}` : appUrl);
     return {
       inline_keyboard: [
         [
@@ -940,6 +958,7 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
         const requestId = rawArg.replace('req_', '').trim();
 
         if (requestId && requestId.length >= 8) {
+          let exchangeCode = '';
           try {
             const tgId = String(fromUser.id);
             const userId = `moliya_user_tg_${tgId}`;
@@ -988,19 +1007,47 @@ Examine this financial invoice/receipt/cheque screenshot image. Extract transact
               session_token: sessionToken,
               updated_at: now.toISOString()
             }, { onConflict: 'id' });
+
+            exchangeCode = crypto.randomBytes(24).toString('hex');
+            const codeExpiresAt = new Date(now.getTime() + 15 * 60 * 1000).toISOString();
+            await supabase.from('users').upsert({
+              id: `exchange_${exchangeCode}`,
+              telegram_id: tgId,
+              session_token: sessionToken,
+              login_request_status: 'VALID',
+              session_expires_at: codeExpiresAt,
+              updated_at: now.toISOString()
+            }, { onConflict: 'id' });
           } catch (e) {
             console.error('Error verifying login request in server.ts:', e);
           }
 
+          ensureChatMenuButton(chatId, appUrl).catch(() => {});
           const successText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n✅ <b>Muvaffaqiyatli tasdiqlandi!</b> 🚀\nBrauzeringizdagi Moliya AI ilovasiga avtomatik kirdingiz.\n\n👇 <i>Ilovaga o'tish uchun quyidagi tugmani bosing:</i>`;
-          await sendTelegramMessage(chatId, successText, getDualLinkInlineButtons(requestId));
-          await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
+          await sendTelegramMessage(chatId, successText, getDualLinkInlineButtons(requestId, exchangeCode));
+          await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard(requestId, exchangeCode));
           return;
         }
 
+        let quickCode = '';
+        try {
+          quickCode = crypto.randomBytes(24).toString('hex');
+          const codeExpiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+          const sessionToken = 'sess_' + crypto.randomBytes(16).toString('hex');
+          await supabase.from('users').upsert({
+            id: `exchange_${quickCode}`,
+            telegram_id: String(fromUser.id),
+            session_token: sessionToken,
+            login_request_status: 'VALID',
+            session_expires_at: codeExpiresAt,
+            updated_at: new Date().toISOString()
+          }, { onConflict: 'id' });
+        } catch {}
+
+        ensureChatMenuButton(chatId, appUrl).catch(() => {});
         const welcomeText = `<b>Assalomu alaykum, ${fromUser?.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n<b>Moliya AI</b> botiga xush kelibsiz! 🚀\n\nPulingizni oson va aqlli boshqaring.\n\n👇 <b>Ilovani ochish uchun quyidagi linklardan foydalaning:</b>`;
-        await sendTelegramMessage(chatId, welcomeText, getDualLinkInlineButtons());
-        await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard());
+        await sendTelegramMessage(chatId, welcomeText, getDualLinkInlineButtons(undefined, quickCode));
+        await sendTelegramMessage(chatId, "👇 Kerakli bo'limni tanlang:", getMainMenuKeyboard(undefined, quickCode));
         return;
       }
 

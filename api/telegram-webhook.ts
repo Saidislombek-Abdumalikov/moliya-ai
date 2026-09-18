@@ -423,10 +423,55 @@ async function sendChatAction(chatId: number | string, action: 'typing' | 'recor
   } catch {}
 }
 
-function getMainAppKeyboard(appUrl: string) {
+async function ensureChatMenuButton(chatId: string | number, appUrl: string) {
+  if (!BOT_TOKEN) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setChatMenuButton`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: String(chatId),
+        menu_button: {
+          type: 'web_app',
+          text: '📱 Moliya App',
+          web_app: { url: appUrl }
+        }
+      })
+    });
+  } catch {}
+}
+
+async function createQuickExchangeCode(tgId: string | number): Promise<string> {
+  try {
+    const now = new Date();
+    const exchangeCode = crypto.randomBytes(24).toString('hex');
+    const codeExpiresAt = new Date(now.getTime() + 15 * 60 * 1000).toISOString();
+    const sessionToken = 'sess_' + crypto.randomBytes(16).toString('hex');
+
+    await supabase.from('users').upsert({
+      id: `exchange_${exchangeCode}`,
+      telegram_id: String(tgId),
+      session_token: sessionToken,
+      login_request_status: 'VALID',
+      session_expires_at: codeExpiresAt,
+      updated_at: now.toISOString()
+    }, { onConflict: 'id' });
+
+    return exchangeCode;
+  } catch (e) {
+    console.error('[BOT] Error creating quick exchange code:', e);
+    return '';
+  }
+}
+
+function getMainAppKeyboard(appUrl: string, webUrl?: string) {
+  const targetWeb = webUrl || appUrl;
   return {
     inline_keyboard: [
-      [{ text: "📱 Moliya Mini Appni ochish", web_app: { url: appUrl } }],
+      [
+        { text: "📱 Moliya Mini App", web_app: { url: appUrl } },
+        { text: "🌐 Veb-Ilova", url: targetWeb }
+      ],
       [
         { text: "💳 Kartalarim", callback_data: "menu_cards" },
         { text: "📊 Oylik Limit", callback_data: "menu_limit" }
@@ -709,8 +754,15 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any) {
     const randomHex = crypto.randomBytes(16).toString('hex');
     const sessionToken = 'sess_' + randomHex;
 
-    const { isBlocked, isRegistered } = await resolveCanonicalUser(fromUser);
-    if (isBlocked || !isRegistered) return null;
+    const { isBlocked } = await resolveCanonicalUser(fromUser);
+    if (isBlocked) return null;
+
+    // Persist session token to user record so that session validation works immediately
+    await supabase.from('users').update({
+      session_token: sessionToken,
+      session_expires_at: expiresAt,
+      updated_at: now.toISOString()
+    }).eq('id', userId);
 
     // Mark login request as VERIFIED
     const cleanId = requestId.replace(/^req_/, '').trim();
@@ -723,9 +775,9 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any) {
       updated_at: now.toISOString()
     }, { onConflict: 'id' });
 
-    // Generate 5-minute single-use exchange code
+    // Generate 15-minute single-use exchange code
     const exchangeCode = crypto.randomBytes(24).toString('hex');
-    const codeExpiresAt = new Date(now.getTime() + 5 * 60 * 1000).toISOString();
+    const codeExpiresAt = new Date(now.getTime() + 15 * 60 * 1000).toISOString();
     await supabase.from('users').upsert({
       id: `exchange_${exchangeCode}`,
       telegram_id: tgId,
@@ -1803,10 +1855,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (removeRes?.result?.message_id) {
           setTimeout(() => deleteTelegramMessage(chatId, removeRes.result.message_id).catch(() => {}), 1500);
         }
+        const quickCode = await createQuickExchangeCode(fromUser.id);
+        const quickWebUrl = quickCode ? `${appUrl}?code=${quickCode}` : appUrl;
+        ensureChatMenuButton(chatId, appUrl).catch(() => {});
         await sendOrReplaceSystemMessage(
           chatId,
-          `✅ <b>Siz allaqachon ro'yxatdan o'tgansiz!</b>\n\nXarajat yozish uchun oddiy matn yuboring yoki Mini Appdan foydalaning.`,
-          getMainAppKeyboard(appUrl),
+          `✅ <b>Siz allaqachon ro'yxatdan o'tgansiz!</b>\n\nXarajat yozish uchun oddiy matn yuboring yoki quyidagi tugmalar orqali ilovalarga kiring.`,
+          getMainAppKeyboard(appUrl, quickWebUrl),
           userId,
           'welcome_card'
         );
@@ -1822,16 +1877,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         `<blockquote>💎 <b>1 kunlik CHEKSIZ VIP PREMIUM faollashtirildi!</b>\n` +
         `• Ovozli xabarlar va cheklarni cheksiz tahlil qilish\n` +
         `• Telegram Mini App interaktiv boshqaruvi\n` +
+        `• Veb-ilova orqali kompyuter va brauzerdan foydalanish\n` +
         `• Cheksiz AI maslahatchi va toifalar statistikasi</blockquote>\n\n` +
-        `Endi Moliya Mini App orqali xarajatlaringizni to'liq boshqarishingiz mumkin.\n\n` +
-        `👇 <i>Pastdagi tugma orqali Mini Appni oching yoki to'g'ridan-to'g'ri xarajatlarni yozing:</i>`;
+        `Endi Moliya Mini App yoki Veb-Ilova orqali xarajatlaringizni to'liq boshqarishingiz mumkin.\n\n` +
+        `👇 <i>Quyidagi tugmalar orqali ilovani oching:</i>`;
 
       // Remove reply keyboard cleanly
       const removeRes = await sendTelegramMessage(chatId, "✅ <i>Telefon raqamingiz qabul qilindi.</i>", { remove_keyboard: true }, userId);
       if (removeRes?.result?.message_id) {
         setTimeout(() => deleteTelegramMessage(chatId, removeRes.result.message_id).catch(() => {}), 1500);
       }
-      await sendOrReplaceSystemMessage(chatId, successMsg, getMainAppKeyboard(appUrl), userId, 'welcome_card');
+      const quickCode = await createQuickExchangeCode(fromUser.id);
+      const quickWebUrl = quickCode ? `${appUrl}?code=${quickCode}` : appUrl;
+      ensureChatMenuButton(chatId, appUrl).catch(() => {});
+      await sendOrReplaceSystemMessage(chatId, successMsg, getMainAppKeyboard(appUrl, quickWebUrl), userId, 'welcome_card');
       return res.status(200).json({ status: 'ok' });
     }
 
@@ -1932,17 +1991,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           // Web login exchange flow
           const verifyResult = await verifyAndMarkLoginRequest(requestId, fromUser);
           const code = verifyResult?.exchangeCode;
-          const targetUrl = code ? `${appUrl}?code=${code}` : appUrl;
+          const webTargetUrl = code ? `${appUrl}?code=${code}` : appUrl;
 
+          ensureChatMenuButton(chatId, appUrl).catch(() => {});
           await sendOrReplaceSystemMessage(
             chatId,
             `<b>Assalomu alaykum, ${fromUser.first_name || 'foydalanuvchi'}!</b> 👋✨\n\n` +
             `✅ <b>Profilingiz tasdiqlandi!</b> 🚀\n` +
             `Brauzeringizdagi Moliya AI sahifasiga qaytsangiz, profilingiz avtomatik ochiladi.\n\n` +
-            `👇 <i>Ilovaga kirish:</i>`,
+            `👇 <i>Qulay usul orqali ilovaga kiring:</i>`,
             {
               inline_keyboard: [
-                [{ text: "📱 Moliya Mini App", web_app: { url: targetUrl } }]
+                [
+                  { text: "🌐 Veb-Ilovani ochish", url: webTargetUrl },
+                  { text: "📱 Moliya Mini App", web_app: { url: appUrl } }
+                ]
               ]
             },
             userId,
@@ -1984,8 +2047,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         `• <b>Chek skaner:</b> Xarid cheki rasmini yuboring 📸</blockquote>\n\n` +
         `👇 <i>Quyidagi menyu tugmalaridan foydalaning:</i>`;
 
+      const quickCode = await createQuickExchangeCode(fromUser.id);
+      const quickWebUrl = quickCode ? `${appUrl}?code=${quickCode}` : appUrl;
+      ensureChatMenuButton(chatId, appUrl).catch(() => {});
       // Authoritative replacement so at most 1 welcome card stays in chat
-      await sendOrReplaceSystemMessage(chatId, welcomeText, getMainAppKeyboard(appUrl), userId, 'welcome_card');
+      await sendOrReplaceSystemMessage(chatId, welcomeText, getMainAppKeyboard(appUrl, quickWebUrl), userId, 'welcome_card');
       return res.status(200).json({ status: 'ok' });
     }
 
@@ -2022,16 +2088,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // ── Command: /app or 🚀 Moliya or 📱 Mini App ─────────────────
     if (text.startsWith('/app') || text === '🚀 Moliya' || text === '📱 Mini App') {
+      const quickCode = await createQuickExchangeCode(fromUser.id);
+      const quickWebUrl = quickCode ? `${appUrl}?code=${quickCode}` : appUrl;
       const appText =
-        `🚀 <b>Moliya Telegram Mini App</b>\n\n` +
+        `🚀 <b>Moliya AI Ilovalari</b>\n\n` +
         `<blockquote>Barcha hisob-kitoblar, kartalar balansi, oylik limit, grafiklar va aqlli tahlillar bir joyda!</blockquote>\n\n` +
-        `👇 <i>Mini Appni ochish uchun pastdagi tugmani bosing:</i>`;
+        `👇 <i>Kerakli ilovani tanlang:</i>`;
       const appKeyboard = {
         inline_keyboard: [
-          [{ text: "📱 Moliya Mini Appni ochish", web_app: { url: appUrl } }]
+          [
+            { text: "📱 Telegram Mini App", web_app: { url: appUrl } },
+            { text: "🌐 Veb-Ilova (Brauzer)", url: quickWebUrl }
+          ]
         ]
       };
       await sendOrReplaceSystemMessage(chatId, appText, appKeyboard, userId, 'app_card');
+      return res.status(200).json({ status: 'ok' });
+    }
+
+    // ── Command: /web or /webapp or /link or 🌐 Veb-Ilova ─────────
+    if (text.startsWith('/web') || text.startsWith('/webapp') || text.startsWith('/link') || text === '🌐 Veb-Ilova') {
+      const quickCode = await createQuickExchangeCode(fromUser.id);
+      const quickWebUrl = quickCode ? `${appUrl}?code=${quickCode}` : appUrl;
+      const webText =
+        `🌐 <b>Moliya AI Veb-Ilovasi</b>\n\n` +
+        `Kompyuter yoki telefoningizning alohida brauzerida (Chrome, Safari, Edge va h.k.) kirish uchun quyidagi havoladan foydalaning.\n\n` +
+        `<blockquote>🔒 <i>Havola hisobingizga xavfsiz avtomatik ulanadi va 15 daqiqa davomida amal qiladi.</i></blockquote>\n\n` +
+        `👇 <i>Ilovaga o'tish:</i>`;
+      const webKeyboard = {
+        inline_keyboard: [
+          [{ text: "🌐 Veb-Ilovani ochish", url: quickWebUrl }],
+          [{ text: "📱 Telegram Mini App", web_app: { url: appUrl } }]
+        ]
+      };
+      await sendOrReplaceSystemMessage(chatId, webText, webKeyboard, userId, 'webapp_card');
       return res.status(200).json({ status: 'ok' });
     }
 
