@@ -461,7 +461,7 @@ function getMainAppKeyboard(appUrl: string, webUrl?: string) {
     inline_keyboard: [
       [
         { text: "📱 Moliya Mini App", web_app: { url: appUrl } },
-        { text: "🌐 Veb-Ilova (Ekranga o'rnatish)", url: targetWeb }
+        { text: "🌐 Veb-Ilova", url: targetWeb }
       ],
       [
         { text: "💳 Kartalarim", callback_data: "menu_cards" },

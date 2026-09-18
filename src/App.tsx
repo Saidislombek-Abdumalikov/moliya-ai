@@ -325,7 +325,7 @@ export default function App() {
 
       <BottomNav active={activeScreen} onChange={setActiveScreen} language={onboarding?.language} />
       <AIButton visible={activeScreen !== 'profile'} language={onboarding?.language || 'uz'} />
-      <InstallPromptModal />
+      {!isTelegramMiniApp() && <InstallPromptModal />}
       <AppTour 
         isOpen={showTour} 
         onClose={() => {
