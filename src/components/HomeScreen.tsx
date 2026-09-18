@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 
 import type { OnboardingResult } from './Onboarding'
@@ -473,6 +473,8 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
   const unreadCount = notificationsList.filter(n => !n.isRead).length
   const hasNewNotifications = unreadCount > 0
 
+  const toastedNotifIdsRef = useRef<Set<string>>(new Set())
+
   const loadNotifications = async () => {
     setNotificationsLoading(true)
     const list = await fetchUserNotifications({
@@ -482,6 +484,21 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
     })
     setNotificationsList(list)
     setNotificationsLoading(false)
+
+    // Check if there is an unread recent notification (< 15 min old) that hasn't toasted yet
+    if (list && list.length > 0) {
+      const unreadList = list.filter(n => !n.isRead)
+      if (unreadList.length > 0) {
+        const newest = unreadList[0]
+        if (!toastedNotifIdsRef.current.has(newest.id)) {
+          toastedNotifIdsRef.current.add(newest.id)
+          const createdMs = new Date(newest.createdAt).getTime()
+          if (Date.now() - createdMs < 15 * 60 * 1000) {
+            setIncomingToast(newest)
+          }
+        }
+      }
+    }
   }
 
   useEffect(() => {
@@ -498,16 +515,23 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
     const unsubscribe = subscribeToNotifications(
       { userId, isPremium, isTelegram: isTelegramMiniApp() },
       (newNotif) => {
+        toastedNotifIdsRef.current.add(newNotif.id)
         setNotificationsList(prev => [newNotif, ...prev.filter(x => x.id !== newNotif.id)])
         setIncomingToast(newNotif)
       }
     )
+
+    // Periodic poll every 25 seconds to catch newly dispatched notifications
+    const pollInterval = setInterval(() => {
+      loadNotifications()
+    }, 25000)
 
     const onFocus = () => loadNotifications()
     window.addEventListener('focus', onFocus)
 
     return () => {
       unsubscribe()
+      clearInterval(pollInterval)
       window.removeEventListener('focus', onFocus)
     }
   }, [userId, isPremium])
