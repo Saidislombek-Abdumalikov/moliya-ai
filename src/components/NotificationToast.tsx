@@ -31,94 +31,126 @@ export default function NotificationToast({
         }}
       >
         <motion.div
-          initial={{ y: -70, opacity: 0, scale: 0.95 }}
+          initial={{ y: -60, opacity: 0, scale: 0.94 }}
           animate={{ y: 0, opacity: 1, scale: 1 }}
-          exit={{ y: -70, opacity: 0, scale: 0.95 }}
-          transition={{ type: 'spring', damping: 22, stiffness: 280 }}
+          exit={{ y: -60, opacity: 0, scale: 0.94 }}
+          transition={{ type: 'spring', damping: 24, stiffness: 320 }}
           drag="y"
           dragConstraints={{ top: 0, bottom: 0 }}
           onDragEnd={(_: any, info: any) => {
-            if (info.offset.y < -30) {
+            if (info.offset.y < -25) {
               onClose();
             }
           }}
           onClick={onClick}
           style={{
             pointerEvents: 'auto',
-            width: '100%',
-            maxWidth: 400,
-            background: 'rgba(255, 255, 255, 0.98)',
-            backdropFilter: 'blur(16px)',
-            borderRadius: 20,
-            padding: '12px 14px',
-            boxShadow: '0 12px 36px rgba(124, 58, 237, 0.16), 0 4px 12px rgba(26, 21, 56, 0.08)',
+            width: 'auto',
+            maxWidth: 420,
+            minWidth: 260,
+            background: 'rgba(255, 255, 255, 0.96)',
+            backdropFilter: 'blur(18px)',
+            WebkitBackdropFilter: 'blur(18px)',
+            borderRadius: 9999,
+            padding: '7px 10px 7px 12px',
+            boxShadow: '0 10px 30px rgba(124, 58, 237, 0.18), 0 3px 10px rgba(15, 23, 42, 0.08)',
             border: '1.5px solid #EDE9FE',
             display: 'flex',
-            alignItems: 'flex-start',
-            gap: 12,
+            alignItems: 'center',
+            gap: 10,
             cursor: 'pointer',
+            userSelect: 'none',
           }}
         >
-          {/* Icon Badge */}
+          {/* Animated Notification Bell Badge */}
           <div
             style={{
-              width: 38,
-              height: 38,
-              borderRadius: 12,
+              width: 28,
+              height: 28,
+              borderRadius: '50%',
               background: 'linear-gradient(135deg, #7C3AED 0%, #6D28D9 100%)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               color: '#FFFFFF',
-              fontSize: 18,
+              fontSize: 14,
               flexShrink: 0,
-              boxShadow: '0 4px 12px rgba(124, 58, 237, 0.28)',
+              boxShadow: '0 3px 8px rgba(124, 58, 237, 0.35)',
+              position: 'relative',
             }}
           >
-            🔔
+            <span>🔔</span>
+            <span
+              style={{
+                position: 'absolute',
+                top: 0,
+                right: 0,
+                width: 7,
+                height: 7,
+                borderRadius: '50%',
+                background: '#10B981',
+                border: '1.5px solid #FFFFFF',
+              }}
+            />
           </div>
 
-          {/* Text Content */}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: '#7C3AED', letterSpacing: '0.02em', textTransform: 'uppercase' }}>
-                Moliya AI
-              </span>
-              <span style={{ fontSize: 10, color: '#94A3B8' }}>Hozirgina</span>
-            </div>
-
-            <p style={{ fontSize: 13, fontWeight: 700, color: '#1A1538', margin: '0 0 2px', lineHeight: 1.3, wordBreak: 'break-word' }}>
-              {notification.title}
-            </p>
-
-            <p
+          {/* Title Only - single line with clean ellipsis */}
+          <div
+            style={{
+              flex: 1,
+              minWidth: 0,
+              display: 'flex',
+              alignItems: 'center',
+            }}
+          >
+            <span
               style={{
-                fontSize: 12,
-                color: '#64748B',
-                margin: 0,
-                lineHeight: 1.35,
+                fontSize: 13,
+                fontWeight: 700,
+                color: '#1E1B4B',
+                whiteSpace: 'nowrap',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
-                display: '-webkit-box',
-                WebkitLineClamp: 2,
-                WebkitBoxOrient: 'vertical',
+                letterSpacing: '-0.01em',
               }}
             >
-              {notification.message}
-            </p>
+              {notification.title}
+            </span>
+          </div>
+
+          {/* Action indicator pill */}
+          <div
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              color: '#7C3AED',
+              background: '#F5F3FF',
+              padding: '4px 9px',
+              borderRadius: 12,
+              whiteSpace: 'nowrap',
+              flexShrink: 0,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 3,
+            }}
+          >
+            <span>Ochish</span>
+            <span style={{ fontSize: 10 }}>↗</span>
           </div>
 
           {/* Dismiss Button */}
           <button
+            type="button"
             onClick={(e) => {
               e.stopPropagation();
               onClose();
             }}
+            title="Yopish"
             style={{
               width: 22,
               height: 22,
               borderRadius: '50%',
-              background: '#F1EEF9',
+              background: '#F1F5F9',
               border: 'none',
               display: 'flex',
               alignItems: 'center',
@@ -127,7 +159,8 @@ export default function NotificationToast({
               color: '#64748B',
               cursor: 'pointer',
               flexShrink: 0,
-              marginTop: 2,
+              padding: 0,
+              transition: 'background 0.15s ease',
             }}
           >
             ✕
