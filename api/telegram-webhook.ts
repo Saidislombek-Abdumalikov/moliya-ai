@@ -16,7 +16,7 @@ import {
   TurboParseResult
 } from './_uzbekFinancialNormalizer.js';
 
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8955141731:AAGILXzT69Vity8ZFi-H8XeZc_H6_BFaS8Y';
+let BOT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
 const appUrl = process.env.APP_URL || "https://moliya-ai-pi.vercel.app";
 
 import {
@@ -25,10 +25,10 @@ import {
   deleteTransaction,
   wipeFinancialData,
   logBotMessage,
-  BotMessageEntry
+  type BotMessageEntry
 } from './services/index.js';
 
-export { logBotMessage, BotMessageEntry };
+export { logBotMessage, type BotMessageEntry };
 
 // ── Telegram API Helpers ─────────────────────────────────────
 function hasLinkButton(replyMarkup: any): boolean {
@@ -666,7 +666,6 @@ async function resolveCanonicalUser(fromUser: any) {
     cards: [],
     transactions: [],
     onboarding: newOnboarding,
-    registration_status: 'pending_oferta',
     created_at: now,
     updated_at: now
   };
@@ -1505,6 +1504,8 @@ async function renderStatsMessage(userId: string, period: 'today' | 'month' | 'a
 
 // ── Main Webhook Handler ─────────────────────────────────────
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  BOT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
+
   if (req.method === 'GET') {
     return res.status(200).json({ status: 'Moliya AI Telegram Webhook Live' });
   }
@@ -1513,14 +1514,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // Verify Telegram Webhook secret token if configured in environment
-  const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
-  if (webhookSecret) {
-    const incomingSecret = req.headers['x-telegram-bot-api-secret-token'];
-    if (incomingSecret !== webhookSecret) {
-      console.warn('[SECURITY] Unauthorized webhook request: invalid secret token');
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
+  // Verify Telegram Webhook secret token (Fail-closed with constant-time comparison)
+  const webhookSecret = (process.env.TELEGRAM_WEBHOOK_SECRET || '').trim();
+  if (!webhookSecret) {
+    console.error('[SECURITY] Telegram webhook secret is not configured in environment (fail-closed)');
+    return res.status(500).json({ error: 'Server configuration error: Webhook secret not configured' });
+  }
+
+  const rawHeader = req.headers['x-telegram-bot-api-secret-token'];
+  const incomingSecret = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
+  if (!incomingSecret || typeof incomingSecret !== 'string') {
+    console.warn('[SECURITY] Unauthorized webhook request: missing secret token header');
+    return res.status(401).json({ error: 'Unauthorized: Missing secret token header' });
+  }
+
+  const secretBuffer = Buffer.from(webhookSecret);
+  const incomingBuffer = Buffer.from(incomingSecret);
+  if (secretBuffer.length !== incomingBuffer.length || !crypto.timingSafeEqual(secretBuffer, incomingBuffer)) {
+    console.warn('[SECURITY] Unauthorized webhook request: invalid secret token');
+    return res.status(401).json({ error: 'Unauthorized: Invalid secret token' });
   }
 
   try {

@@ -44,6 +44,148 @@ function verifyTelegramInitData(initData: string, botToken: string): { isValid: 
   }
 }
 
+export async function authenticateCaller(req: any, botToken: string): Promise<{
+  authenticated: boolean;
+  statusCode: number;
+  error?: string;
+  userId?: string;
+  telegramId?: string | null;
+  userDoc?: any;
+}> {
+  const rawHeaderAuth = req.headers?.['authorization'] || req.headers?.['x-session-token'];
+  const bearerToken = typeof rawHeaderAuth === 'string' && rawHeaderAuth.startsWith('Bearer ') 
+    ? rawHeaderAuth.slice(7).trim() 
+    : (typeof rawHeaderAuth === 'string' ? rawHeaderAuth.trim() : null);
+
+  const sessionToken = req.body?.sessionToken || bearerToken || req.query?.sessionToken;
+  const initData = req.body?.initData || req.headers?.['x-telegram-init-data'] || req.query?.initData;
+
+  // MODE A: Telegram Mini App Authentication (Cryptographically Verified)
+  if (initData && typeof initData === 'string' && initData.trim()) {
+    if (!botToken) {
+      return { authenticated: false, statusCode: 500, error: 'Server authentication configuration error: Bot token missing' };
+    }
+    const verification = verifyTelegramInitData(initData, botToken);
+    if (!verification.isValid || !verification.user?.id) {
+      return { authenticated: false, statusCode: 401, error: 'Unauthorized: Invalid or expired Telegram authentication' };
+    }
+
+    const authenticatedTgId = String(verification.user.id);
+    const authenticatedUserId = `moliya_user_tg_${authenticatedTgId}`;
+
+    const { data: foundByTg } = await supabase
+      .from('users')
+      .select('*')
+      .or(`id.eq.${authenticatedUserId},telegram_id.eq.${authenticatedTgId}`)
+      .maybeSingle();
+
+    return {
+      authenticated: true,
+      statusCode: 200,
+      userId: foundByTg?.id || authenticatedUserId,
+      telegramId: authenticatedTgId,
+      userDoc: foundByTg
+    };
+  }
+
+  // MODE C: Supabase Auth Bearer JWT Token
+  if (bearerToken && bearerToken.split('.').length === 3) {
+    try {
+      const { data: authUser, error: authErr } = await supabase.auth.getUser(bearerToken);
+      if (!authErr && authUser?.user) {
+        const metaTgId = authUser.user.user_metadata?.telegram_id;
+        const tgId = metaTgId || (authUser.user.email?.startsWith('tg') ? authUser.user.email.replace(/^tg/, '').replace(/@.*$/, '') : null);
+        const authUid = authUser.user.id;
+
+        const orClauses: string[] = [`auth_user_id.eq.${authUid}`];
+        if (tgId) {
+          orClauses.push(`id.eq.moliya_user_tg_${tgId}`);
+          orClauses.push(`telegram_id.eq.${tgId}`);
+        }
+
+        const { data: userDoc } = await supabase
+          .from('users')
+          .select('*')
+          .or(orClauses.join(','))
+          .maybeSingle();
+
+        if (userDoc) {
+          return {
+            authenticated: true,
+            statusCode: 200,
+            userId: userDoc.id,
+            telegramId: userDoc.telegram_id || tgId || null,
+            userDoc
+          };
+        }
+      }
+    } catch (jwtErr) {
+      console.warn('[AUTH] Error verifying JWT token:', jwtErr);
+    }
+  }
+
+  // MODE B: Standalone Web App Session Authentication
+  if (sessionToken && typeof sessionToken === 'string' && sessionToken.trim().length >= 16) {
+    const cleanSessionToken = sessionToken.trim();
+    let userDoc: any = null;
+
+    try {
+      // 1. Check in onboarding jsonb
+      const { data: obDoc } = await supabase
+        .from('users')
+        .select('*')
+        .contains('onboarding', { session_token: cleanSessionToken })
+        .maybeSingle();
+      userDoc = obDoc;
+
+      // 2. Check in device_info jsonb
+      if (!userDoc) {
+        const { data: devDoc } = await supabase
+          .from('users')
+          .select('*')
+          .contains('device_info', { sessionToken: cleanSessionToken })
+          .maybeSingle();
+        userDoc = devDoc;
+      }
+      if (!userDoc) {
+        const { data: devDoc2 } = await supabase
+          .from('users')
+          .select('*')
+          .contains('device_info', { session_token: cleanSessionToken })
+          .maybeSingle();
+        userDoc = devDoc2;
+      }
+    } catch (searchErr) {
+      console.warn('[AUTH] Error looking up session token:', searchErr);
+    }
+
+    if (!userDoc) {
+      return { authenticated: false, statusCode: 401, error: 'Unauthorized: Invalid or expired session' };
+    }
+
+    const expiresAt = userDoc.onboarding?.session_expires_at || userDoc.session_expires_at || userDoc.device_info?.session_expires_at;
+    if (expiresAt && new Date(expiresAt).getTime() < Date.now()) {
+      return { authenticated: false, statusCode: 401, error: 'Unauthorized: Session expired' };
+    }
+
+    const authenticatedTgId = userDoc.telegram_id || (userDoc.id?.startsWith('moliya_user_tg_') ? userDoc.id.replace('moliya_user_tg_', '') : null);
+
+    return {
+      authenticated: true,
+      statusCode: 200,
+      userId: userDoc.id,
+      telegramId: authenticatedTgId,
+      userDoc
+    };
+  }
+
+  return {
+    authenticated: false,
+    statusCode: 401,
+    error: 'Unauthorized: Valid Telegram initData or Web session token required'
+  };
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -59,7 +201,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     action = cleanUrl.replace(/^\/api\/auth\/?/, '').trim();
   }
 
-  const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8955141731:AAGILXzT69Vity8ZFi-H8XeZc_H6_BFaS8Y';
+  const BOT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
 
   // 1. /api/auth/telegram
   if (action === 'telegram') {
@@ -153,7 +295,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           cards: [],
           transactions: [],
           onboarding: newOnboarding,
-          registration_status: 'pending_registration',
           created_at: nowStr,
           updated_at: nowStr
         };
@@ -601,41 +742,113 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
     try {
-      const { userId, telegramId, initData } = req.body || {};
-      if (!userId && !telegramId) {
-        return res.status(400).json({ error: 'Missing userId or telegramId' });
-      }
+      const rawHeaderAuth = req.headers['authorization'] || req.headers['x-session-token'];
+      const bearerToken = typeof rawHeaderAuth === 'string' && rawHeaderAuth.startsWith('Bearer ') 
+        ? rawHeaderAuth.slice(7).trim() 
+        : (typeof rawHeaderAuth === 'string' ? rawHeaderAuth.trim() : null);
 
-      // Security verification via initData if present
-      let verifiedTgUser: any = null;
-      if (initData && BOT_TOKEN) {
+      const sessionToken = req.body?.sessionToken || bearerToken;
+      const initData = req.body?.initData || req.headers['x-telegram-init-data'];
+
+      let authenticatedUserId: string | null = null;
+      let authenticatedTgId: string | null = null;
+      let authenticatedUserDoc: any = null;
+
+      // MODE A: Telegram Mini App Authentication (Cryptographically Verified)
+      if (initData && typeof initData === 'string' && initData.trim()) {
+        if (!BOT_TOKEN) {
+          return res.status(500).json({ error: 'Server authentication configuration error' });
+        }
         const verification = verifyTelegramInitData(initData, BOT_TOKEN);
-        if (verification.isValid && verification.user) {
-          verifiedTgUser = verification.user;
+        if (!verification.isValid || !verification.user?.id) {
+          return res.status(401).json({ error: 'Unauthorized: Invalid or expired Telegram authentication' });
+        }
+
+        authenticatedTgId = String(verification.user.id);
+        authenticatedUserId = `moliya_user_tg_${authenticatedTgId}`;
+
+        // Fetch user from Supabase to retrieve canonical ID and message history
+        const { data: foundByTg } = await supabase
+          .from('users')
+          .select('*')
+          .or(`id.eq.${authenticatedUserId},telegram_id.eq.${authenticatedTgId}`)
+          .maybeSingle();
+
+        authenticatedUserDoc = foundByTg;
+        if (authenticatedUserDoc) {
+          authenticatedUserId = authenticatedUserDoc.id;
+        }
+
+        // IDOR Prevention: Caller cannot delete any account other than their own verified Telegram ID
+        if (req.body?.telegramId && String(req.body.telegramId).trim() !== authenticatedTgId) {
+          return res.status(403).json({ error: 'Forbidden: You can only delete your own account' });
+        }
+        if (req.body?.userId && req.body.userId.trim() !== authenticatedUserId && req.body.userId.trim() !== `moliya_user_tg_${authenticatedTgId}`) {
+          return res.status(403).json({ error: 'Forbidden: You can only delete your own account' });
         }
       }
+      // MODE B: Standalone Web App Session Authentication
+      else if (sessionToken && typeof sessionToken === 'string' && sessionToken.trim().length >= 16) {
+        const cleanSessionToken = sessionToken.trim();
+        let { data: userDoc } = await supabase
+          .from('users')
+          .select('*')
+          .eq('onboarding->>session_token', cleanSessionToken)
+          .maybeSingle();
 
-      // Resolve target user record from Supabase
-      const uidStr = userId ? String(userId).trim() : '';
-      const tgIdStr = telegramId ? String(telegramId).trim() : (verifiedTgUser?.id ? String(verifiedTgUser.id) : null);
-
-      let userDoc: any = null;
-      if (uidStr) {
-        const { data: byId } = await supabase.from('users').select('*').eq('id', uidStr).maybeSingle();
-        userDoc = byId;
-      }
-
-      if (!userDoc && tgIdStr) {
-        const { data: byTg } = await supabase.from('users').select('*').eq('telegram_id', tgIdStr).maybeSingle();
-        userDoc = byTg;
         if (!userDoc) {
-          const { data: byTgId } = await supabase.from('users').select('*').eq('id', `moliya_user_tg_${tgIdStr}`).maybeSingle();
-          userDoc = byTgId;
+          const { data: altDoc } = await supabase
+            .from('users')
+            .select('*')
+            .eq('device_info->>session_token', cleanSessionToken)
+            .maybeSingle();
+          userDoc = altDoc;
+        }
+
+        if (!userDoc) {
+          const { data: colDoc } = await supabase
+            .from('users')
+            .select('*')
+            .eq('session_token', cleanSessionToken)
+            .maybeSingle();
+          userDoc = colDoc;
+        }
+
+        if (!userDoc) {
+          return res.status(401).json({ error: 'Unauthorized: Invalid or expired session' });
+        }
+
+        // Check session expiration
+        const expiresAt = userDoc.onboarding?.session_expires_at || userDoc.session_expires_at || userDoc.device_info?.session_expires_at;
+        if (expiresAt && new Date(expiresAt).getTime() < Date.now()) {
+          return res.status(401).json({ error: 'Unauthorized: Session expired' });
+        }
+
+        authenticatedUserDoc = userDoc;
+        authenticatedUserId = userDoc.id;
+        authenticatedTgId = userDoc.telegram_id || (userDoc.id?.startsWith('moliya_user_tg_') ? userDoc.id.replace('moliya_user_tg_', '') : null);
+
+        // IDOR Prevention: Caller cannot delete any account other than their own verified session user
+        if (req.body?.userId && req.body.userId.trim() !== authenticatedUserId) {
+          return res.status(403).json({ error: 'Forbidden: You can only delete your own account' });
+        }
+        if (req.body?.telegramId) {
+          const reqTg = String(req.body.telegramId).trim();
+          if (!authenticatedTgId || reqTg !== authenticatedTgId) {
+            return res.status(403).json({ error: 'Forbidden: You can only delete your own account' });
+          }
         }
       }
+      // MODE C: Missing or unauthenticated -> FAIL CLOSED
+      else {
+        return res.status(401).json({ 
+          error: 'Unauthorized: Valid Telegram initData or Web session token required to delete account' 
+        });
+      }
 
-      const canonicalUserId = userDoc?.id || uidStr || (tgIdStr ? `moliya_user_tg_${tgIdStr}` : null);
-      const targetTgId = tgIdStr || userDoc?.telegram_id || userDoc?.onboarding?.telegramId || (canonicalUserId?.startsWith('moliya_user_tg_') ? canonicalUserId.replace('moliya_user_tg_', '') : null);
+      const canonicalUserId = authenticatedUserId;
+      const targetTgId = authenticatedTgId;
+      const userDoc = authenticatedUserDoc;
 
       // Collect any message IDs stored in onboarding.bot_messages
       const botMessages: any[] = Array.isArray(userDoc?.onboarding?.bot_messages) ? userDoc.onboarding.bot_messages : [];
@@ -793,6 +1006,154 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } catch (error: any) {
       console.error('[DELETE_ACCOUNT] Error:', error);
       return res.status(500).json({ error: error.message });
+    }
+  }
+
+  // 7. /api/auth/sync-data (Authenticated User Profile & Financial Data Synchronization)
+  if (action === 'sync-data') {
+    if (req.method !== 'GET' && req.method !== 'POST') {
+      return res.status(405).json({ error: 'Method Not Allowed' });
+    }
+
+    try {
+      const auth = await authenticateCaller(req, BOT_TOKEN);
+      if (!auth.authenticated || !auth.userId) {
+        return res.status(auth.statusCode).json({ error: auth.error || 'Unauthorized' });
+      }
+
+      const targetUserId = auth.userId;
+
+      // GET: Read own user profile, cards, transactions
+      if (req.method === 'GET') {
+        const { data: userDoc, error: fetchErr } = await supabase
+          .from('users')
+          .select('id, name, phone, telegram, telegram_id, language, platform, is_premium, premium_expires_at, cards, transactions, onboarding, created_at, updated_at')
+          .eq('id', targetUserId)
+          .maybeSingle();
+
+        if (fetchErr) {
+          return res.status(500).json({ error: 'Database error fetching user data', details: fetchErr.message });
+        }
+
+        return res.status(200).json({
+          success: true,
+          user: userDoc || auth.userDoc || { id: targetUserId, cards: [], transactions: [] }
+        });
+      }
+
+      // POST: Update own cards, transactions, or onboarding
+      if (req.method === 'POST') {
+        // IDOR Check: Ensure body.userId matches auth.userId if specified
+        if (req.body?.userId && req.body.userId.trim() !== targetUserId && req.body.userId.trim() !== `moliya_user_tg_${auth.telegramId}`) {
+          return res.status(403).json({ error: 'Forbidden: You can only update your own user data' });
+        }
+
+        const nowIso = new Date().toISOString();
+        const updatePayload: any = { updated_at: nowIso };
+
+        // 1. Transactions update (if provided)
+        if (req.body?.transactions !== undefined) {
+          if (!Array.isArray(req.body.transactions)) {
+            return res.status(400).json({ error: 'transactions must be an array' });
+          }
+          updatePayload.transactions = req.body.transactions;
+        }
+
+        // 2. Cards update (if provided)
+        if (req.body?.cards !== undefined) {
+          if (!Array.isArray(req.body.cards)) {
+            return res.status(400).json({ error: 'cards must be an array' });
+          }
+          updatePayload.cards = req.body.cards;
+        }
+
+        // 3. has_sample_data (stored safely in onboarding jsonb)
+        if (req.body?.has_sample_data !== undefined) {
+          const currOb = updatePayload.onboarding || auth.userDoc?.onboarding || {};
+          updatePayload.onboarding = {
+            ...currOb,
+            has_sample_data: Boolean(req.body.has_sample_data)
+          };
+        }
+
+        // 4. Safe Onboarding merge (if provided)
+        // STRICT SECURITY GUARD: Strip all privileged fields: is_premium, premium_expires_at, is_blocked, ai_limit, ai_query_count
+        if (req.body?.onboarding && typeof req.body.onboarding === 'object') {
+          const existingOb = auth.userDoc?.onboarding || {};
+          const incomingOb = req.body.onboarding;
+          
+          const safeMergedOb = {
+            ...existingOb,
+            ...incomingOb,
+            // Force immutable / privileged fields to maintain original server values
+            is_premium: auth.userDoc?.is_premium ?? existingOb.is_premium ?? false,
+            is_vip: auth.userDoc?.is_premium ?? existingOb.is_vip ?? false,
+            premium_expires_at: auth.userDoc?.premium_expires_at ?? existingOb.premium_expires_at ?? null,
+            is_blocked: existingOb.is_blocked ?? false,
+            ai_limit: auth.userDoc?.ai_limit ?? existingOb.ai_limit,
+            ai_query_count: auth.userDoc?.ai_query_count ?? existingOb.ai_query_count ?? 0
+          };
+          updatePayload.onboarding = safeMergedOb;
+          if (incomingOb.name) updatePayload.name = incomingOb.name;
+          if (incomingOb.language) updatePayload.language = incomingOb.language;
+        }
+
+        // Perform update via service role (bypassing RLS safely on server)
+        const { data: updatedDoc, error: updateErr } = await supabase
+          .from('users')
+          .update(updatePayload)
+          .eq('id', targetUserId)
+          .select('id, name, phone, telegram, telegram_id, language, is_premium, premium_expires_at, cards, transactions, onboarding, updated_at')
+          .maybeSingle();
+
+        if (updateErr) {
+          console.error('[SYNC_DATA] Update error:', updateErr);
+          return res.status(500).json({ error: 'Failed to update user data', details: updateErr.message });
+        }
+
+        return res.status(200).json({
+          success: true,
+          user: updatedDoc
+        });
+      }
+    } catch (e: any) {
+      console.error('[SYNC_DATA] Handler error:', e);
+      return res.status(500).json({ error: e.message });
+    }
+  }
+
+  // 8. /api/auth/wipe-data (Authenticated User Self-Wipe)
+  if (action === 'wipe-data') {
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+
+    try {
+      const auth = await authenticateCaller(req, BOT_TOKEN);
+      if (!auth.authenticated || !auth.userId) {
+        return res.status(auth.statusCode).json({ error: auth.error || 'Unauthorized' });
+      }
+
+      const targetUserId = auth.userId;
+      if (req.body?.userId && req.body.userId.trim() !== targetUserId && req.body.userId.trim() !== `moliya_user_tg_${auth.telegramId}`) {
+        return res.status(403).json({ error: 'Forbidden: You can only wipe your own financial data' });
+      }
+
+      const nowIso = new Date().toISOString();
+      const { error: wipeErr } = await supabase
+        .from('users')
+        .update({
+          transactions: [],
+          cards: [],
+          updated_at: nowIso
+        })
+        .eq('id', targetUserId);
+
+      if (wipeErr) {
+        return res.status(500).json({ error: 'Failed to wipe financial data', details: wipeErr.message });
+      }
+
+      return res.status(200).json({ success: true, wiped: true, userId: targetUserId });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
     }
   }
 

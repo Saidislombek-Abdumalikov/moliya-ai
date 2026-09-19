@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import crypto from 'crypto';
 import { supabase } from './_supabaseClient.js';
 import { maskApiKey, testSpecificAiKey, executeAiWithRotation, AiKeyRecord, invalidateAiKeysCache } from './_aiRouter.js';
 import { effectiveAccess, accountStatus } from './_accessHelper.js';
@@ -44,7 +45,7 @@ function formatUzbekExpiryDate(isoDate?: string | null): string {
 
 async function notifyUserVipGrantedTelegram(telegramId: string | number, expiresAt?: string | null, userId?: string) {
   try {
-    const token = process.env.TELEGRAM_BOT_TOKEN || '8955141731:AAGILXzT69Vity8ZFi-H8XeZc_H6_BFaS8Y';
+    const token = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
     if (!token || !telegramId || String(telegramId) === '—') return;
 
     let expiryDisplay = "Cheksiz (Doimiy VIP)";
@@ -147,7 +148,7 @@ async function notifyUserVipGrantedTelegram(telegramId: string | number, expires
 
 async function notifyUserUnlimitedAiGrantedTelegram(telegramId: string | number, userId?: string) {
   try {
-    const token = process.env.TELEGRAM_BOT_TOKEN || '8955141731:AAGILXzT69Vity8ZFi-H8XeZc_H6_BFaS8Y';
+    const token = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
     if (!token || !telegramId || String(telegramId) === '—') return;
 
     if (userId) {
@@ -229,14 +230,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
-  res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
+  res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, x-admin-key, Authorization');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  // Admin authentication guard
-  const ADMIN_KEY = process.env.ADMIN_SECRET_KEY;
-  if (ADMIN_KEY && req.headers['x-admin-key'] && req.headers['x-admin-key'] !== ADMIN_KEY) {
-    return res.status(401).json({ error: 'Unauthorized' });
+  // Fail-Closed Admin Authentication Guard (Stage P0-C)
+  const ADMIN_KEY = (process.env.ADMIN_SECRET_KEY || '').trim();
+  if (!ADMIN_KEY || ADMIN_KEY.length < 16) {
+    console.error('[ADMIN SECURITY ALERT] Privileged admin endpoint accessed but ADMIN_SECRET_KEY is not configured or too weak on server');
+    return res.status(500).json({ error: 'Admin server secret configuration error' });
+  }
+
+  const rawHeaderKey = req.headers['x-admin-key'] || (typeof req.headers['authorization'] === 'string' && req.headers['authorization'].startsWith('Bearer ') ? req.headers['authorization'].slice(7) : null);
+  const clientKey = typeof rawHeaderKey === 'string' ? rawHeaderKey.trim() : Array.isArray(rawHeaderKey) ? rawHeaderKey[0].trim() : '';
+
+  if (!clientKey) {
+    return res.status(401).json({ error: 'Unauthorized: missing admin credentials' });
+  }
+
+  // Explicitly reject predictable / insecure fallback tokens
+  if (clientKey === 'moliya_admin_authorized' || clientKey === 'your-admin-secret' || clientKey === 'admin') {
+    return res.status(401).json({ error: 'Unauthorized: invalid admin credentials' });
+  }
+
+  // Constant-time comparison to prevent timing side-channel attacks
+  const clientKeyBuffer = Buffer.from(clientKey);
+  const adminKeyBuffer = Buffer.from(ADMIN_KEY);
+
+  if (clientKeyBuffer.length !== adminKeyBuffer.length || !crypto.timingSafeEqual(clientKeyBuffer, adminKeyBuffer)) {
+    return res.status(401).json({ error: 'Unauthorized: invalid admin credentials' });
   }
 
   // Extract route from query (via vercel rewrite ?route=...) or URL path
@@ -981,7 +1003,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(400).json({ error: 'Missing broadcast message' });
       }
 
-      const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8955141731:AAGILXzT69Vity8ZFi-H8XeZc_H6_BFaS8Y';
+      const BOT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
       if (!BOT_TOKEN) {
         return res.status(500).json({ error: 'TELEGRAM_BOT_TOKEN is not configured' });
       }
@@ -1146,8 +1168,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     try {
       const { userId, telegramId, messageIds = [], allUsers = false, sweepRecent = true } = req.body || {};
-      const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8955141731:AAGILXzT69Vity8ZFi-H8XeZc_H6_BFaS8Y';
-
+      const BOT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
       if (!BOT_TOKEN) {
         return res.status(500).json({ error: 'TELEGRAM_BOT_TOKEN is not configured' });
       }
@@ -1518,7 +1539,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const fileId = req.query.fileId as string;
       if (!fileId) return res.status(400).json({ error: 'Missing fileId parameter' });
 
-      const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8955141731:AAGILXzT69Vity8ZFi-H8XeZc_H6_BFaS8Y';
+      const BOT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
       if (!BOT_TOKEN) return res.status(500).json({ error: 'Missing TELEGRAM_BOT_TOKEN' });
 
       const tgRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${encodeURIComponent(fileId)}`);
@@ -1707,7 +1728,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (req.method === 'POST') {
       try {
-        const { action, id, title, message, emoji, type, target_audience, image_url, action_url, is_active } = req.body;
+        const { action, id, title, message, emoji, type, target_audience, image_url, action_url, is_active } = req.body || {};
+        if (action === 'create' || action === 'insert') {
+          const { title, message, image_url, target, action_url, is_pinned, priority } = req.body;
+          if (!title || !message) return res.status(400).json({ error: 'Title and message are required' });
+
+          const payload = {
+            title: String(title).trim(),
+            message: String(message).trim(),
+            image_url: image_url ? String(image_url).trim() : null,
+            target: target || 'all',
+            action_url: action_url ? String(action_url).trim() : null,
+            is_pinned: Boolean(is_pinned),
+            priority: priority || 'normal',
+            created_at: new Date().toISOString()
+          };
+
+          const { data, error } = await supabase.from('app_notifications').insert([payload]).select().maybeSingle();
+          if (error) return res.status(500).json({ error: error.message });
+          return res.status(200).json({ success: true, notification: data || payload });
+        }
 
         if (action === 'update') {
           if (!id) return res.status(400).json({ error: 'Missing notification ID' });
@@ -1716,10 +1756,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           if (message !== undefined) updates.message = message;
           if (emoji !== undefined) updates.emoji = emoji;
           if (type !== undefined) updates.type = type;
+          if (target !== undefined) updates.target = target;
           if (target_audience !== undefined) updates.target_audience = target_audience;
           if (image_url !== undefined) updates.image_url = image_url;
+          if (req.body.imageUrl !== undefined) updates.image_url = req.body.imageUrl;
           if (action_url !== undefined) updates.action_url = action_url;
+          if (req.body.actionUrl !== undefined) updates.action_url = req.body.actionUrl;
           if (is_active !== undefined) updates.is_active = is_active;
+          if (is_pinned !== undefined) updates.is_pinned = Boolean(is_pinned);
+          if (req.body.isPinned !== undefined) updates.is_pinned = Boolean(req.body.isPinned);
+          if (priority !== undefined) updates.priority = priority;
 
           const { data, error } = await supabase.from('app_notifications').update(updates).eq('id', id).select().maybeSingle();
           if (error) return res.status(500).json({ error: error.message });
@@ -2066,7 +2112,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         };
       }
 
-      const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8955141731:AAGILXzT69Vity8ZFi-H8XeZc_H6_BFaS8Y';
+      const BOT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
       if (!BOT_TOKEN) return res.status(500).json({ error: 'TELEGRAM_BOT_TOKEN is not configured' });
 
       // Enforce single button rule: remove previous link button from chat if exists
@@ -2156,7 +2202,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(400).json({ error: 'Missing chatId, messageId or message' });
       }
 
-      const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8955141731:AAGILXzT69Vity8ZFi-H8XeZc_H6_BFaS8Y';
+      const BOT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
       if (!BOT_TOKEN) return res.status(500).json({ error: 'TELEGRAM_BOT_TOKEN is not configured' });
 
       const editResp = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
@@ -2191,7 +2237,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(400).json({ error: 'Missing chatId or messageId' });
       }
 
-      const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8955141731:AAGILXzT69Vity8ZFi-H8XeZc_H6_BFaS8Y';
+      const BOT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
       if (!BOT_TOKEN) return res.status(500).json({ error: 'TELEGRAM_BOT_TOKEN is not configured' });
 
       const cleanChatId = String(chatId).replace(/[^\d-]/g, '');

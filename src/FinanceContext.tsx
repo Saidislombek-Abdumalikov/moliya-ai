@@ -268,6 +268,23 @@ async function setSupabaseSession(accessToken: string, refreshToken: string): Pr
   }
 }
 
+// Helper: Secure client auth headers for authenticated backend APIs
+export function getClientAuthHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  try {
+    const tg = (window as any).Telegram?.WebApp;
+    if (tg?.initData) {
+      headers['x-telegram-init-data'] = tg.initData;
+    }
+    const sessionToken = localStorage.getItem('user_session_token_v1');
+    if (sessionToken) {
+      headers['authorization'] = `Bearer ${sessionToken}`;
+      headers['x-session-token'] = sessionToken;
+    }
+  } catch {}
+  return headers;
+}
+
 export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const isTg = isTelegramMiniApp()
   const [isWeb, setIsWeb] = useState<boolean>(() => isWebApp())
@@ -391,15 +408,14 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const setHasSampleData = async (val: boolean) => {
     setHasSampleDataState(val)
     localStorage.setItem('user_has_sample_v1', String(val))
-    const targetUserId = userId || localStorage.getItem('user_id_v1') || defaultTgUserId
-    if (targetUserId) {
-      const { error } = await supabase
-        .from('users')
-        .update({ has_sample_data: val, updated_at: new Date().toISOString() })
-        .eq('id', targetUserId)
-      if (error) {
-        console.warn('[FINANCE] Failed to update has_sample_data in Supabase:', error)
-      }
+    try {
+      await fetch('/api/auth/sync-data', {
+        method: 'POST',
+        headers: getClientAuthHeaders(),
+        body: JSON.stringify({ has_sample_data: val })
+      });
+    } catch (err) {
+      console.warn('[FINANCE] Failed to update has_sample_data:', err);
     }
   }
 
@@ -1062,6 +1078,46 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const idToUse = targetId || getEffectiveUserId();
     if (!idToUse) return;
 
+    // 1. Authenticated backend sync endpoint (Bulletproof across Web App & Telegram Mini App)
+    try {
+      const res = await fetch('/api/auth/sync-data', {
+        method: 'GET',
+        headers: getClientAuthHeaders()
+      });
+      if (res.ok) {
+        const json = await res.json();
+        const data = json?.user;
+        if (data) {
+          const acc = computeAccessState(data);
+          setAccessState(acc);
+          setOnboarding(prev => {
+            const merged = {
+              ...(prev || {}),
+              ...(data.onboarding || {}),
+              isPremium: acc.isPremium,
+              isVip: acc.isVip,
+              premiumExpiresAt: acc.premiumExpiresAt,
+              unlimitedAi: acc.unlimitedAi,
+            };
+            localStorage.setItem('user_onboarding_v1', JSON.stringify(merged));
+            return merged;
+          });
+          if (Array.isArray(data.cards)) {
+            setCards(data.cards);
+            localStorage.setItem('user_cards_v1', JSON.stringify(data.cards));
+          }
+          if (Array.isArray(data.transactions)) {
+            setCustomTransactions(data.transactions);
+            localStorage.setItem('user_transactions_v1', JSON.stringify(data.transactions));
+          }
+          return;
+        }
+      }
+    } catch (apiErr) {
+      console.warn('[FINANCE] sync-data API note:', apiErr);
+    }
+
+    // 2. Direct Supabase fallback (under RLS for authenticated session)
     try {
       const { data, error } = await supabase
         .from('users')
@@ -1196,7 +1252,17 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
     window.dispatchEvent(new Event('user_onboarding_updated'));
 
-    // 2. Authoritative persistence to Supabase
+    // 2. Authoritative persistence via authenticated backend sync API
+    try {
+      await fetch('/api/auth/sync-data', {
+        method: 'POST',
+        headers: getClientAuthHeaders(),
+        body: JSON.stringify({ onboarding: updated })
+      });
+    } catch (apiErr) {
+      console.warn('[FINANCE] updateOnboarding API note:', apiErr);
+    }
+
     try {
       const { data: dbUser } = await supabase
         .from('users')
@@ -1262,25 +1328,23 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     localStorage.setItem('user_cards_v1', JSON.stringify(updatedCards));
     window.dispatchEvent(new Event('user_cards_updated'));
 
-    // 2. Authoritative update to Supabase
+    // 2. Authoritative persistence via authenticated backend sync API
     try {
-      const nowIso = new Date().toISOString();
-      const { data: dbUser } = await supabase.from('users').select('id').eq('id', targetUserId).maybeSingle();
-      if (dbUser) {
+      const res = await fetch('/api/auth/sync-data', {
+        method: 'POST',
+        headers: getClientAuthHeaders(),
+        body: JSON.stringify({ cards: updatedCards })
+      });
+      if (!res.ok) {
+        // Fallback to direct Supabase update under RLS
+        const nowIso = new Date().toISOString();
         await supabase.from('users').update({
           cards: updatedCards,
           updated_at: nowIso
         }).eq('id', targetUserId);
-      } else {
-        await supabase.from('users').upsert({
-          id: targetUserId,
-          cards: updatedCards,
-          created_at: nowIso,
-          updated_at: nowIso
-        }, { onConflict: 'id' });
       }
     } catch (err) {
-      console.warn('[FINANCE] Supabase saveCards note:', err);
+      console.warn('[FINANCE] saveCards sync note:', err);
     }
 
     return true;
@@ -1354,35 +1418,22 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     localStorage.setItem('user_transactions_v1', JSON.stringify(mergedTxs));
     window.dispatchEvent(new Event('user_transactions_updated'));
 
-    // 2. Authoritative persistence to Supabase
+    // 2. Authoritative persistence via authenticated backend sync API
     try {
-      const { data: dbUser } = await supabase
-        .from('users')
-        .select('transactions')
-        .eq('id', targetUserId)
-        .maybeSingle();
-
-      const existingDbTxs = Array.isArray(dbUser?.transactions) ? dbUser.transactions : [];
-      const finalDbTxs = [newTx, ...existingDbTxs.filter((t: any) => String(t.id) !== String(txId))];
-
-      if (dbUser) {
+      const res = await fetch('/api/auth/sync-data', {
+        method: 'POST',
+        headers: getClientAuthHeaders(),
+        body: JSON.stringify({ transactions: mergedTxs })
+      });
+      if (!res.ok) {
+        // Fallback to direct Supabase update under RLS
         await supabase.from('users').update({
-          transactions: finalDbTxs,
+          transactions: mergedTxs,
           updated_at: new Date().toISOString()
         }).eq('id', targetUserId);
-      } else {
-        await supabase.from('users').upsert({
-          id: targetUserId,
-          transactions: finalDbTxs,
-          cards: cards || [],
-          onboarding: onboarding || { completed: true, name: 'Foydalanuvchi', language: 'uz' },
-          is_premium: true,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        }, { onConflict: 'id' });
       }
     } catch (saveErr) {
-      console.warn('[FINANCE] Supabase background save note:', saveErr);
+      console.warn('[FINANCE] addTransaction sync note:', saveErr);
     }
 
     return newTx;
@@ -1403,23 +1454,22 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     localStorage.setItem('user_transactions_v1', JSON.stringify(updatedTxs));
     window.dispatchEvent(new Event('user_transactions_updated'));
 
-    // 2. Authoritative persistence to Supabase
+    // 2. Authoritative persistence via authenticated backend sync API
     try {
-      const { data: dbUser } = await supabase
-        .from('users')
-        .select('transactions')
-        .eq('id', targetUserId)
-        .maybeSingle();
-
-      const existingDbTxs = Array.isArray(dbUser?.transactions) ? dbUser.transactions : currentTxs;
-      const finalDbTxs = existingDbTxs.filter((t: any) => String(t.id) !== idStr);
-
-      await supabase.from('users').update({
-        transactions: finalDbTxs,
-        updated_at: new Date().toISOString()
-      }).eq('id', targetUserId);
+      const res = await fetch('/api/auth/sync-data', {
+        method: 'POST',
+        headers: getClientAuthHeaders(),
+        body: JSON.stringify({ transactions: updatedTxs })
+      });
+      if (!res.ok) {
+        // Fallback to direct Supabase update under RLS
+        await supabase.from('users').update({
+          transactions: updatedTxs,
+          updated_at: new Date().toISOString()
+        }).eq('id', targetUserId);
+      }
     } catch (err) {
-      console.warn('[FINANCE] Supabase delete note:', err);
+      console.warn('[FINANCE] deleteTransaction sync note:', err);
     }
 
     return true;
@@ -1429,16 +1479,25 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const targetUserId = userId;
     const targetTgId = tgUser?.id ? String(tgUser.id) : (onboarding?.telegramId ? String(onboarding.telegramId) : null);
     const initData = (typeof window !== 'undefined' && (window as any).Telegram?.WebApp?.initData) || '';
+    const sessionToken = (typeof window !== 'undefined' && localStorage.getItem('user_session_token_v1')) || '';
 
     // Call backend endpoint to sweep Telegram bot chat, remove custom keyboards, and purge user account
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (sessionToken) {
+        headers['Authorization'] = `Bearer ${sessionToken}`;
+      }
+      if (initData) {
+        headers['x-telegram-init-data'] = initData;
+      }
       await fetch('/api/auth/delete-account', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           userId: targetUserId,
           telegramId: targetTgId,
-          initData
+          initData,
+          sessionToken
         })
       });
     } catch (apiErr) {
@@ -1469,12 +1528,20 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const clearOnlyFinancialData = async () => {
-    if (userId) {
-      await supabase.from('users').update({
-        transactions: [],
-        cards: [],
-        updated_at: new Date().toISOString()
-      }).eq('id', userId);
+    try {
+      await fetch('/api/auth/wipe-data', {
+        method: 'POST',
+        headers: getClientAuthHeaders()
+      });
+    } catch (apiErr) {
+      console.warn('[FINANCE] wipe-data API note:', apiErr);
+      if (userId) {
+        await supabase.from('users').update({
+          transactions: [],
+          cards: [],
+          updated_at: new Date().toISOString()
+        }).eq('id', userId);
+      }
     }
     localStorage.removeItem('user_transactions_v1');
     localStorage.removeItem('user_cards_v1');

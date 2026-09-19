@@ -374,7 +374,7 @@ export async function generateAndSaveUserReport(
 
     // 6. Optional Telegram delivery
     if (options?.sendTelegram) {
-      const token = process.env.TELEGRAM_BOT_TOKEN || '8955141731:AAGILXzT69Vity8ZFi-H8XeZc_H6_BFaS8Y';
+      const token = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
       const tgId = user.telegram_id || user.onboarding?.telegramId || (userId.startsWith('moliya_user_tg_') ? userId.replace('moliya_user_tg_', '') : null);
 
       if (token && tgId && tgId !== '—') {
