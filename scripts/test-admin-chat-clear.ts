@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 
 const root = new URL(existsSync(new URL('../../Admin-Dashboard/', import.meta.url))
-  ? '../../Admin-Dashboard/' : '../../admin Dashboard Moliya/', import.meta.url);
+  ? '../../Admin-Dashboard/' : '../../Admin-Dashboard/', import.meta.url);
 const { clearAllUserChatHistory, clearAllMessagesGlobally } = await import(new URL('src/services/userService.js', root).href);
 const requests: any[] = [];
 globalThis.fetch = async (url: any, options: any) => {

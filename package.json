@@ -11,12 +11,14 @@
     "lint": "tsc --noEmit && tsc -p tsconfig.backend.json",
     "test:regression": "node --import tsx scripts/test-report-delivery.ts && node --import tsx scripts/test-financial-assistant.ts && node --import tsx scripts/test-reminder-policy.ts && node --import tsx scripts/test-reminder-delivery.ts && node --import tsx scripts/test-automation-rules.ts && node --import tsx scripts/test-financial-totals.ts && node --import tsx scripts/test-critical-security.ts && node --import tsx scripts/test-login-revocation.ts && node --import tsx scripts/test-admin-audit-rls.ts && node --import tsx scripts/test-backend-regressions.ts && node --import tsx scripts/test-atomic-quota.ts && node --import tsx scripts/test-financial-writes.ts && node --import tsx scripts/test-client-session.ts && node --import tsx scripts/test-miniapp-ux.ts && node --import tsx scripts/test-admin-boundaries.ts && node --import tsx scripts/test-admin-otp.ts && node --import tsx scripts/test-shared-rate-limits.ts && node --import tsx scripts/test-log-redaction.ts && node --import tsx scripts/test-api-errors.ts && node --import tsx scripts/test-profile-concurrency.ts && node --import tsx scripts/test-destructive-admin.ts && node --import tsx scripts/test-amount-evidence.ts && node --import tsx scripts/test-client-ai-boundary.ts && node --import tsx scripts/test-bot-confirmation.ts && node --import tsx scripts/test-bot-message-delivery.ts",
     "test:admin-integration": "node --import tsx scripts/test-admin-consistency.ts && node --import tsx scripts/test-admin-layout.ts && node --import tsx scripts/test-notification-delivery.ts && node --import tsx scripts/test-admin-telegram.ts && node --import tsx scripts/test-admin-user-actions.ts && node --import tsx scripts/test-admin-chat-read.ts && node --import tsx scripts/test-admin-chat-clear.ts && node --import tsx scripts/test-admin-clear-recipients.ts && node --import tsx scripts/test-admin-ai-maintenance.ts && node --import tsx scripts/test-admin-chat-write.ts && node --import tsx scripts/test-admin-read-boundaries.ts && node --import tsx scripts/test-legal-settings.ts && node --import tsx scripts/test-legal-consent.ts && node --import tsx scripts/test-admin-db-boundary.ts && node --import tsx scripts/test-admin-cron.ts && node --import tsx scripts/test-scheduled-reports.ts",
-    "start": "node server-build/server.cjs"
+    "start": "node server-build/server.cjs",
+    "test:release-fixes": "node --import tsx scripts/test-release-fixes.ts && node --import tsx scripts/test-new-user-onboarding.ts && node --import tsx scripts/test-client-ai-boundary.ts && node --import tsx scripts/test-legal-consent.ts"
   },
   "dependencies": {
     "@google/genai": "^2.12.0",
     "@supabase/supabase-js": "^2.112.3",
     "@types/qrcode": "^1.5.6",
+    "docx": "9.6.1",
     "express": "^5.2.1",
     "motion": "^12.42.2",
     "qrcode": "^1.5.4",

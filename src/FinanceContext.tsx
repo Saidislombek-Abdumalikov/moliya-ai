@@ -1,4 +1,4 @@
-import { authRequest, fetchWithTimeout, onceAsync, tourDone, tourKey } from './clientSession'
+import { readSessionToken, saveSessionToken, clearSessionToken, authRequest, fetchWithTimeout, onceAsync, tourDone, tourKey } from './clientSession'
 import { telegramBotLink, telegramBotDeepLink } from './telegramLinks'
 import { waitForTelegramSdk } from './telegramViewport'
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react'
@@ -282,7 +282,7 @@ export function getClientAuthHeaders(): Record<string, string> {
     if (tg?.initData) {
       headers['x-telegram-init-data'] = tg.initData;
     }
-    const sessionToken = localStorage.getItem('user_session_token_v1');
+    const sessionToken = readSessionToken();
     if (sessionToken) {
       headers['authorization'] = `Bearer ${sessionToken}`;
       headers['x-session-token'] = sessionToken;
@@ -380,7 +380,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       localStorage.removeItem('user_cards_v1')
       localStorage.removeItem('user_transactions_v1')
       localStorage.removeItem('user_onboarding_v1')
-      localStorage.removeItem('user_session_token_v1')
+      clearSessionToken()
     }
 
     setUserId(data.userId)
@@ -388,7 +388,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setAuthError(null)
     localStorage.setItem('user_id_v1', data.userId)
     if (data.sessionToken) {
-      localStorage.setItem('user_session_token_v1', data.sessionToken)
+      saveSessionToken(data.sessionToken)
     }
     // Authoritative onboarding and tour completion state from DB
     const phone = data.phone || data.onboarding?.phone;
@@ -450,7 +450,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     if (!bootstrapAuth.current) bootstrapAuth.current = onceAsync(async () => {
       const url = new URL(window.location.href);
       const code = url.searchParams.get('code');
-      const stored = localStorage.getItem('user_session_token_v1');
+      const stored = readSessionToken();
       const telegramLaunch = isTelegramMiniApp();
       if (telegramLaunch && !(window as any).Telegram?.WebApp?.initData)
         await waitForTelegramSdk(() => (window as any).Telegram?.WebApp);
@@ -459,10 +459,14 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         ? (initData ? authRequest(initData, null, null) : null)
         : authRequest(undefined, code, stored);
       if (!request) return null;
-      const response = await fetchWithTimeout('/api/auth/' + request.action, {
+      let response = await fetchWithTimeout('/api/auth/' + request.action, {
         method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(request.body)
       });
-      const data = await response.json();
+      let data = await response.json();
+      if (request.action === 'validate-session' && code && (response.status === 401 || data.valid === false)) {
+        response = await fetchWithTimeout('/api/auth/exchange-code',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code})});
+        data = await response.json();
+      }
       return {response, data, code, stored};
     });
     const clear = () => {setUserId(null);setOnboarding(null);setCards([]);setCustomTransactions([]);setAccessState(computeAccessState(null));};
@@ -480,8 +484,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         const {response, data, code, stored} = result;
         if (!response.ok || data.valid === false || !data.userId) {
           clear();
-          if (response.status >= 500) throw Error('Server unavailable');
-          localStorage.removeItem('user_session_token_v1');
+          if (response.status >= 500 || response.status === 429) throw Error('Server unavailable');
+          if (response.status === 401 || response.status === 403 || data.valid === false) clearSessionToken();
           if (data.error === 'ACCOUNT_RESTRICTED') setAuthError('Hisobingiz cheklangan. Administrator bilan bog‘laning.');
           else setAuthError('Kirish havolasi eskirgan yoki tasdiqlanmadi. Botdan ilovani qayta oching.');
           return;
@@ -501,26 +505,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, [])
 
   // ═══════════════════════════════════════════════════════════
-  // Supabase Auth State Listener
-  // ═══════════════════════════════════════════════════════════
-  useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      console.log('[AUTH] onAuthStateChange event:', event)
-      if (event === 'SIGNED_OUT') {
-        setUserId(null)
-        localStorage.removeItem('user_logged_in_v1')
-        localStorage.removeItem('user_session_token_v1')
-        localStorage.removeItem('user_id_v1')
-        window.dispatchEvent(new Event('user_logged_in_updated'))
-      } else if (event === 'TOKEN_REFRESHED' && session?.user) {
-        console.log('[AUTH] Token refreshed successfully')
-      }
-    })
-
-    return () => {
-      subscription.unsubscribe()
-    }
-  }, [])
+  // The backend session is authoritative. Supabase's legacy auth state must
+  // never erase it on INITIAL_SESSION / SIGNED_OUT during page restoration.
 
   // ═══════════════════════════════════════════════════════════
   // POLLING HELPER — resumes polling for a login request
@@ -530,13 +516,18 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     let intervalId: any = null
     let isFinished = false
     let inFlight = false
+    let nextPollAt = 0
 
     const checkVerification = async () => {
-      if (isFinished || inFlight) return
+      if (isFinished || inFlight || Date.now() < nextPollAt) return
       inFlight = true
       try {
         const res = await fetchWithTimeout(`/api/auth/check-login-request?requestId=${requestId}`)
         if (isFinished) return
+        if (res.status === 429) {
+          nextPollAt = Date.now() + Math.max(3, Number(res.headers.get('Retry-After')) || 15) * 1000;
+          return;
+        }
         if (res.ok) {
           const data = await res.json()
           if (isFinished) return
@@ -606,7 +597,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     // Check immediately on return
     checkVerification()
 
-    intervalId = setInterval(checkVerification, 3000)
+    intervalId = setInterval(() => { if (document.visibilityState !== 'hidden') void checkVerification(); }, 3000)
 
     // Match the server's five-minute login request lifetime.
     const timeoutId = setTimeout(() => {
@@ -707,7 +698,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const getEffectiveUserId = (): string | null => {
     if (userId) return userId;
     if (isTelegramMiniApp() && defaultTgUserId) return defaultTgUserId;
-    const storedToken = localStorage.getItem('user_session_token_v1');
+    const storedToken = readSessionToken();
     const stored = localStorage.getItem('user_id_v1');
     if (storedToken && stored && stored.startsWith('moliya_user_tg_')) return stored;
     return null;
@@ -735,14 +726,14 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return sessionRenewal.current;
   };
   const refreshUserData = async (_targetId?: string | null) => {
-    const refreshToken=localStorage.getItem('user_session_token_v1');
+    const refreshToken=readSessionToken();
     if(!refreshToken) {
       if ((window as any).Telegram?.WebApp?.initData) return renewTelegramSession();
       return;
     }
     const sequence=++refreshSequence.current;
     const response=await fetchWithTimeout('/api/auth/sync-data',{headers:getClientAuthHeaders()});
-    if(sequence!==refreshSequence.current || refreshToken!==localStorage.getItem('user_session_token_v1')) return;
+    if(sequence!==refreshSequence.current || refreshToken!==readSessionToken()) return;
     if(!response.ok) {
       if(response.status===401 && (window as any).Telegram?.WebApp?.initData) {
         try { return await renewTelegramSession(); }
@@ -750,7 +741,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
       if(response.status===401 || response.status===403) {
         setUserId(null);setOnboarding(null);setCards([]);setCustomTransactions([]);
-        localStorage.removeItem('user_session_token_v1');
+        clearSessionToken();
         setAuthError(response.status===403
           ? 'Hisobga kirish cheklangan. Bot orqali holatni tekshiring.'
           : 'Sessiya tugagan. Botdan ilovani qayta oching.');
@@ -759,7 +750,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
     const {user}=await response.json();
     if(!user?.id) throw Error('Foydalanuvchi holati kelmadi');
-    if(sequence===refreshSequence.current && refreshToken===localStorage.getItem('user_session_token_v1')) {
+    if(sequence===refreshSequence.current && refreshToken===readSessionToken()) {
       persistAuthState({...user,userId:user.id});
       return user;
     }
@@ -949,7 +940,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const targetUserId = userId;
     const targetTgId = tgUser?.id ? String(tgUser.id) : (onboarding?.telegramId ? String(onboarding.telegramId) : null);
     const initData = (typeof window !== 'undefined' && (window as any).Telegram?.WebApp?.initData) || '';
-    const sessionToken = (typeof window !== 'undefined' && localStorage.getItem('user_session_token_v1')) || '';
+    const sessionToken = (typeof window !== 'undefined' && readSessionToken()) || '';
 
     // Call backend endpoint to sweep Telegram bot chat, remove custom keyboards, and purge user account
     try {
@@ -1008,7 +999,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
     logoutPending.current = true;
     ++refreshSequence.current;
-    const currentSessionToken = localStorage.getItem('user_session_token_v1');
+    const currentSessionToken = readSessionToken();
     const currentUid = userId || localStorage.getItem('user_id_v1');
 
     // Do not report successful logout while the server still accepts this token.
@@ -1039,7 +1030,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       localStorage.removeItem(`user_onboarding_completed_${currentUid}`);
     }
     localStorage.removeItem('user_logged_in_v1');
-    localStorage.removeItem('user_session_token_v1');
+    clearSessionToken();
     localStorage.removeItem('user_id_v1');
     localStorage.removeItem('user_onboarding_v1');
     localStorage.removeItem('user_onboarding_completed_v1');

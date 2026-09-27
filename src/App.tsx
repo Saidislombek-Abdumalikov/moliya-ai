@@ -70,7 +70,7 @@ export default function App() {
   // 1. Wait until Telegram WebApp / Auth initialization completes
   if (!isAuthReady) {
     return (
-      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#FAF8FE] text-[#1E1A3C] p-6 text-center select-none font-sans">
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#FAF8FE] text-[#1E1A3C] p-6 text-center font-sans">
         <div className="w-12 h-12 border-4 border-[#DDD6FE] border-t-[#7C3AED] rounded-full animate-spin mb-4" />
         <p className="text-sm text-[#64748B] font-medium">Moliya AI yuklanmoqda...</p>
         {authWaitTimeout && (
@@ -88,7 +88,7 @@ export default function App() {
   // 2. Auth error screen (shown if account is restricted or registration needed)
   if (authError) {
     return (
-      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#FAF8FE] text-[#1E1A3C] p-6 text-center select-none font-sans">
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#FAF8FE] text-[#1E1A3C] p-6 text-center font-sans">
         <div className="w-20 h-20 mb-5 rounded-3xl bg-purple-50 border border-purple-200 flex items-center justify-center text-3xl shadow-lg shadow-purple-500/10">
           🔒
         </div>
@@ -124,7 +124,7 @@ export default function App() {
   // 4. Telegram Mini App Loading: If inside Telegram Mini App but user ID hasn't loaded yet
   if (isTelegramMiniApp() && !userId) {
     return (
-      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#FAF8FE] text-[#1E1A3C] p-6 text-center select-none font-sans">
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#FAF8FE] text-[#1E1A3C] p-6 text-center font-sans">
         {authWaitTimeout ? (
           <div className="flex flex-col items-center">
             <div className="w-16 h-16 rounded-2xl bg-purple-50 text-purple-600 flex items-center justify-center text-3xl mb-4">
@@ -160,7 +160,7 @@ export default function App() {
         position: 'relative',
         minHeight: '100dvh',
         width: '100%',
-        maxWidth: 430,
+        maxWidth: 'var(--app-max-width, 430px)',
         margin: '0 auto',
         background: '#FAF8FE',
         paddingBottom: 95,

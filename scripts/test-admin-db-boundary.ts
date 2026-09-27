@@ -32,7 +32,7 @@ const unavailable=await status();
 assert.equal(unavailable.statusCode,503);
 assert.ok(!JSON.stringify(unavailable.body).includes('PRIVATE_DATABASE_ERROR'));
 
-const root=new URL(existsSync(new URL('../../Admin-Dashboard/',import.meta.url))?'../../Admin-Dashboard/':'../../admin Dashboard Moliya/',import.meta.url);
+const root=new URL(existsSync(new URL('../../Admin-Dashboard/',import.meta.url))?'../../Admin-Dashboard/':'../../Admin-Dashboard/',import.meta.url);
 const ai=await import(new URL('src/services/aiKeyService.js',root).href);
 let calls:any[]=[];
 globalThis.fetch=async(url:any,options:any)=>{

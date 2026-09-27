@@ -26,7 +26,7 @@ async function api(route:string,body:any,key='offline-admin-test-key',method='PO
 await test('unauthenticated action/history cannot run',async()=>{for(const route of ['telegram-action','telegram-history'])assert.equal((await api(route,{method:'sendMessage',chatId:'123',text:'x',action:'read'},'')).statusCode,401);assert.equal(network.length,0)});
 await test('new and legacy routes require matching recipient',async()=>{assert.equal((await api('telegram-action',{method:'sendMessage',chatId:'123',text:'x'})).statusCode,200);assert.equal((await api('send-telegram-message',{userId:base.id,telegramId:'456',message:'x'})).statusCode,400);assert.equal(network.length,1)});
 await test('broadcast history persists and keeps other records',async()=>{for(const id of ['a','b'])assert.equal((await api('telegram-history',{action:'save',record:{id,deliveries:[]}})).statusCode,200);const r=await api('telegram-history',{action:'read'});assert.deepEqual(r.body.records.map((x:any)=>x.id),['b','a']);assert.equal(network.length,0)});
-const root=new URL(existsSync(new URL('../../Admin-Dashboard/',import.meta.url))?'../../Admin-Dashboard/':'../../admin Dashboard Moliya/',import.meta.url);
+const root=new URL(existsSync(new URL('../../Admin-Dashboard/',import.meta.url))?'../../Admin-Dashboard/':'../../Admin-Dashboard/',import.meta.url);
 const storage=new Map([['telegram_bot_token','legacy-secret']]);(globalThis as any).localStorage={getItem:(k:string)=>storage.get(k)||null,removeItem:(k:string)=>storage.delete(k),setItem:(k:string,v:string)=>storage.set(k,v)};
 const client=await import(new URL('src/services/telegramService.js',root).href);
 await test('legacy browser token is removed',()=>assert.equal(storage.has('telegram_bot_token'),false));

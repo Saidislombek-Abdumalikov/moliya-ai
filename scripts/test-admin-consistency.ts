@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {adminUserView} from '../api/_adminUserView.js';
 import {eligibleUser} from '../api/_userPolicy.js';
 import {effectiveAccess} from '../api/_accessHelper.js';
-const adminRoot=new URL(existsSync(new URL('../../Admin-Dashboard/',import.meta.url))?'../../Admin-Dashboard/':'../../admin Dashboard Moliya/',import.meta.url);
+const adminRoot=new URL(existsSync(new URL('../../Admin-Dashboard/',import.meta.url))?'../../Admin-Dashboard/':'../../Admin-Dashboard/',import.meta.url);
 const {normalizeUser}=await import(new URL('src/services/userService.js',adminRoot).href);
 const {requestAdmin}=await import(new URL('src/services/adminTransport.js',adminRoot).href);
 const base={id:'moliya_user_tg_123',telegram_id:'123',phone:'+998901234567',onboarding:{session_token:'secret',session_expires_at:'2099-01-01'},device_info:{session_token:'secret'},bot_verification:{telegram_id:'123',phone:'+998901234567',phone_source:'telegram_own_contact',phone_verified_at:'2026-01-01',consent_source:'telegram_button',consent_version:'v1',consent_accepted_at:'2026-01-01'},cards:[{id:'cash'}],transactions:[{id:'tx',amount:10}]};

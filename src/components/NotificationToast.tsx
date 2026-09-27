@@ -55,7 +55,7 @@ export default function NotificationToast({
             alignItems: 'center',
             gap: 10,
             cursor: 'pointer',
-            userSelect: 'none',
+            userSelect: 'text',
           }}
         >
           {/* App icon */}

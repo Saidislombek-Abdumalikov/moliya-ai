@@ -1,3 +1,4 @@
+import {readSessionToken} from '../clientSession';
 
 export interface AppNotificationItem {
   id: string;
@@ -43,7 +44,7 @@ export async function fetchUserNotifications(opts: {
   isPremium?: boolean;
   isTelegram?: boolean;
 }): Promise<AppNotificationItem[]> {
-  const token=localStorage.getItem('user_session_token_v1');
+  const token=readSessionToken();
   if(!opts.userId||!token)return [];
   const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),12000);
   try {
@@ -52,7 +53,7 @@ export async function fetchUserNotifications(opts: {
     });
     if(!response.ok)return [];
     const data=await response.json();
-    if(token!==localStorage.getItem('user_session_token_v1')||!Array.isArray(data))return [];
+    if(token!==readSessionToken()||!Array.isArray(data))return [];
     const readIds=getReadNotificationIds(opts.userId);
     return data.map(item=>({id:item.id,title:item.title||'Moliya AI',message:item.message||'',imageUrl:item.image_url||null,target:item.target,actionUrl:item.action_url||null,isPinned:Boolean(item.is_pinned),priority:item.priority,createdAt:item.created_at,isRead:readIds.has(item.id)}));
   }catch{return [];}finally{clearTimeout(timer)}

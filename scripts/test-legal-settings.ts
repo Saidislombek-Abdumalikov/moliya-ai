@@ -107,12 +107,12 @@ failWrite = false; failRead = true;
 assert.equal((await call(auth, 'legal')).statusCode, 503);
 assert.equal((await call(admin, 'app-settings', 'POST', { oferta_text: 'B' }, key)).statusCode, 503);
 
-const adminClient = readFileSync(new URL('../../admin Dashboard Moliya/src/components/PrivacyPolicyTab.jsx', import.meta.url), 'utf8');
+const adminClient = readFileSync(new URL('../../Admin-Dashboard/src/components/PrivacyPolicyTab.jsx', import.meta.url), 'utf8');
 const userClient = readFileSync(new URL('../src/components/PrivacyPolicyModal.tsx', import.meta.url), 'utf8');
 assert.ok(!adminClient.includes("from '../supabase'"));
 assert.ok(!userClient.includes("from '../supabase'"));
 assert.ok(adminClient.includes("await callAdminApi('app-settings', 'POST'"));
-const settingsClient = readFileSync(new URL('../../admin Dashboard Moliya/src/components/SettingsTab.jsx', import.meta.url), 'utf8');
+const settingsClient = readFileSync(new URL('../../Admin-Dashboard/src/components/SettingsTab.jsx', import.meta.url), 'utf8');
 const appParser = readFileSync(new URL('../api/parse-expense.ts', import.meta.url), 'utf8');
 const botParser = readFileSync(new URL('../api/telegram-webhook.ts', import.meta.url), 'utf8');
 assert.ok(appParser.includes('await loadAiParserGuidance()'));

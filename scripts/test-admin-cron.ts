@@ -103,7 +103,7 @@ assert.equal(sends,2);
 const broadcast=await request('broadcast','POST',{'x-admin-key':process.env.ADMIN_SECRET_KEY!},{message:'test',target:'all'});
 assert.equal(broadcast.statusCode,404);
 assert.equal(sends,2);
-const adminRoot=new URL('../../admin Dashboard Moliya/',import.meta.url);
+const adminRoot=new URL('../../Admin-Dashboard/',import.meta.url);
 const client=await import(new URL('src/services/notificationService.js',adminRoot).href);
 let routeCalls:any[]=[];
 globalThis.fetch=async(url:any,options:any)=>{

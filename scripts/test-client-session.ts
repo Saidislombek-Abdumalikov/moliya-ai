@@ -21,7 +21,7 @@ check('phone or consent alone never enters', () => {
   assert.equal(registrationReady(null, {completed:true,oferta_accepted:true,phone:'+998901234567'}, true), false);
 });
 check('Mini App uses signed Telegram data over stale code', () => assert.deepEqual(authRequest('signed', 'expired', 'old'), {action:'telegram', body:{initData:'signed'}}));
-check('web exchange retains priority over saved account', () => assert.equal(authRequest('', 'new', 'old')?.action, 'exchange-code'));
+check('saved web session is validated before a lingering code', () => assert.equal(authRequest('', 'new', 'old')?.action, 'validate-session'));
 check('web session validated by server', () => assert.equal(authRequest('', null, 'saved')?.action, 'validate-session'));
 check('no identity creates no authentication', () => assert.equal(authRequest('', null, null), null));
 check('web login QR and deep link carry the same bot and request', () => {

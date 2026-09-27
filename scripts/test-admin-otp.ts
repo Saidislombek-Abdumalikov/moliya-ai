@@ -84,7 +84,7 @@ try{
  const wrongCode=telegramCode==='999999'?'000000':'999999'
  for(let i=0;i<5;i++)assert.equal((await request('verify-otp',{challengeId:attempts.body.challengeId,code:wrongCode})).statusCode,401)
  assert.equal((await request('verify-otp',{challengeId:attempts.body.challengeId,code:telegramCode})).statusCode,401)
- const adminClient=await import('../../admin Dashboard Moliya/src/services/userService.js')
+ const adminClient=await import('../../Admin-Dashboard/src/services/userService.js')
  const calls:any[]=[]
  globalThis.fetch=async (url:any,options:any)=>{
   calls.push({url,body:JSON.parse(options.body),credentials:options.credentials})

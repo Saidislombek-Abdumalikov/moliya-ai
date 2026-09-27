@@ -10,12 +10,13 @@ const app={platform:'android',ready:()=>calls.push('ready'),expand:()=>calls.pus
   enableClosingConfirmation:()=>calls.push('enableClosingConfirmation'),
   requestFullscreen:()=>calls.push('requestFullscreen')};
 assert.equal(configureTelegramViewport(app),true);
-assert.deepEqual(calls,['ready','expand','disableVerticalSwipes','enableClosingConfirmation','requestFullscreen']);
+assert.deepEqual(calls,['ready','expand','enableClosingConfirmation','disableVerticalSwipes','requestFullscreen']);
 assert.equal(configureTelegramViewport(undefined),false);
 assert.equal(configureTelegramViewport({platform:'unknown',ready:()=>{throw Error('older client')},expand:()=>calls.push('fallback expand')}),true);
 assert.equal(calls.at(-1),'fallback expand');
 const handlers=new Map<string,()=>void>();
 const remove=keepTelegramSwipesDisabled({
+  platform:'android',
   disableVerticalSwipes:()=>calls.push('swipe disabled again'),
   onEvent:(event,handler)=>handlers.set(event,handler),
   offEvent:(event)=>handlers.delete(event)

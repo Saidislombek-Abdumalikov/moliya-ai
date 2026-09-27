@@ -1,7 +1,7 @@
 import {existsSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
-const adminRoot=new URL(existsSync(new URL('../../Admin-Dashboard/',import.meta.url))?'../../Admin-Dashboard/':'../../admin Dashboard Moliya/',import.meta.url);
+const adminRoot=new URL(existsSync(new URL('../../Admin-Dashboard/',import.meta.url))?'../../Admin-Dashboard/':'../../Admin-Dashboard/',import.meta.url);
 const requireAdmin=createRequire(new URL('package.json',adminRoot));
 const React=requireAdmin('react');
 const {renderToStaticMarkup}=requireAdmin('react-dom/server');

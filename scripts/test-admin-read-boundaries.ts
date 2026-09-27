@@ -53,7 +53,7 @@ assert.equal((await api('login-records')).statusCode,503);
 assert.ok(!JSON.stringify((await api('login-records')).body).includes('PRIVATE_DB_ERROR'));
 failed=false;
 
-const root=new URL(existsSync(new URL('../../Admin-Dashboard/',import.meta.url))?'../../Admin-Dashboard/':'../../admin Dashboard Moliya/',import.meta.url);
+const root=new URL(existsSync(new URL('../../Admin-Dashboard/',import.meta.url))?'../../Admin-Dashboard/':'../../Admin-Dashboard/',import.meta.url);
 const client=await import(new URL('src/services/userService.js',root).href);
 const calls:any[]=[];
 globalThis.fetch=async(url:any,opts:any)=>{

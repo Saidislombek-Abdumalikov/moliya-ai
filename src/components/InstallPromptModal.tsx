@@ -1,3 +1,4 @@
+import {dismissInstall,installDismissed,pendingInstall,telegramInstallBlocked} from '../installPrompt'
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 import { isTelegramMiniApp } from '../FinanceContext'
@@ -6,98 +7,44 @@ export default function InstallPromptModal() {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null)
   const [showModal, setShowModal] = useState(false)
   const [isInstalled, setIsInstalled] = useState(false)
-  const [isIosDevice, setIsIosDevice] = useState(false)
+  const [installGuide, setInstallGuide] = useState<'ios' | 'mac' | null>(null)
 
   useEffect(() => {
-    // 1. Strictly never run inside Telegram Mini App
-    if (isTelegramMiniApp()) return
+    const blocked=()=>isTelegramMiniApp() || telegramInstallBlocked();
+    if(blocked() || installDismissed()) return;
+    const standalone=window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone===true || localStorage.getItem('pwa_installed')==='true';
+    if(standalone){setIsInstalled(true);return;}
+    const ios=/iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
+    const macSafari=/Macintosh/.test(navigator.userAgent) && /Safari/.test(navigator.userAgent) && !/Chrome|Chromium|Edg/.test(navigator.userAgent);
+    const guide=ios?'ios':macSafari?'mac':null;
+    setInstallGuide(guide);
+    const show=()=>{
+      if(blocked() || installDismissed()){setShowModal(false);return;}
+      const event=pendingInstall(); setDeferredPrompt(event);
+      if(guide || event) setShowModal(true);
+    };
+    const installed=()=>{localStorage.setItem('pwa_installed','true');dismissInstall();setIsInstalled(true);setShowModal(false);};
+    const timer=setTimeout(show,2000);
+    window.addEventListener('moliya_install_available',show);
+    window.addEventListener('open_install_prompt',show);
+    window.addEventListener('appinstalled',installed);
+    return ()=>{clearTimeout(timer);window.removeEventListener('moliya_install_available',show);window.removeEventListener('open_install_prompt',show);window.removeEventListener('appinstalled',installed);};
+  }, [])
 
-    // 2. Check if already running in standalone mode or previously installed
-    const standaloneMode =
-      window.matchMedia('(display-mode: standalone)').matches ||
-      (navigator as any).standalone === true ||
-      localStorage.getItem('pwa_installed') === 'true'
-
-    if (standaloneMode) {
-      setIsInstalled(true)
-      return
-    }
-
-    // Check if device is iOS (Safari)
-    const isIos = /iPhone|iPad|iPod/.test(navigator.userAgent) && !(window as any).MSStream
-    setIsIosDevice(isIos)
-
-    const dismissedAt = localStorage.getItem('pwa_prompt_dismissed_at')
-    const hasDismissedRecently = dismissedAt && (Date.now() - parseInt(dismissedAt, 10)) < 24 * 3600 * 1000
-
-    if (isIos && !hasDismissedRecently) {
-      // On iOS Safari, show the iOS Add to Home Screen prompt after 2 seconds
-      const timer = setTimeout(() => {
-        setShowModal(true)
-      }, 2000)
-      return () => clearTimeout(timer)
-    }
-
-    // 3. Listen for native browser PWA install event (Android / Chrome)
-    const handler = (e: Event) => {
-      e.preventDefault()
-      setDeferredPrompt(e)
-
-      if (!hasDismissedRecently) {
-        setShowModal(true)
-      }
-    }
-
-    window.addEventListener('beforeinstallprompt', handler)
-
-    // Window event for manual trigger if requested
-    const manualOpenHandler = () => {
-      setShowModal(true)
-    }
-    window.addEventListener('open_install_prompt', manualOpenHandler)
-
-    // Listen for successful install event
-    const appInstalledHandler = () => {
-      localStorage.setItem('pwa_installed', 'true')
-      setShowModal(false)
-      setDeferredPrompt(null)
-    }
-    window.addEventListener('appinstalled', appInstalledHandler)
-
-    return () => {
-      window.removeEventListener('beforeinstallprompt', handler)
-      window.removeEventListener('open_install_prompt', manualOpenHandler)
-      window.removeEventListener('appinstalled', appInstalledHandler)
-    }
-  }, [deferredPrompt])
-
-  // If inside Telegram Mini App or already installed, render nothing
-  if (isTelegramMiniApp() || isInstalled) return null
-
-  // 1-Tap native installation directly to screen (for Android / Chromium)
+  if (isTelegramMiniApp() || telegramInstallBlocked() || isInstalled) return null
   const handleInstallClick = async () => {
-    if (deferredPrompt) {
-      try {
-        deferredPrompt.prompt()
-        const { outcome } = await deferredPrompt.userChoice
-        if (outcome === 'accepted') {
-          localStorage.setItem('pwa_installed', 'true')
-        }
-      } catch (err) {
-        console.error('[PWA] Error launching install prompt:', err)
-      }
-      setShowModal(false)
-      setDeferredPrompt(null)
+    if(isTelegramMiniApp() || telegramInstallBlocked())return;
+    const event=deferredPrompt;
+    dismissInstall(); setShowModal(false); setDeferredPrompt(null);
+    if(event) {
+      try {await event.prompt();const {outcome}=await event.userChoice;if(outcome==='accepted')localStorage.setItem('pwa_installed','true');}
+      catch { /* Dismissal is permanent even if native install is cancelled. */ }
     }
   }
-
-  const handleDismiss = () => {
-    setShowModal(false)
-    localStorage.setItem('pwa_prompt_dismissed_at', String(Date.now()))
-  }
+  const handleDismiss = () => {dismissInstall();setShowModal(false);setDeferredPrompt(null);}
 
   if (!showModal) return null
-  if (!isIosDevice && !deferredPrompt) return null
+  if (!installGuide && !deferredPrompt) return null
 
   return (
     <AnimatePresence>
@@ -121,8 +68,8 @@ export default function InstallPromptModal() {
           boxShadow: '0 16px 36px rgba(49, 46, 129, 0.45), 0 4px 12px rgba(0, 0, 0, 0.2)',
           border: '1.5px solid rgba(199, 210, 254, 0.25)',
           display: 'flex',
-          flexDirection: isIosDevice ? 'column' : 'row',
-          alignItems: isIosDevice ? 'stretch' : 'center',
+          flexDirection: installGuide ? 'column' : 'row',
+          alignItems: installGuide ? 'stretch' : 'center',
           justifyContent: 'space-between',
           gap: 10,
           backdropFilter: 'blur(16px)',
@@ -150,10 +97,10 @@ export default function InstallPromptModal() {
             </div>
             <div style={{ minWidth: 0 }}>
               <h4 style={{ margin: '0 0 2px', fontSize: 13, fontWeight: 800, color: '#FFFFFF' }}>
-                {isIosDevice ? "iPhone ekranga qo'shish" : "Ekranga yuklab olish"}
+                {installGuide==='mac' ? "Dock'ka qo'shish" : "Asosiy ekranga o'rnatib oling"}
               </h4>
               <p style={{ margin: 0, fontSize: 11, color: '#C7D2FE', lineHeight: 1.3 }}>
-                {isIosDevice
+                {installGuide
                   ? "Safari orqali qulay va tezkor kirish"
                   : "Tezkor kirish uchun ilovani o'rnating"}
               </p>
@@ -183,7 +130,7 @@ export default function InstallPromptModal() {
           </button>
         </div>
 
-        {isIosDevice ? (
+        {installGuide ? (
           <div style={{
             background: 'rgba(255, 255, 255, 0.08)',
             borderRadius: 12,
@@ -197,7 +144,9 @@ export default function InstallPromptModal() {
           }}>
             <span style={{ fontSize: 16 }}>⎋</span>
             <span>
-              Safari'da pastdagi <b>Ulashish (Share)</b> tugmasini bosing va <b>"Asosiy ekranga qo'shish" (+)</b> ni tanlang.
+              {installGuide==='mac'
+                ? <>Safari menyusida <b>File → Add to Dock</b> ni tanlang (qo‘llab-quvvatlanadigan macOS/Safari versiyalarida).</>
+                : <>Safari’da <b>Ulashish (Share)</b> tugmasini bosing va <b>“Asosiy ekranga qo‘shish” (+)</b> ni tanlang.</>}
             </span>
           </div>
         ) : (

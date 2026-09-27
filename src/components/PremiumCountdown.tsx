@@ -201,7 +201,7 @@ export const PremiumCountdownBadge: React.FC<{
         fontFamily: 'inherit',
         boxShadow: '0 2px 8px rgba(245, 158, 11, 0.15)',
         transition: 'all 0.2s ease',
-        userSelect: 'none',
+        userSelect: 'text',
       }}
     >
       <span style={{ fontSize: 13 }}>⭐</span>

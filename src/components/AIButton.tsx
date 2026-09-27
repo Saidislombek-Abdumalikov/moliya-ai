@@ -1,7 +1,7 @@
 import {transactionParts,TRANSACTION_CLARIFICATION} from '../../shared/amountEvidence';
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
-import { useFinance } from '../FinanceContext'
+import { useFinance, getClientAuthHeaders } from '../FinanceContext'
 import { aiButtonCopy, aiCategoryLabel } from './aiButtonCopy'
 
 type EntryType = 'expense' | 'income' | 'debt' | 'lending'
@@ -40,12 +40,14 @@ export async function parseAIText(text: string, cardsList: any[] = [], userId?: 
   try {
     res = await fetch('/api/parse-expense', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getClientAuthHeaders(),
       body: JSON.stringify({ text, cards: cardsList, userId }),
       signal: controller.signal
     })
   } finally { clearTimeout(timeoutId) }
 
+  if (res.status === 401) throw new Error('SESSION_REQUIRED');
+  if (res.status === 403) throw new Error('ACCOUNT_RESTRICTED');
   if (res.status === 422) throw new Error(TRANSACTION_CLARIFICATION)
   if (res.status === 429) {
     const error = await res.json().catch(() => ({}))
@@ -71,6 +73,8 @@ export async function parseAIText(text: string, cardsList: any[] = [], userId?: 
 
 export default function AIButton({ visible = true, language = 'uz' }: { visible?: boolean; language?: 'uz' | 'uz_cyrl' | 'ru' | 'en' }) {
   const copy = aiButtonCopy(language)
+  const sessionMessage = ({uz:'Sessiya tugagan. Bot orqali qayta kiring.',uz_cyrl:'Сессия тугаган. Бот орқали қайта киринг.',ru:'Сессия истекла. Войдите через бота снова.',en:'Session expired. Sign in through the bot again.'})[language];
+  const restrictedMessage = ({uz:'Hisobga kirish cheklangan. Botdagi tasdiqlarni tekshiring.',uz_cyrl:'Ҳисобга кириш чекланган. Ботдаги тасдиқларни текширинг.',ru:'Доступ ограничен. Проверьте подтверждения в боте.',en:'Access restricted. Check your verification in the bot.'})[language];
   const typeIndex = (type: EntryType) => (Object.keys(typeConfig) as EntryType[]).indexOf(type)
   const { addTransaction, hasSampleData, setHasSampleData, cards, userId } = useFinance()
   const [open, setOpen] = useState(false)
@@ -110,10 +114,14 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
         try {
           const res = await fetch('/api/parse-receipt', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: getClientAuthHeaders(),
             body: JSON.stringify({ base64Image: base64Data, mimeType: file.type, userId })
           })
 
+          if (res.status === 401 || res.status === 403) {
+            setAiError(res.status === 401 ? sessionMessage : restrictedMessage);
+            setStep('form'); return;
+          }
           if (res.status === 429) {
             setAiError(copy.receiptLimit);
             setStep('form');
@@ -209,7 +217,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
       console.error(e)
       setEntry(prev=>({...prev,amount:''}));
       const errTxt = e?.message || '';
-      setAiError(errTxt === TRANSACTION_CLARIFICATION ? copy.clarify : /limit|quota|429/i.test(errTxt) ? copy.quota : copy.parseFailed);
+      setAiError(errTxt === 'SESSION_REQUIRED' ? sessionMessage : errTxt === 'ACCOUNT_RESTRICTED' ? restrictedMessage : errTxt === TRANSACTION_CLARIFICATION ? copy.clarify : /limit|quota|429/i.test(errTxt) ? copy.quota : copy.parseFailed);
       setStep('form');
     } finally {
       setIsProcessing(false)
@@ -363,7 +371,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
             note: resultText,
             amount: ''
           }))
-          setAiError(e?.message === TRANSACTION_CLARIFICATION ? copy.clarify : copy.parseFailed)
+          setAiError(e?.message === 'SESSION_REQUIRED' ? sessionMessage : e?.message === 'ACCOUNT_RESTRICTED' ? restrictedMessage : e?.message === TRANSACTION_CLARIFICATION ? copy.clarify : copy.parseFailed)
           setStep('form')
         } finally {
           setIsProcessing(false)

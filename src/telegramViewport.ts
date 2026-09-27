@@ -1,6 +1,8 @@
 type TelegramViewport = {
   initData?: string;
   platform?: string;
+  isVersionAtLeast?: (version: string) => boolean;
+  enableVerticalSwipes?: () => void;
   ready?: () => void;
   expand?: () => void;
   disableVerticalSwipes?: () => void;
@@ -31,17 +33,17 @@ export function configureTelegramViewport(tg: TelegramViewport | undefined) {
   if (!tg) return false;
   // An older Telegram client may lack individual methods. One failure must not
   // prevent the remaining viewport controls from being requested.
-  for (const action of ['ready', 'expand', 'disableVerticalSwipes', 'enableClosingConfirmation'] as const) {
+  for (const action of ['ready', 'expand', 'enableClosingConfirmation'] as const) {
     try { tg[action]?.(); } catch {}
   }
-  if (tg.platform === 'ios' || tg.platform === 'android') {
-    try { tg.requestFullscreen?.(); } catch {}
-  }
+  const mobile = tg.platform === 'ios' || tg.platform === 'android';
+  try { if (mobile) tg.disableVerticalSwipes?.(); else tg.enableVerticalSwipes?.(); } catch {}
+  try { if (!tg.isVersionAtLeast || tg.isVersionAtLeast('8.0')) tg.requestFullscreen?.(); } catch {}
   return true;
 }
 
 export function keepTelegramSwipesDisabled(tg: TelegramViewport | undefined): () => void {
-  if (!tg) return () => {};
+  if (!tg || (tg.platform !== 'ios' && tg.platform !== 'android')) return () => {};
   const disable = () => { try { tg.disableVerticalSwipes?.(); } catch {} };
   // Fullscreen changes and restoration may reconfigure the native viewport.
   for (const event of ['fullscreenChanged', 'activated']) {

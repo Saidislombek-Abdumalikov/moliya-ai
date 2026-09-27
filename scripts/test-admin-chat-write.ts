@@ -32,7 +32,7 @@ async function api(route:string,body:any,key='offline-chat-write-key'){
   const res:any={statusCode:200,setHeader(){},status(n:number){this.statusCode=n;return this},json(body:any){this.body=body;return this}};
   await handler(req,res);return res;
 }
-const root=new URL(existsSync(new URL('../../Admin-Dashboard/',import.meta.url))?'../../Admin-Dashboard/':'../../admin Dashboard Moliya/',import.meta.url);
+const root=new URL(existsSync(new URL('../../Admin-Dashboard/',import.meta.url))?'../../Admin-Dashboard/':'../../Admin-Dashboard/',import.meta.url);
 const client=await import(new URL('src/services/userService.js',root).href);
 let apiCalls=0;
 globalThis.fetch=async (url:any,opts:any)=>{
@@ -68,11 +68,11 @@ assert.equal(row.onboarding.last_link_message_id,null);
 row.onboarding.last_link_message_id=8;
 const replacement=await client.sendAdminDirectMessage(id,'123','new link',{linkButtonText:'New',linkButtonUrl:'https://example.invalid'});
 assert.equal(replacement.messageId,78);
-assert.equal(removedMarkup,1);
+assert.equal(removedMarkup,0); // Earlier admin buttons must stay usable.
 assert.equal(row.onboarding.last_link_message_id,78);
 await assert.rejects(client.sendAdminDirectMessage(id,'456','wrong'),/RECIPIENT_MISMATCH/);
 failHistory=true;
 const partial=await client.sendAdminDirectMessage(id,'123','only Telegram');
 assert.equal(partial.historySaved,false);assert.equal(partial.adminEntry,null);
-assert.equal(telegramCalls,7); // One old-button removal; no retry or browser DB fallback.
+assert.equal(telegramCalls,6); // No old-button removal, retry, or browser DB fallback.
 console.log('Admin chat writes: one history entry, edit/delete/purge, auth, and partial delivery passed.');

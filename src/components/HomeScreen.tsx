@@ -1379,7 +1379,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                           border: isExpanded ? '1.5px solid #7C3AED' : not.isRead ? '1px solid #ECE7F6' : '1.5px solid #DDD6FE',
                           boxShadow: isExpanded ? '0 6px 20px rgba(124, 58, 237, 0.12)' : 'none',
                           cursor: 'pointer',
-                          userSelect: 'none',
+                          userSelect: 'text',
                           transition: 'all 0.2s ease',
                         }}
                       >

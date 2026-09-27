@@ -1,3 +1,22 @@
+export const SESSION_KEY = 'moliya_session_token';
+const LEGACY_SESSION_KEY = 'user_session_token_v1';
+export function readSessionToken(storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> = localStorage) {
+  const current = storage.getItem(SESSION_KEY);
+  const legacy = storage.getItem(LEGACY_SESSION_KEY);
+  const token = current || legacy;
+  if (!current && legacy) storage.setItem(SESSION_KEY, legacy);
+  if (legacy) storage.removeItem(LEGACY_SESSION_KEY);
+  return token;
+}
+export function saveSessionToken(token: string) {
+  localStorage.setItem(SESSION_KEY, token);
+  localStorage.removeItem(LEGACY_SESSION_KEY);
+}
+export function clearSessionToken() {
+  localStorage.removeItem(SESSION_KEY);
+  localStorage.removeItem(LEGACY_SESSION_KEY);
+}
+
 // Tour dismissal is a presentation preference, never an authorization signal.
 export function tourKey(userId: string) { return `user_tour_completed_v3_${userId}`; }
 export function tourDone(storage: Pick<Storage, 'getItem'>, userId: string, serverDone: boolean) {
@@ -13,8 +32,8 @@ export function registrationReady(userId: string | null, onboarding: {
 export function authRequest(initData: string | undefined, code: string | null, token: string | null) {
   // A reusable Mini App button must not depend on an old single-use web code.
   if (initData) return { action: 'telegram', body: { initData } };
-  if (code) return { action: 'exchange-code', body: { code } };
   if (token) return { action: 'validate-session', body: { sessionToken: token } };
+  if (code) return { action: 'exchange-code', body: { code } };
   return null;
 }
 

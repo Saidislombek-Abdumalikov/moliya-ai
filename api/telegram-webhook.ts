@@ -10,6 +10,7 @@ import { transactionDay } from '../shared/reminderPolicy.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI, Type } from "@google/genai";
 import crypto from "crypto";
+import { sendLegalFile } from './_legalFile.js';
 import { loadLegalDocuments } from './_legalDocuments.js';
 import { supabase } from './_supabaseClient.js';
 import { applySecurityHeaders } from './_securityHeaders.js';
@@ -44,59 +45,18 @@ function escapeTelegramHtml(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-// Each Telegram message is below 4096 characters, even after HTML escaping.
-function legalChunks(value: string): string[] {
-  const chunks: string[] = [];
-  let part = '';
-  for (const char of value) {
-    const encoded = escapeTelegramHtml(char);
-    if (part.length + encoded.length > 3500) {
-      chunks.push(part);
-      part = '';
-    }
-    part += encoded;
-  }
-  if (part) chunks.push(part);
-  return chunks;
-}
-
 async function sendLegalConsentRequest(chatId: string | number): Promise<boolean> {
   const docs = await loadLegalDocuments();
-  const buttonData = `accept_oferta:${docs.version.slice(7, 31)}`;
-  const parts = [
-    ...legalChunks(docs.oferta).map(text => `📄 Oferta\n\n${text}`),
-    ...legalChunks(docs.privacy).map(text => `🔒 Maxfiylik siyosati\n\n${text}`)
-  ];
-  for (let i = 0; i < parts.length; i++) {
-    const keyboard = i === parts.length - 1
-      ? { inline_keyboard: [[{ text: '✅ Roziman va qabul qilaman', callback_data: buttonData }]] }
-      : undefined;
-    const response = await sendTelegramMessage(chatId, parts[i], keyboard);
-    if (!response?.ok) return false;
-  }
-  return true;
+  return sendLegalFile(BOT_TOKEN, chatId, docs);
 }
 
 // ── Telegram API Helpers ─────────────────────────────────────
-function hasLinkButton(replyMarkup: any): boolean {
-  if (!replyMarkup || !Array.isArray(replyMarkup.inline_keyboard)) return false;
-  for (const row of replyMarkup.inline_keyboard) {
-    if (Array.isArray(row)) {
-      for (const btn of row) {
-        if (btn && (btn.web_app || btn.url)) {
-          return true;
-        }
-      }
-    }
-  }
-  return false;
-}
-
 async function editTelegramMessageReplyMarkup(chatId: number | string, messageId: number | string, replyMarkup: any) {
   if (!BOT_TOKEN || !messageId) return null;
   try {
     const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageReplyMarkup`, {
       method: 'POST',
+      signal: AbortSignal.timeout(10000),
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chat_id: String(chatId),
@@ -111,171 +71,36 @@ async function editTelegramMessageReplyMarkup(chatId: number | string, messageId
   }
 }
 
-// In-memory cache for single active link button per chat
-const lastLinkMessageByUser = new Map<string, number>();
-
-async function cleanPreviousLinkButton(chatId: number | string, userId?: string, newMsgIdWithLink?: number) {
-  const chatKey = String(chatId);
-  const idsToClean = new Set<number>();
-
-  // 1. In-memory cache
-  const cachedId = lastLinkMessageByUser.get(chatKey);
-  if (cachedId && cachedId > 0 && cachedId !== newMsgIdWithLink) {
-    idsToClean.add(cachedId);
-  }
-
-  // 2. Database records from users.onboarding
-  if (userId) {
-    try {
-      const { data: u } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
-      const dbLinkId = Number(u?.onboarding?.last_link_message_id);
-
-      if (Number.isInteger(dbLinkId) && dbLinkId > 0 && dbLinkId !== newMsgIdWithLink) idsToClean.add(dbLinkId);
-
-      const bMsgs: any[] = Array.isArray(u?.onboarding?.bot_messages) ? u.onboarding.bot_messages : [];
-      for (const bm of bMsgs.slice(-35)) {
-        const mId = Number(bm.message_id);
-        if (
-          Number.isInteger(mId) &&
-          mId > 0 &&
-          mId !== newMsgIdWithLink &&
-          bm.hasLinkButton
-        ) {
-          idsToClean.add(mId);
-        }
-      }
-    } catch (err) {
-      safeWarn('[BOT] Error querying onboarding for link cleanup:', err);
-    }
-  }
-
-  // Never strip unrelated keyboards: pending confirmations must remain usable.
-  // 4. Concurrently remove inline keyboards/link buttons from all identified messages
-  if (idsToClean.size > 0) {
-    await Promise.allSettled(
-      Array.from(idsToClean).map(mId =>
-        editTelegramMessageReplyMarkup(chatId, mId, { inline_keyboard: [] }).catch(() => {})
-      )
-    );
-  }
-
-  // 5. Update state with new active link message
-  if (newMsgIdWithLink && newMsgIdWithLink > 0) {
-    lastLinkMessageByUser.set(chatKey, newMsgIdWithLink);
-    if (userId) {
-      try {
-        const { data: curr } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
-        const ob = curr?.onboarding || {};
-        const bMsgs: any[] = Array.isArray(ob.bot_messages) ? ob.bot_messages : [];
-        const updatedMsgs = bMsgs.map((m: any) => {
-          if (m.message_id !== newMsgIdWithLink && m.hasLinkButton) {
-            return { ...m, hasLinkButton: false };
-          }
-          return m;
-        });
-        const updatedOb = {
-          ...ob,
-          last_link_message_id: newMsgIdWithLink,
-          bot_messages: updatedMsgs
-        };
-        await updateProfileSnapshot(userId, curr, { onboarding: updatedOb });
-      } catch (err) {
-        safeWarn('[BOT] Error updating last_link_message_id in DB:', err);
-      }
-    }
-  }
-}
-
-/**
- * Authoritative System Message Manager
- * Automatically replaces previous welcome / status / guide cards
- * so that at most ONE system card with link button stays in the chat.
- * Never affects user messages or transaction responses.
- */
-async function sendOrReplaceSystemMessage(
-  chatId: number | string,
-  text: string,
-  replyMarkup?: any,
-  userId?: string,
-  customType: string = 'bot_response'
-) {
+// Only a previous bot system card may be replaced. Admin announcements and
+// transaction keyboards remain interactive even when a user starts the bot.
+async function sendOrReplaceSystemMessage(chatId: number | string, text: string,
+  replyMarkup?: any, userId?: string, customType = 'bot_response') {
   if (!BOT_TOKEN) return null;
-
-  const isLink = hasLinkButton(replyMarkup);
-
-  // 1. Delete previous system message(s) from Telegram if known
-  if (userId) {
-    try {
-      const { data: u } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
-      const prevSysId = Number(u?.onboarding?.last_system_message_id);
-      const prevLinkId = Number(u?.onboarding?.last_link_message_id);
-
-      const idsToPurge = new Set<number>();
-      if (Number.isInteger(prevSysId) && prevSysId > 0) idsToPurge.add(prevSysId);
-      if (Number.isInteger(prevLinkId) && prevLinkId > 0) idsToPurge.add(prevLinkId);
-
-      for (const mId of idsToPurge) {
-        const delRes = await deleteTelegramMessage(chatId, mId);
-        if (!delRes || !delRes.ok) {
-          // If message is > 48h old and cannot be deleted, strip the inline keyboard
-          await editTelegramMessageReplyMarkup(chatId, mId, { inline_keyboard: [] });
-        }
-      }
-    } catch (err) {
-      safeWarn('[BOT] Error cleaning previous system message:', err);
-    }
-  }
-
-  // 2. Send the new system card
-  const payload: any = {
-    chat_id: String(chatId),
-    text,
-    parse_mode: 'HTML',
-  };
-  if (replyMarkup) {
-    payload.reply_markup = replyMarkup;
-  }
-
   try {
-    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+    const response=await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,{
+      method:'POST',headers:{'Content-Type':'application/json'},signal:AbortSignal.timeout(10000),
+      body:JSON.stringify({chat_id:String(chatId),text,parse_mode:'HTML',...(replyMarkup?{reply_markup:replyMarkup}:{})})
     });
-    const data = await res.json();
-    if (data?.ok && data?.result?.message_id) {
-      const newMsgId = data.result.message_id;
-      if (isLink) {
-        await cleanPreviousLinkButton(chatId, userId, newMsgId);
+    const result=await response.json();
+    if (!result?.ok || !result.result?.message_id || !userId) return result;
+    // Show the next onboarding step first; bookkeeping is still awaited before
+    // the webhook is acknowledged so Vercel cannot discard it.
+    const messageId=result.result.message_id;
+    try {
+      const {data:current,error}=await supabase.from('users').select('onboarding').eq('id',userId).maybeSingle();
+      if(error || !current) return result;
+      const ob=current.onboarding || {};
+      const messages=Array.isArray(ob.bot_messages)?ob.bot_messages:[];
+      const previous=messages.find((m:any)=>Number(m.message_id)===Number(ob.last_system_message_id));
+      await updateProfileSnapshot(userId,current,{onboarding:{...ob,last_system_message_id:messageId,last_message_id:Math.max(Number(ob.last_message_id)||0,messageId),
+        bot_messages:[...messages,{id:`bot_${chatId}_${messageId}`,chat_id:chatId,message_id:messageId,
+          direction:'bot_to_user',sender:'bot',type:customType,text,timestamp:new Date().toISOString()}].slice(-500)}});
+      if(previous?.sender==='bot' && ['welcome_card','phone_request','lang_request','bot_response'].includes(previous.type)) {
+        await deleteTelegramMessage(chatId,previous.message_id);
       }
-      if (userId) {
-        try {
-          const { data: curr } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
-          const updatedOb = {
-            ...(curr?.onboarding || {}),
-            last_system_message_id: newMsgId,
-            last_link_message_id: isLink ? newMsgId : (curr?.onboarding?.last_link_message_id || null)
-          };
-          await updateProfileSnapshot(userId, curr, { onboarding: updatedOb });
-        } catch {}
-
-        await logBotMessage(userId, {
-          id: `bot_${chatId}_${newMsgId}`,
-          chat_id: chatId,
-          message_id: newMsgId,
-          direction: 'bot_to_user',
-          sender: 'bot',
-          type: customType,
-          text,
-          timestamp: new Date().toISOString()
-        });
-      }
-    }
-    return data;
-  } catch (err) {
-    safeError('[BOT] Error sending system message:', err);
-    return null;
-  }
+    } catch(error) { safeWarn('[BOT] System message history unavailable:',error); }
+    return result;
+  } catch(error) { safeError('[BOT] System message delivery failed:',error); return null; }
 }
 
 async function sendTelegramMessage(
@@ -290,10 +115,6 @@ async function sendTelegramMessage(
     return null;
   }
   try {
-    const isLinkMsg = hasLinkButton(replyMarkup);
-    if (isLinkMsg) {
-      await cleanPreviousLinkButton(chatId, userId);
-    }
 
     const payload: any = {
       chat_id: String(chatId),
@@ -305,15 +126,13 @@ async function sendTelegramMessage(
     }
     const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
       method: 'POST',
+      signal: AbortSignal.timeout(10000),
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
     const data = await res.json();
     if (data?.ok && data?.result?.message_id) {
       const msgId = data.result.message_id;
-      if (isLinkMsg) {
-        await cleanPreviousLinkButton(chatId, userId, msgId);
-      }
       if (userId) {
         await logBotMessage(userId, {
           id: `bot_${chatId}_${msgId}`,
@@ -344,10 +163,6 @@ async function editTelegramMessage(
 ) {
   if (!BOT_TOKEN) return null;
   try {
-    const isLinkMsg = hasLinkButton(replyMarkup);
-    if (isLinkMsg) {
-      await cleanPreviousLinkButton(chatId, userId, messageId);
-    }
 
     const payload: any = {
       chat_id: String(chatId),
@@ -360,14 +175,12 @@ async function editTelegramMessage(
     }
     const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
       method: 'POST',
+      signal: AbortSignal.timeout(10000),
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
     const data = await res.json();
     if (data?.ok) {
-      if (isLinkMsg) {
-        await cleanPreviousLinkButton(chatId, userId, messageId);
-      }
       if (userId) {
         await logBotMessage(userId, {
           id: `bot_${chatId}_${messageId}`,
@@ -393,6 +206,7 @@ async function deleteTelegramMessage(chatId: number | string, messageId: number 
   try {
     const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/deleteMessage`, {
       method: 'POST',
+      signal: AbortSignal.timeout(10000),
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chat_id: String(chatId),
@@ -436,6 +250,7 @@ async function sendChatAction(chatId: number | string, action: 'typing' | 'recor
   try {
     await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendChatAction`, {
       method: 'POST',
+      signal: AbortSignal.timeout(10000),
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: String(chatId), action })
     });
@@ -508,6 +323,7 @@ async function answerCallbackQuery(callbackQueryId: string, text?: string) {
   try {
     await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
       method: 'POST',
+      signal: AbortSignal.timeout(10000),
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         callback_query_id: callbackQueryId,
@@ -540,6 +356,7 @@ async function registerBotCommandsOnce() {
   try {
     await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setMyCommands`, {
       method: 'POST',
+      signal: AbortSignal.timeout(10000),
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         commands: [
@@ -638,7 +455,8 @@ async function resolveCanonicalUser(fromUser: any) {
     }
   }
 
-  return { user: created || newPayload, userId, isBlocked: false, isRegistered: false, isNew: true, hasPhone: false, hasAcceptedOferta: false };
+  if (!created) throw new Error('USER_CREATE_FAILED');
+  return { user: created, userId, isBlocked: false, isRegistered: false, isNew: true, hasPhone: false, hasAcceptedOferta: false };
 }
 
 // ── Complete Phone Registration & Grant 1-Day Trial ─────────
@@ -1410,6 +1228,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: 'Server configuration error: TELEGRAM_BOT_TOKEN is not configured' });
   }
 
+  const incomingHistory: Array<{userId:string;entry:BotMessageEntry}> = [];
   async function processUpdate(res: VercelResponse) {
   try {
     // Register bot menu commands asynchronously on first traffic
@@ -1461,7 +1280,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (chatId && cb.message?.message_id && data) {
         // Log user callback interaction
-        await logBotMessage(userId, {
+        incomingHistory.push({userId,entry:{
           id: `cb_${chatId}_${cb.message.message_id}_${data}`,
           update_id: update.update_id,
           chat_id: chatId,
@@ -1472,7 +1291,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           text: `🔘 Tugma bosildi: ${data}`,
           metadata: { callback_data: data },
           timestamp: new Date().toISOString()
-        });
+        }});
 
         // 0. Handle Language Selection (Til tanlash)
         if (data.startsWith('set_lang_')) {
@@ -1844,7 +1663,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const fromUser = message.from;
     const text = (message.text || '').trim();
 
-    if (!fromUser || !chatId) return res.status(200).json({ status: 'invalid_chat' });
+    if (!fromUser || !chatId || (message.chat?.type && message.chat.type !== 'private') || String(chatId) !== String(fromUser.id)) return res.status(200).json({ status: 'invalid_chat' });
 
     // Canonical Identity Resolution & Restriction Check
     const { user, userId, isBlocked, isRegistered } = await resolveCanonicalUser(fromUser);
@@ -1891,7 +1710,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Persist incoming user message to onboarding.bot_messages (Awaited for serverless guarantee)
-    await logBotMessage(userId, {
+    incomingHistory.push({userId,entry:{
       id: `msg_${chatId}_${message.message_id}`,
       update_id: update.update_id,
       chat_id: chatId,
@@ -1903,7 +1722,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       caption: message.caption,
       metadata: userMsgMeta,
       timestamp: new Date(message.date ? message.date * 1000 : Date.now()).toISOString()
-    });
+    }});
 
     if (isBlocked) {
       await sendTelegramMessage(
@@ -3013,7 +2832,13 @@ Today: ${srvCtx.currentDate}. Output valid JSON only.`;
   }
 
   const messageKey = messageDeliveryKey(req.body);
-  if (!messageKey) return processUpdate(res);
+  if (!messageKey) {
+    // Callback profile changes finish before history changes the same JSON.
+    let status=200; let body:any={status:'ok'};
+    await processUpdate({status(code:number){status=code;return this;},json(value:any){body=value;return this;}} as unknown as VercelResponse);
+    for (const item of incomingHistory) await logBotMessage(item.userId,item.entry);
+    return res.status(status).json(body);
+  }
   let claim: Awaited<ReturnType<typeof claimBotMessage>>;
   try { claim = await claimBotMessage(messageKey); }
   catch { return res.status(503).json({error:'BOT_DELIVERY_UNAVAILABLE'}); }
@@ -3028,6 +2853,7 @@ Today: ${srvCtx.currentDate}. Output valid JSON only.`;
     json(body: any) {resultBody=body;return this;}
   } as unknown as VercelResponse;
   await processUpdate(bufferedRes);
+  for (const item of incomingHistory) await logBotMessage(item.userId,item.entry);
   if (resultStatus < 500) {
     try { await completeBotMessage(messageKey, claim.owner); }
     catch { return res.status(503).json({error:'BOT_DELIVERY_UNAVAILABLE'}); }

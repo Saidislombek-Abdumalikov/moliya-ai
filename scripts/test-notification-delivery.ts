@@ -51,12 +51,12 @@ await test('unverified users cannot read',async()=>{const proof=user.bot_verific
 await test('audience filtering precedes the page limit',async()=>{for(let i=0;i<40;i++)await db.query("INSERT INTO app_notifications(title,message,target) VALUES ('other','other','moliya_user_tg_456')");assert.ok((await userNotifications(user,'telegram')).some(x=>x.target===user.id))});
 await test('inactive records and unsafe legacy URLs are not exposed as links',async()=>{await db.query("INSERT INTO app_notifications(title,message,target,is_active,action_url) VALUES ('hidden','x','all',false,NULL),('unsafe','x','all',true,'javascript:alert(1)')");const rows=await userNotifications(user,'telegram');assert.ok(!rows.some(x=>x.title==='hidden'));assert.equal(rows.find(x=>x.title==='unsafe')?.action_url,null)});
 await test('database errors cannot become fake admin success or leak details',async()=>{failure=true;try{const res=await api(admin,'notifications','POST',{action:'create',title:'x',message:'y'});assert.equal(res.statusCode,503);assert.ok(!JSON.stringify(res.body).includes('private SQL'))}finally{failure=false}});
-const adminRoot=new URL(existsSync(new URL('../../Admin-Dashboard/',import.meta.url))?'../../Admin-Dashboard/':'../../admin Dashboard Moliya/',import.meta.url);
+const adminRoot=new URL(existsSync(new URL('../../Admin-Dashboard/',import.meta.url))?'../../Admin-Dashboard/':'../../Admin-Dashboard/',import.meta.url);
 const {sendAppNotification,deleteAppNotification}=await import(new URL('src/services/notificationService.js',adminRoot).href);
 await test('admin browser failures do not fall back to database or another host',async()=>{let calls=0;globalThis.fetch=async()=>{calls++;return {ok:false,status:503,json:async()=>({error:'NOTIFICATIONS_UNAVAILABLE'})} as any};await assert.rejects(sendAppNotification({title:'test',message:'body',imageUrl:null,actionUrl:null}));assert.equal(calls,1);await assert.rejects(deleteAppNotification('id'));assert.equal(calls,2)});
 
 const {fetchUserNotifications}=await import('../src/services/appNotificationService.js');
-let storedToken=token;(globalThis as any).localStorage={getItem:()=>storedToken};
+let storedToken=token;(globalThis as any).localStorage={getItem:(key:string)=>key==='moliya_session_token'?storedToken:null,setItem:(key:string,value:string)=>{if(key==='moliya_session_token')storedToken=value},removeItem:(key:string)=>{if(key==='moliya_session_token')storedToken=''}};
 await test('app uses authenticated notification API only',async()=>{
  globalThis.fetch=async(url:any,options:any)=>{assert.equal(url,'/api/auth?action=notifications&platform=telegram');assert.equal(options.headers.Authorization,'Bearer '+token);assert.equal(options.cache,'no-store');return {ok:true,json:async()=>[{id:'n',title:'x',message:'y',target:user.id}]} as any};
  assert.equal((await fetchUserNotifications({userId:user.id,isTelegram:true}))[0].id,'n');

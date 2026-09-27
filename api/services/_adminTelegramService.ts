@@ -1,3 +1,4 @@
+import {normalizeTelegramKeyboard} from '../_telegramKeyboard.js';
 import {supabase} from '../_supabaseClient.js';
 import {accountDenied} from '../_userPolicy.js';
 import {updateProfileSnapshot} from './_profileWriteService.js';
@@ -38,20 +39,10 @@ export async function adminTelegram(input:any) {
    payload[method==='sendPhoto'?'photo':'video']=input.mediaUrl;
   }
   if(input.replyMarkup!==undefined&&input.replyMarkup!==null){
-   if(typeof input.replyMarkup!=='object'||JSON.stringify(input.replyMarkup).length>10000)return {status:400,body:{error:'INVALID_KEYBOARD'}};
-   payload.reply_markup=input.replyMarkup;
+   try { payload.reply_markup=normalizeTelegramKeyboard(input.replyMarkup); }
+   catch { return {status:400,body:{error:'INVALID_KEYBOARD_OR_BUTTON_URL'}}; }
   }
-  if(method==='sendMessage' && input.adminDirect===true && payload.reply_markup?.inline_keyboard){
-   const previous=Number(user.onboarding?.last_link_message_id);
-   if(Number.isSafeInteger(previous)&&previous>0){
-    // A new link replaces the old button. Failure here must not replay or
-    // suppress the actual message delivery.
-    try{await fetch(`https://api.telegram.org/bot${token}/editMessageReplyMarkup`,{
-     method:'POST',headers:{'Content-Type':'application/json'},signal:AbortSignal.timeout(4000),body:JSON.stringify({
-      chat_id:payload.chat_id,message_id:previous,reply_markup:{inline_keyboard:[]}
-     })});}catch{}
-   }
-  }
+
  }
  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),10000);
  try{
@@ -73,7 +64,7 @@ export async function adminTelegram(input:any) {
     if(input.adminDirect===true && payload.reply_markup?.inline_keyboard){
      adminEntry.hasLinkButton=true;
      adminEntry.linkButtonText=String(input.linkButtonText||'').slice(0,100);
-     adminEntry.linkButtonUrl=String(input.linkButtonUrl||'').slice(0,2048);
+     adminEntry.linkButtonUrl=payload.reply_markup.inline_keyboard[0]?.[0]?.url || payload.reply_markup.inline_keyboard[0]?.[0]?.web_app?.url || null;
     }
     messages=[...messages,adminEntry].slice(-500);
    }

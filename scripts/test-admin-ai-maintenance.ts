@@ -61,7 +61,7 @@ failWrite=false;
 assert.equal((await api('analytics','POST',{action:'reset'})).statusCode,200);
 assert.deepEqual(logs,[]);
 
-const root=new URL(existsSync(new URL('../../Admin-Dashboard/',import.meta.url))?'../../Admin-Dashboard/':'../../admin Dashboard Moliya/',import.meta.url);
+const root=new URL(existsSync(new URL('../../Admin-Dashboard/',import.meta.url))?'../../Admin-Dashboard/':'../../Admin-Dashboard/',import.meta.url);
 const client=await import(new URL('src/services/userService.js',root).href);
 const calls: string[]=[];
 globalThis.fetch=async (url:any,opts:any)=>{calls.push(url); assert.equal(opts.credentials,'include');return {ok:true,json:async()=>({success:true})} as any};
