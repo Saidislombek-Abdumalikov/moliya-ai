@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import {existsSync} from 'node:fs';
+process.env.SUPABASE_URL='http://127.0.0.1:54321';process.env.SUPABASE_SERVICE_ROLE_KEY='offline';process.env.ADMIN_SECRET_KEY='offline-chat-admin-key';
+const {supabase}=await import('../api/_supabaseClient.js');const {default:handler}=await import('../api/admin.js');
+let failure=false;const uid='moliya_user_tg_123';
+(supabase as any).from=()=>{let id='';const q:any={select(){return q},eq(_k:string,v:string){id=v;return q},async maybeSingle(){return {data:id===uid?{id,telegram_id:'123',onboarding:{session_token:'never-expose',bot_messages:[{message_id:7,type:'voice',direction:'user_to_bot',metadata:{file_id:'file'},timestamp:'2026-09-25'}]}}:null,error:failure?{message:'private SQL'}:null}}};return q};
+async function api(id:string,key='offline-chat-admin-key'){const req:any={method:'POST',query:{route:'bot-messages'},body:{userId:id},headers:key?{'x-admin-key':key}:{},socket:{remoteAddress:'127.0.0.1'}};const res:any={statusCode:200,headers:{},setHeader(k:string,v:any){this.headers[k]=v},status(n:number){this.statusCode=n;return this},json(v:any){this.body=v;return this}};await handler(req,res);return res;}
+assert.equal((await api(uid,'')).statusCode,401);
+assert.equal((await api('admin_session_state')).statusCode,400);
+assert.equal((await api('moliya_user_tg_999')).statusCode,404);
+const success=await api(uid);assert.equal(success.statusCode,200);assert.equal(success.body.messages[0].message_id,7);assert.ok(!JSON.stringify(success.body).includes('never-expose'));assert.equal(success.headers['Cache-Control'],'private, no-store');
+failure=true;const failed=await api(uid);assert.equal(failed.statusCode,500);assert.ok(!JSON.stringify(failed.body).includes('private SQL'));
+const root=new URL(existsSync(new URL('../../Admin-Dashboard/',import.meta.url))?'../../Admin-Dashboard/':'../../admin Dashboard Moliya/',import.meta.url);const {getUserChatHistory}=await import(new URL('src/services/userService.js',root).href);
+let calls=0;globalThis.fetch=async(url:any,opts:any)=>{calls++;assert.equal(url,'/api/admin?route=bot-messages');assert.equal(JSON.parse(opts.body).userId,uid);return {ok:true,json:async()=>success.body} as any};
+const messages=await getUserChatHistory(uid,'123');assert.equal(messages[0].type,'voice');assert.equal(messages[0].messageId,7);assert.equal(messages[0].direction,'in');assert.equal(calls,1);
+globalThis.fetch=async()=>{calls++;throw Error('offline')};await assert.rejects(getUserChatHistory(uid,'123'),/offline/);assert.equal(calls,2);
+await assert.rejects(getUserChatHistory(uid,'456'),/RECIPIENT_MISMATCH/);assert.equal(calls,2);
+console.log('8 admin chat-read checks passed; no live services called.');

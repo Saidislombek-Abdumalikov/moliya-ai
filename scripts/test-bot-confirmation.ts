@@ -1,0 +1,69 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {PGlite} from '@electric-sql/pglite';
+process.env.SUPABASE_URL='http://127.0.0.1:54321';process.env.SUPABASE_SERVICE_ROLE_KEY='offline';
+const {supabase}=await import('../api/_supabaseClient.js');
+const {stageBotDraft,resolveBotDraft}=await import('../api/services/_botDraftService.js');
+globalThis.fetch=async()=>{throw new Error('NETWORK_FORBIDDEN')};
+const db=new PGlite();
+await db.exec(`CREATE ROLE anon;CREATE ROLE authenticated;CREATE ROLE service_role;
+CREATE TABLE users(id text PRIMARY KEY, telegram_id text, phone text, onboarding jsonb DEFAULT '{}',device_info jsonb DEFAULT '{}',bot_verification jsonb,is_blocked boolean DEFAULT false,is_restricted boolean DEFAULT false,is_deleted boolean DEFAULT false,account_status text,transactions jsonb DEFAULT '[]',cards jsonb DEFAULT '[]',updated_at timestamptz);`);
+for(const file of ['03-financial-writes','04-atomic-card-operations','06-financial-eligibility','07-session-financial-writes','08-destructive-user-actions','09-bot-transaction-confirmation']){
+ const sql=await readFile(new URL('../migrations/'+file+'.sql',import.meta.url),'utf8');await db.exec(sql);await db.exec(sql);
+}
+const user='moliya_user_tg_123',other='moliya_user_tg_456';let count=0;
+async function seed(){
+ await db.exec('TRUNCATE users CASCADE');
+ for(const id of [user,other])await db.query(`INSERT INTO users(id,telegram_id,phone,bot_verification) VALUES ($1,$2,'+998901234567',$3)`,[id,id.split('_').at(-1),JSON.stringify({telegram_id:id.split('_').at(-1),phone:'+998901234567',phone_source:'telegram_own_contact',phone_verified_at:'2026-01-01',consent_source:'telegram_button',consent_version:'1',consent_accepted_at:'2026-01-01'})]);
+}
+async function rpc(uid:string,id:string,action:string,payload:any=null){return (await db.query<any>('SELECT moliya_bot_draft($1,$2,$3,$4::jsonb) AS result',[uid,id,action,JSON.stringify(payload)])).rows[0].result}
+(supabase as any).rpc=async(name:string,args:any)=>{assert.equal(name,'moliya_bot_draft');return {data:await rpc(args.p_user_id,args.p_id,args.p_action,args.p_payload),error:null}};
+async function transactions(uid=user){return (await db.query<any>('SELECT transactions FROM users WHERE id=$1',[uid])).rows[0]?.transactions}
+const items=[{type:'expense',amount:30000,title:'Taksi',date:'2026-09-25'}];
+async function stage(input=items,msg=5){return stageBotDraft(user,123,msg,input)}
+async function test(name:string,fn:()=>Promise<any>){await seed();await fn();count++;console.log('PASS '+name)}
+await test('draft is not a financial write',async()=>{const d=await stage();assert.equal(d.status,'pending');assert.deepEqual(await transactions(),[]);assert.equal(d.transactions[0].amount,-30000)});
+await test('same Telegram message freezes the first preview',async()=>{const a=await stage();const b=await stage([{...items[0],amount:99999}]);assert.equal(a.id,b.id);assert.deepEqual(a.transactions,b.transactions)});
+await test('confirm saves once under repeated concurrent requests',async()=>{const d=await stage();const replies=await Promise.all(Array.from({length:20},()=>resolveBotDraft(user,d.id,'confirm')));assert.ok(replies.every(x=>x.status==='confirmed'));assert.equal((await transactions()).length,1);assert.equal(replies.filter(x=>!x.replayed).length,1)});
+await test('different messages with same content remain distinct',async()=>{for(const msg of [5,6]){const d=await stage(items,msg);await resolveBotDraft(user,d.id,'confirm')}assert.equal((await transactions()).length,2)});
+await test('cancel prevents subsequent confirm',async()=>{const d=await stage();assert.equal((await resolveBotDraft(user,d.id,'cancel')).status,'cancelled');assert.equal((await resolveBotDraft(user,d.id,'confirm')).status,'cancelled');assert.deepEqual(await transactions(),[])});
+await test('foreign owner cannot confirm or cancel',async()=>{const d=await stage();assert.equal((await resolveBotDraft(other,d.id,'confirm')).status,'missing');assert.equal((await resolveBotDraft(other,d.id,'cancel')).status,'missing');assert.deepEqual(await transactions(),[]);assert.deepEqual(await transactions(other),[])});
+await test('expiry refuses writes and cannot be renewed by replay',async()=>{const d=await stage();await db.query("UPDATE moliya_bot_drafts SET expires_at=clock_timestamp()-interval '1 second'");assert.equal((await resolveBotDraft(user,d.id,'confirm')).status,'expired');assert.equal((await stage()).status,'expired');assert.deepEqual(await transactions(),[])});
+await test('blocked after preview cannot confirm',async()=>{const d=await stage();await db.query('UPDATE users SET is_blocked=true WHERE id=$1',[user]);assert.equal((await resolveBotDraft(user,d.id,'confirm')).status,'denied');assert.deepEqual(await transactions(),[])});
+await test('removed consent after preview cannot confirm',async()=>{const d=await stage();await db.query("UPDATE users SET bot_verification='{}' WHERE id=$1",[user]);assert.equal((await resolveBotDraft(user,d.id,'confirm')).status,'denied');assert.deepEqual(await transactions(),[])});
+await test('account deletion removes pending drafts',async()=>{const d=await stage();await db.query('DELETE FROM users WHERE id=$1',[user]);assert.equal((await rpc(user,d.id,'confirm')).status,'missing');assert.equal((await db.query('SELECT * FROM moliya_bot_drafts')).rows.length,0)});
+await test('a batch confirms all entries together',async()=>{const d=await stage([...items,{type:'income',amount:100000,title:'Maosh',date:'2026-09-25'}]);await resolveBotDraft(user,d.id,'confirm');assert.deepEqual((await transactions()).map((t:any)=>t.amount),[-30000,100000])});
+await test('financial conflict does not consume draft or partially append',async()=>{const d=await stage([...items,{...items[0],amount:5}]);await db.query('UPDATE users SET transactions=$1 WHERE id=$2',[JSON.stringify([{...d.transactions[1],amount:7}]),user]);assert.equal((await resolveBotDraft(user,d.id,'confirm')).status,'denied');assert.equal((await transactions()).length,1);assert.equal((await stage()).status,'pending')});
+await test('database failure rolls back money and draft together',async()=>{const d=await stage();await db.exec(`CREATE FUNCTION reject_confirm() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.status='confirmed' THEN RAISE EXCEPTION 'offline failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_confirm BEFORE UPDATE ON moliya_bot_drafts FOR EACH ROW EXECUTE FUNCTION reject_confirm();`);await assert.rejects(resolveBotDraft(user,d.id,'confirm'));assert.deepEqual(await transactions(),[]);assert.equal((await stage()).status,'pending');await db.exec('DROP TRIGGER reject_confirm ON moliya_bot_drafts; DROP FUNCTION reject_confirm();')});
+await test('confirm/cancel race has one terminal outcome',async()=>{const d=await stage();const results=await Promise.all([resolveBotDraft(user,d.id,'cancel'),resolveBotDraft(user,d.id,'confirm')]);assert.equal(results[0].status,results[1].status);assert.deepEqual(await transactions(),[])});
+await test('replay after user deletes the saved transaction cannot restore it',async()=>{const d=await stage();await resolveBotDraft(user,d.id,'confirm');await db.query("UPDATE users SET transactions='[]' WHERE id=$1",[user]);assert.equal((await resolveBotDraft(user,d.id,'confirm')).replayed,true);assert.deepEqual(await transactions(),[])});
+await test('invalid identity, amount, empty or oversized batch rejected',async()=>{await assert.rejects(stageBotDraft(user,456,5,items));await assert.rejects(stageBotDraft(user,123,0,items));for(const amount of [0,NaN,Infinity,1e13])await assert.rejects(stage([{...items[0],amount}]));await assert.rejects(stage([]));await assert.rejects(stage(Array(11).fill(items[0])))});
+await test('browser roles cannot read drafts or execute confirmation',async()=>{for(const role of ['anon','authenticated']){const row=(await db.query<any>(`SELECT has_table_privilege($1,'moliya_bot_drafts','SELECT') AS r,has_function_privilege($1,'moliya_bot_draft(text,text,text,jsonb)','EXECUTE') AS e`,[role])).rows[0];assert.equal(row.r,false);assert.equal(row.e,false)}});
+
+await test('pending draft cap bounds active previews',async()=>{for(let i=1;i<=20;i++)await stage(items,i);await assert.rejects(stage(items,21));assert.deepEqual(await transactions(),[])});
+await test('malformed RPC payload cannot become a draft',async()=>{for(const payload of [null,{},[],[{id:'bad',amount:1,type:'expense'}]])assert.equal((await rpc(user,'a'.repeat(32),'stage',payload)).status,'invalid')});
+// Exercise the actual webhook callback route with Telegram transport mocked.
+process.env.TELEGRAM_BOT_TOKEN='offline-token';process.env.TELEGRAM_WEBHOOK_SECRET='offline-secret';
+const {default:handler}=await import('../api/telegram-webhook.js');
+const sent:Array<{method:string;body:any}>=[];
+globalThis.fetch=async(url:any,options:any)=>{assert.ok(String(url).startsWith('https://api.telegram.org/'));sent.push({method:String(url).split('/').at(-1)!,body:JSON.parse(options?.body||'{}')});return {json:async()=>({ok:true,result:{}})} as any};
+(supabase as any).from=(table:string)=>{assert.equal(table,'users');let uid=user;const q:any={select(){return q},update(){return q},eq(k:string,v:any){if(k==='id')uid=v;return q},is(){return q},async maybeSingle(){return {data:(await db.query('SELECT * FROM users WHERE id=$1',[uid])).rows[0]||null,error:null}}};return q};
+async function callback(id:string,actor=123,chat=actor,secret='offline-secret'){
+ const req:any={method:'POST',headers:{'x-telegram-bot-api-secret-token':secret},body:{update_id:55,callback_query:{id:'callback',from:{id:actor},message:{message_id:100,chat:{id:chat}},data:'txok_'+id}}};
+ const res:any={statusCode:200,setHeader(){},status(n:number){this.statusCode=n;return this},json(body:any){this.body=body;return this}};
+ await handler(req,res);return res;
+}
+await test('webhook requires its secret before confirming',async()=>{const d=await stage();assert.equal((await callback(d.id,123,123,'wrong')).statusCode,401);assert.deepEqual(await transactions(),[])});
+await test('webhook binds sender and private chat',async()=>{const d=await stage();assert.equal((await callback(d.id,456)).body.status,'missing');assert.equal((await callback(d.id,123,-100)).body.status,'denied');assert.deepEqual(await transactions(),[])});
+await test('webhook confirms once and preserves unrelated pending buttons',async()=>{
+ const d=await stage([{...items[0],title:'<b>fake</b>'}]);
+ await db.query('UPDATE users SET onboarding=$1 WHERE id=$2',[JSON.stringify({bot_messages:[{message_id:99,type:'ai_response'}],last_temp_msg_id:99,last_system_message_id:99}),user]);
+ sent.length=0;assert.equal((await callback(d.id)).body.status,'confirmed');assert.equal((await transactions()).length,1);
+ assert.ok(sent.some(x=>x.method==='editMessageText' && x.body.text.includes('&lt;b&gt;fake&lt;/b&gt;')));
+ assert.equal(sent.filter(x=>x.method==='editMessageReplyMarkup').length,0);
+ const edits=sent.filter(x=>x.method==='editMessageText').length;
+ assert.equal((await callback(d.id)).body.status,'confirmed');assert.equal((await transactions()).length,1);
+ assert.equal(sent.filter(x=>x.method==='editMessageText').length,edits);
+});
+await test('webhook database outage returns retryable failure without a write',async()=>{const d=await stage();const savedRpc=(supabase as any).rpc;(supabase as any).rpc=async()=>({data:null,error:{message:'private database detail'}});try{const res=await callback(d.id);assert.equal(res.statusCode,503);assert.equal(JSON.stringify(res.body).includes('private'),false);assert.deepEqual(await transactions(),[])}finally{(supabase as any).rpc=savedRpc}});
+console.log(`${count} bot confirmation checks passed. Offline PostgreSQL; not a live load test.`);await db.close();

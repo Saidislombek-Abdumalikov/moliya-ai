@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+process.env.SUPABASE_URL='http://127.0.0.1:54321';
+process.env.SUPABASE_SERVICE_ROLE_KEY='offline';
+process.env.TELEGRAM_BOT_TOKEN='offline-token';
+const {supabase}=await import('../api/_supabaseClient.js');
+const {generateAndSaveUserReport}=await import('../api/_financialReportEngine.js');
+const id='moliya_user_tg_123';
+let row:any={id,telegram_id:'123',name:'Test',transactions:[],onboarding:{}};
+let failWrite=true, sends=0;
+(supabase as any).from=(table:string)=>{
+ assert.equal(table,'users');
+ let patch:any;
+ const q:any={select(){return q},eq(){return q},is(){return q},update(value:any){patch=value;return q},
+  async maybeSingle(){if(patch){if(failWrite)return {data:null,error:null};row={...row,...patch};return {data:row,error:null}}return {data:row,error:null}}};
+ return q;
+};
+globalThis.fetch=async()=>{sends++;return {json:async()=>({ok:true})} as any};
+const failed=await generateAndSaveUserReport(id,'monthly',{sendTelegram:true});
+assert.equal(failed.success,false);
+assert.equal(sends,0);
+failWrite=false;
+const saved=await generateAndSaveUserReport(id,'monthly',{sendTelegram:true});
+assert.equal(saved.success,true);
+assert.equal(saved.report?.sentToTelegram,true);
+assert.equal(row.onboarding.ai_reports[0].sentToTelegram,true);
+assert.equal(sends,1);
+const replay=await generateAndSaveUserReport(id,'monthly',{sendTelegram:true});
+assert.equal(replay.alreadyExisted,true);
+assert.equal(sends,1);
+console.log('Report is stored before Telegram delivery; retry does not send twice.');

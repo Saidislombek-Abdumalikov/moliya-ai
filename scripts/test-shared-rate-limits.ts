@@ -1,0 +1,43 @@
+import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import {readFile} from 'node:fs/promises';
+import {PGlite} from '@electric-sql/pglite';
+process.env.SUPABASE_URL='http://127.0.0.1:54321';process.env.SUPABASE_SERVICE_ROLE_KEY='offline-placeholder';
+const {supabase}=await import('../api/_supabaseClient');
+const {getClientIp,checkRateLimit,checkDistributedRateLimit,applyRateLimit}=await import('../api/_rateLimiter');
+const db=new PGlite();await db.exec('CREATE ROLE anon;CREATE ROLE authenticated;CREATE ROLE service_role;');
+const sql=await readFile(new URL('../migrations/05-shared-rate-limits.sql',import.meta.url),'utf8');await db.exec(sql);await db.exec(sql);
+const hash=(s:string)=>crypto.createHash('sha256').update(s).digest('hex');
+async function limit(key='one',maximum=20,windowMs=60000):Promise<any>{return (await db.query<any>('SELECT public.moliya_rate_limit($1,$2,$3) AS r',[hash(key),maximum,windowMs])).rows[0].r;}
+let count=0;let storeCalls=0;
+function wireDatabase(){(supabase as any).rpc=(_n:string,a:any)=>({abortSignal:async()=>{storeCalls++;return {data:(await db.query<any>('SELECT public.moliya_rate_limit($1,$2,$3) AS r',[a.p_bucket,a.p_limit,a.p_window_ms])).rows[0].r,error:null}}});}
+async function test(name:string,fn:()=>any){await db.exec('TRUNCATE moliya_rate_limits');delete process.env.VERCEL;process.env.NODE_ENV='test';delete process.env.UPSTASH_REDIS_REST_URL;delete process.env.UPSTASH_REDIS_REST_TOKEN;globalThis.fetch=async()=>{throw Error('NETWORK_FORBIDDEN')};wireDatabase();storeCalls=0;await fn();count++;console.log('PASS '+name);}
+function response(){return {statusCode:200,headers:{} as any,body:null as any,setHeader(k:string,v:any){this.headers[k]=v},status(n:number){this.statusCode=n;return this},json(b:any){this.body=b;return this}};}
+const request={headers:{},socket:{remoteAddress:'192.0.2.25'}};
+await test('100 submissions admit only configured 20',async()=>{const results=await Promise.all(Array.from({length:100},()=>limit()));assert.equal(results.filter(r=>r.allowed).length,20);assert.equal(results.filter(r=>!r.allowed).length,80)});
+await test('denied attempts cannot grow stored array',async()=>{await Promise.all(Array.from({length:80},()=>limit('one',3)));assert.equal((await db.query<any>('SELECT cardinality(hits) AS n FROM moliya_rate_limits')).rows[0].n,3)});
+await test('independent buckets do not consume each other',async()=>{await limit('a',1);assert.equal((await limit('a',1)).allowed,false);assert.equal((await limit('b',1)).allowed,true)});
+await test('expired entries allow a fresh request',async()=>{await limit('a',1);await db.exec("UPDATE moliya_rate_limits SET hits=ARRAY[clock_timestamp()-interval '2 minutes'],expires_at=clock_timestamp()-interval '1 minute'");assert.equal((await limit('a',1)).allowed,true)});
+await test('expired unrelated rows are cleaned',async()=>{await limit('old');await db.exec("UPDATE moliya_rate_limits SET expires_at=clock_timestamp()-interval '2 minutes'");await limit('new');assert.equal((await db.query<any>('SELECT count(*)::int AS n FROM moliya_rate_limits')).rows[0].n,1)});
+await test('invalid arguments are rejected',async()=>{await assert.rejects(limit('a',0));await assert.rejects(limit('a',5000));await assert.rejects(db.query('SELECT public.moliya_rate_limit($1,20,60000)',['raw-ip']))});
+for(const role of ['anon','authenticated'])await test(role+' cannot access limiter table or function',async()=>{await db.exec('SET ROLE '+role);try{await assert.rejects(limit(),/permission denied/);await assert.rejects(db.query('SELECT * FROM moliya_rate_limits'),/permission denied/)}finally{await db.exec('RESET ROLE')}});
+await test('service role can execute limiter',async()=>{await db.exec('SET ROLE service_role');try{assert.equal((await limit()).allowed,true)}finally{await db.exec('RESET ROLE')}});
+await test('Express ignores spoofed forwarding headers',()=>assert.equal(getClientIp({headers:{'x-forwarded-for':'1.1.1.1','x-real-ip':'8.8.8.8'},socket:{remoteAddress:'192.0.2.2'}}),'192.0.2.2'));
+await test('Vercel uses platform overwritten single IP',()=>{process.env.VERCEL='1';assert.equal(getClientIp({headers:{'x-forwarded-for':'192.0.2.3'},socket:{remoteAddress:'127.0.0.1'}}),'192.0.2.3')});
+await test('invalid or multiple Vercel IP values share conservative bucket',()=>{process.env.VERCEL='1';for(const value of ['fake','1.1.1.1, 8.8.8.8',['1.1.1.1']])assert.equal(getClientIp({headers:{'x-forwarded-for':value}}),'unknown-vercel')});
+await test('equivalent IPv4 spellings share bucket',()=>assert.equal(getClientIp({socket:{remoteAddress:'::ffff:192.0.2.2'}}),getClientIp({socket:{remoteAddress:'192.0.2.2'}})));
+await test('IPv6 rotation within same /64 shares bucket',()=>assert.equal(getClientIp({socket:{remoteAddress:'2001:db8:1:2::1'}}),getClientIp({socket:{remoteAddress:'2001:0db8:0001:0002:ffff::2'}})));
+await test('production uses shared database by default',async()=>{process.env.NODE_ENV='production';assert.equal(await applyRateLimit(request,response(),'admin_login'),true);assert.equal(storeCalls,1)});
+await test('production database outage fails closed',async()=>{process.env.NODE_ENV='production';(supabase as any).rpc=()=>({abortSignal:async()=>({data:null,error:{message:'offline'}})});const r=response();assert.equal(await applyRateLimit(request,r,'admin_login'),false);assert.equal(r.statusCode,503)});
+await test('malformed database response fails closed',async()=>{process.env.NODE_ENV='production';(supabase as any).rpc=()=>({abortSignal:async()=>({data:{allowed:true},error:null})});const r=response();assert.equal(await applyRateLimit(request,r),false);assert.equal(r.statusCode,503)});
+await test('shared login ceiling enforced through middleware',async()=>{process.env.NODE_ENV='production';for(let i=0;i<20;i++)assert.equal(await applyRateLimit(request,response(),'admin_login'),true);const r=response();assert.equal(await applyRateLimit(request,r,'admin_login'),false);assert.equal(r.statusCode,429);assert.ok(Number(r.headers['Retry-After'])>0)});
+await test('polling does not consume exchange budget',async()=>{process.env.NODE_ENV='production';for(let i=0;i<45;i++)assert.equal(await applyRateLimit(request,response(),'auth_poll'),true);assert.equal(await applyRateLimit(request,response(),'auth_exchange'),true)});
+await test('separate middleware imports share database bucket',async()=>{process.env.NODE_ENV='production';const other=await import('../api/_rateLimiter.ts?other-worker');for(let i=0;i<20;i++)assert.equal(await (i%2?other.applyRateLimit:applyRateLimit)(request,response(),'admin_login'),true);assert.equal(await other.applyRateLimit(request,response(),'admin_login'),false)});
+function redis(){process.env.UPSTASH_REDIS_REST_URL='https://redis.example';process.env.UPSTASH_REDIS_REST_TOKEN='offline-token';}
+await test('Redis executes one atomic EVAL with hashed key',async()=>{redis();globalThis.fetch=async(_url,init)=>{const cmd=JSON.parse(String(init?.body));assert.equal(cmd[0],'EVAL');assert.match(cmd[3],/^moliya:rate:[a-f0-9]{64}$/);assert.equal(cmd[3].includes('192.0.2'),false);return new Response(JSON.stringify({result:[1,19,0]}))};assert.equal((await checkDistributedRateLimit('admin:192.0.2.2',20))?.allowed,true)});
+for(const data of [{},{error:'ERR'},{result:[1,'19',0]},{result:[1,-1,0]},{result:[0,0,0]}])await test('invalid Redis response rejected '+JSON.stringify(data),async()=>{redis();globalThis.fetch=async()=>new Response(JSON.stringify(data));assert.equal(await checkDistributedRateLimit('a',20),null)});
+await test('Redis outage never switches quota store',async()=>{redis();const r=response();assert.equal(await applyRateLimit(request,r,'admin_login'),false);assert.equal(r.statusCode,503);assert.equal(storeCalls,0)});
+await test('partial Redis configuration fails closed',async()=>{process.env.UPSTASH_REDIS_REST_URL='https://redis.example';const r=response();assert.equal(await applyRateLimit(request,r),false);assert.equal(r.statusCode,503);assert.equal(storeCalls,0)});
+await test('Redis timeout aborts request',async()=>{redis();globalThis.fetch=async(_url,init)=>new Promise((_resolve,reject)=>init?.signal?.addEventListener('abort',()=>reject(Error('aborted'))));const start=Date.now();assert.equal(await checkDistributedRateLimit('a',20),null);assert.ok(Date.now()-start<5000)});
+await test('local limiter enforces its own window',()=>{const key=crypto.randomUUID();assert.equal(checkRateLimit(key,1).allowed,true);assert.equal(checkRateLimit(key,1).allowed,false)});
+await db.close();console.log(`${count} shared rate-limit checks passed. PGlite serializes queries; live multi-connection and Redis Lua execution remain deployment checks.`);

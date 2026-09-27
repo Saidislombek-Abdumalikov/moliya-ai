@@ -1,0 +1,42 @@
+{
+  "name": "moliya-ai",
+  "private": true,
+  "version": "3.3.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --env-file-if-exists=.env --import tsx server.ts",
+    "build": "npm run lint && vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=server-build/server.cjs",
+    "preview": "vite preview",
+    "format": "oxfmt",
+    "lint": "tsc --noEmit && tsc -p tsconfig.backend.json",
+    "test:regression": "node --import tsx scripts/test-report-delivery.ts && node --import tsx scripts/test-financial-assistant.ts && node --import tsx scripts/test-reminder-policy.ts && node --import tsx scripts/test-reminder-delivery.ts && node --import tsx scripts/test-automation-rules.ts && node --import tsx scripts/test-financial-totals.ts && node --import tsx scripts/test-critical-security.ts && node --import tsx scripts/test-login-revocation.ts && node --import tsx scripts/test-admin-audit-rls.ts && node --import tsx scripts/test-backend-regressions.ts && node --import tsx scripts/test-atomic-quota.ts && node --import tsx scripts/test-financial-writes.ts && node --import tsx scripts/test-client-session.ts && node --import tsx scripts/test-miniapp-ux.ts && node --import tsx scripts/test-admin-boundaries.ts && node --import tsx scripts/test-admin-otp.ts && node --import tsx scripts/test-shared-rate-limits.ts && node --import tsx scripts/test-log-redaction.ts && node --import tsx scripts/test-api-errors.ts && node --import tsx scripts/test-profile-concurrency.ts && node --import tsx scripts/test-destructive-admin.ts && node --import tsx scripts/test-amount-evidence.ts && node --import tsx scripts/test-client-ai-boundary.ts && node --import tsx scripts/test-bot-confirmation.ts && node --import tsx scripts/test-bot-message-delivery.ts",
+    "test:admin-integration": "node --import tsx scripts/test-admin-consistency.ts && node --import tsx scripts/test-admin-layout.ts && node --import tsx scripts/test-notification-delivery.ts && node --import tsx scripts/test-admin-telegram.ts && node --import tsx scripts/test-admin-user-actions.ts && node --import tsx scripts/test-admin-chat-read.ts && node --import tsx scripts/test-admin-chat-clear.ts && node --import tsx scripts/test-admin-clear-recipients.ts && node --import tsx scripts/test-admin-ai-maintenance.ts && node --import tsx scripts/test-admin-chat-write.ts && node --import tsx scripts/test-admin-read-boundaries.ts && node --import tsx scripts/test-legal-settings.ts && node --import tsx scripts/test-legal-consent.ts && node --import tsx scripts/test-admin-db-boundary.ts && node --import tsx scripts/test-admin-cron.ts && node --import tsx scripts/test-scheduled-reports.ts",
+    "start": "node server-build/server.cjs"
+  },
+  "dependencies": {
+    "@google/genai": "^2.12.0",
+    "@supabase/supabase-js": "^2.112.3",
+    "@types/qrcode": "^1.5.6",
+    "express": "^5.2.1",
+    "motion": "^12.42.2",
+    "qrcode": "^1.5.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vercel/node": "^13.0.1",
+    "@vitejs/plugin-react": "^6.0.0",
+    "esbuild": "^0.28.1",
+    "oxfmt": "^0.2.0",
+    "tailwindcss": "^4.0.0",
+    "tsx": "^4.23.0",
+    "typescript": "^5.7.0",
+    "vite": "^8.0.0"
+  }
+}

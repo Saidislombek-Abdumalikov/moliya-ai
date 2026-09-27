@@ -1,0 +1,57 @@
+{
+  "version": 2,
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+        { "key": "X-DNS-Prefetch-Control", "value": "on" },
+        { "key": "Strict-Transport-Security", "value": "max-age=31536000; includeSubDomains; preload" },
+        { "key": "Permissions-Policy", "value": "camera=(self), microphone=(self), geolocation=()" },
+        { "key": "Content-Security-Policy", "value": "default-src 'self'; frame-ancestors 'self' https://web.telegram.org https://*.telegram.org https://telegram.org; script-src 'self' 'unsafe-inline' https://telegram.org; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https: blob:; connect-src 'self' https://*.supabase.co wss://*.supabase.co; media-src 'self' blob:; object-src 'none';" }
+      ]
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/admin?route=auto-broadcast&slot=morning",
+      "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/admin?route=auto-broadcast&slot=afternoon",
+      "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/admin?route=auto-broadcast&slot=evening",
+      "schedule": "0 15 * * *"
+    },
+    {
+      "path": "/api/admin?route=automation-due&ruleId=trial_expiry",
+      "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/admin?route=automation-due&ruleId=trial_expiry&slot=afternoon",
+      "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/admin?route=automation-due&ruleId=trial_expiry&slot=evening",
+      "schedule": "0 15 * * *"
+    },
+    {
+      "path": "/api/admin?route=automation-due&ruleId=weekly_digest",
+      "schedule": "0 15 * * 0"
+    },
+    {
+      "path": "/api/admin?route=run-scheduled-reports",
+      "schedule": "0 15 * * *"
+    }
+  ],
+  "rewrites": [
+    { "source": "/api/telegram-webhook", "destination": "/api/telegram-webhook" },
+    { "source": "/api/admin/:route*", "destination": "/api/admin?route=:route*" },
+    { "source": "/api/auth/:action*", "destination": "/api/auth?action=:action*" },
+    { "source": "/api/(.*)", "destination": "/api/$1" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}
