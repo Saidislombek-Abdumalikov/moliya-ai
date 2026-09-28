@@ -1,3 +1,4 @@
+import {installCompleted,telegramInstallBlocked} from '../installPrompt'
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 import type { OnboardingResult } from './Onboarding'
@@ -491,7 +492,13 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
   const userName = (onboarding as any)?.name || tgFullName || 'Moliya Foydalanuvchisi'
   const userPhone = (onboarding as any)?.phone || ''
   const userTelegram = (onboarding as any)?.telegram || (tgUser?.username ? `@${tgUser.username}` : '')
-  const telegramId = (onboarding as any)?.telegramId || (tgUser?.id ? String(tgUser.id) : '')
+  const [installed, setInstalled] = useState(installCompleted)
+  useEffect(() => {
+    const update = () => setInstalled(installCompleted());
+    window.addEventListener('moliya_install_completed', update);
+    window.addEventListener('moliya_install_available', update);
+    return () => {window.removeEventListener('moliya_install_completed', update);window.removeEventListener('moliya_install_available', update);};
+  }, [])
 
   // Modal States
   const [activeModal, setActiveModal] = useState<
@@ -965,11 +972,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                   {userTelegram.startsWith('@') ? userTelegram : '@' + userTelegram}
                 </span>
               )}
-              {telegramId && (
-                <span style={{ fontSize: 11, background: '#F1F5F9', color: '#64748B', padding: '2px 8px', borderRadius: 8, fontWeight: 600 }}>
-                  ID: {telegramId}
-                </span>
-              )}
+
             </div>
           </div>
           <button 
@@ -1158,6 +1161,12 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
           background: '#FAF9FD', borderRadius: 20, border: '1.5px solid #E4E1F4', overflow: 'hidden',
           boxShadow: '0 2px 8px rgba(0,0,0,0.01)'
         }}>
+          {!telegramInstallBlocked() && !installed && <button
+            id="menu_item_install" type="button"
+            onClick={() => window.dispatchEvent(new Event('open_install_prompt'))}
+            style={{width:'100%',padding:'16px',textAlign:'left',border:0,borderBottom:'1px solid #E4E1F4',background:'transparent',color:'#7C3AED',fontWeight:600,cursor:'pointer'}}>
+            📲 {lang === 'ru' ? 'Добавить на главный экран' : lang === 'en' ? 'Add to Home Screen' : lang === 'uz_cyrl' ? 'Экранга қўшиш' : 'Ekranga qo‘shish'}
+          </button>}
           {/* App Tour */}
           {onStartTour && (
             <div 

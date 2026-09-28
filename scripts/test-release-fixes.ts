@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {readSessionToken,saveSessionToken,clearSessionToken,SESSION_KEY} from '../src/clientSession.js';
 import {configureTelegramViewport,keepTelegramSwipesDisabled} from '../src/telegramViewport.js';
 import {normalizeTelegramKeyboard,telegramButtonUrl} from '../api/_telegramKeyboard.js';
-import {captureInstallPrompt,pendingInstall,dismissInstall,INSTALL_DISMISSED_KEY} from '../src/installPrompt.js';
+import {captureInstallPrompt,pendingInstall,dismissInstall,INSTALL_DISMISSED_KEY,consumeInstall,installDismissed} from '../src/installPrompt.js';
 
 const values=new Map<string,string>();
 (globalThis as any).localStorage={getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>values.set(key,value),removeItem:(key:string)=>values.delete(key)};
@@ -38,12 +38,14 @@ assert.throws(()=>normalizeTelegramKeyboard({inline_keyboard:[[{text:'x',url:'ex
 
 const browser=new EventTarget() as any;
 (globalThis as any).window=browser;(globalThis as any).location={hash:''};
+browser.matchMedia=()=>({matches:false});
 captureInstallPrompt();
 const event=()=>Object.assign(new Event('beforeinstallprompt',{cancelable:true}),{prompt:async()=>{},userChoice:Promise.resolve({outcome:'dismissed'})});
 const early=event();browser.dispatchEvent(early);
 assert.equal(early.defaultPrevented,true);assert.equal(pendingInstall(),early);
-dismissInstall();assert.equal(values.get(INSTALL_DISMISSED_KEY),'true');
-browser.dispatchEvent(event());assert.equal(pendingInstall(),null);
+dismissInstall();assert.equal(values.get(INSTALL_DISMISSED_KEY),undefined);assert.equal(installDismissed(),true);
+assert.equal(pendingInstall(),early);assert.equal(consumeInstall(),early);assert.equal(pendingInstall(),null);
+browser.dispatchEvent(new Event('appinstalled'));assert.equal(values.get('moliya_install_confirmed_v2'),'true');
 values.clear();browser.Telegram={WebApp:{initData:'signed'}};
 browser.dispatchEvent(event());assert.equal(pendingInstall(),null);
 delete browser.Telegram;(globalThis as any).location.hash='#tgWebAppPlatform=android';

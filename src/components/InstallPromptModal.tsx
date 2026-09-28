@@ -1,4 +1,4 @@
-import {dismissInstall,installDismissed,pendingInstall,telegramInstallBlocked} from '../installPrompt'
+import {dismissInstall,installDismissed,pendingInstall,telegramInstallBlocked,installCompleted,consumeInstall} from '../installPrompt'
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 import { isTelegramMiniApp } from '../FinanceContext'
@@ -7,40 +7,43 @@ export default function InstallPromptModal() {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null)
   const [showModal, setShowModal] = useState(false)
   const [isInstalled, setIsInstalled] = useState(false)
-  const [installGuide, setInstallGuide] = useState<'ios' | 'mac' | null>(null)
+  const [installGuide, setInstallGuide] = useState<'ios' | 'mac' | 'browser' | null>(null)
 
   useEffect(() => {
     const blocked=()=>isTelegramMiniApp() || telegramInstallBlocked();
-    if(blocked() || installDismissed()) return;
-    const standalone=window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone===true || localStorage.getItem('pwa_installed')==='true';
-    if(standalone){setIsInstalled(true);return;}
+    if(blocked()) return;
+    setIsInstalled(installCompleted());
     const ios=/iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
     const macSafari=/Macintosh/.test(navigator.userAgent) && /Safari/.test(navigator.userAgent) && !/Chrome|Chromium|Edg/.test(navigator.userAgent);
     const guide=ios?'ios':macSafari?'mac':null;
     setInstallGuide(guide);
-    const show=()=>{
-      if(blocked() || installDismissed()){setShowModal(false);return;}
+    const show=(manual=false)=>{
+      if(blocked() || installCompleted() || (!manual && installDismissed())){setShowModal(false);return;}
       const event=pendingInstall(); setDeferredPrompt(event);
-      if(guide || event) setShowModal(true);
+      setInstallGuide(event ? null : guide || (manual ? 'browser' : null));
+      if(guide || event || manual) setShowModal(true);
     };
-    const installed=()=>{localStorage.setItem('pwa_installed','true');dismissInstall();setIsInstalled(true);setShowModal(false);};
-    const timer=setTimeout(show,2000);
-    window.addEventListener('moliya_install_available',show);
-    window.addEventListener('open_install_prompt',show);
-    window.addEventListener('appinstalled',installed);
-    return ()=>{clearTimeout(timer);window.removeEventListener('moliya_install_available',show);window.removeEventListener('open_install_prompt',show);window.removeEventListener('appinstalled',installed);};
+    const installed=()=>{setIsInstalled(true);setShowModal(false);};
+    const available=()=>{setIsInstalled(installCompleted());show();};
+    const manual=()=>show(true);
+    const timer=setTimeout(()=>show(),2000);
+    window.addEventListener('moliya_install_available',available);
+    window.addEventListener('open_install_prompt',manual);
+    window.addEventListener('moliya_install_completed',installed);
+    return ()=>{clearTimeout(timer);window.removeEventListener('moliya_install_available',available);window.removeEventListener('open_install_prompt',manual);window.removeEventListener('moliya_install_completed',installed);};
   }, [])
 
   if (isTelegramMiniApp() || telegramInstallBlocked() || isInstalled) return null
   const handleInstallClick = async () => {
     if(isTelegramMiniApp() || telegramInstallBlocked())return;
-    const event=deferredPrompt;
+    const event=consumeInstall();
     dismissInstall(); setShowModal(false); setDeferredPrompt(null);
     if(event) {
-      try {await event.prompt();const {outcome}=await event.userChoice;if(outcome==='accepted')localStorage.setItem('pwa_installed','true');}
-      catch { /* Dismissal is permanent even if native install is cancelled. */ }
+      try {await event.prompt();await event.userChoice;}
+      catch { /* Allow another attempt from Profile or on a later visit. */ }
     }
   }
+
   const handleDismiss = () => {dismissInstall();setShowModal(false);setDeferredPrompt(null);}
 
   if (!showModal) return null
@@ -146,7 +149,7 @@ export default function InstallPromptModal() {
             <span>
               {installGuide==='mac'
                 ? <>Safari menyusida <b>File → Add to Dock</b> ni tanlang (qo‘llab-quvvatlanadigan macOS/Safari versiyalarida).</>
-                : <>Safari’da <b>Ulashish (Share)</b> tugmasini bosing va <b>“Asosiy ekranga qo‘shish” (+)</b> ni tanlang.</>}
+                : installGuide==='browser' ? <>Brauzer menyusidan <b>Ilovani o‘rnatish / Add to Home Screen</b> ni tanlang. Band mavjud bo‘lmasa, shu brauzerda o‘rnatish hozir qo‘llanmayapti.</> : <>Safari’da <b>Ulashish (Share)</b> tugmasini bosing va <b>“Asosiy ekranga qo‘shish” (+)</b> ni tanlang.</>}
             </span>
           </div>
         ) : (

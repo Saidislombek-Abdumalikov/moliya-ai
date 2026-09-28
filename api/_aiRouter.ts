@@ -61,15 +61,14 @@ export function maskApiKey(key: string): string {
 export async function getCandidateAiKeys(forceRefresh = false): Promise<AiKeyRecord[]> {
   const nowMs = Date.now();
   if (!forceRefresh && cachedCandidateKeys && cachedCandidateKeys.expiresAt > nowMs && cachedCandidateKeys.keys.length > 0) {
-    return cachedCandidateKeys.keys;
+    return [...cachedCandidateKeys.keys];
   }
 
   try {
     // Fetch ALL keys — filter in code to handle both DB column schemas
     const { data: dbKeys, error } = await supabase
       .from('ai_keys')
-      .select('*')
-      .order('priority', { ascending: true });
+      .select('*'); // priority is optional in the legacy schema; sort in memory below.
 
     if (!error && Array.isArray(dbKeys) && dbKeys.length > 0) {
       const parsedKeys = dbKeys
@@ -77,7 +76,7 @@ export async function getCandidateAiKeys(forceRefresh = false): Promise<AiKeyRec
           // Support both schemas: is_active (bool) OR status (string)
           const isActive = k.is_active !== undefined ? k.is_active : (k.status !== 'disabled');
           const notInvalid = k.health_status !== 'invalid' && k.status !== 'invalid';
-          return isActive && notInvalid;
+          return isActive && notInvalid && k.status !== 'disabled' && typeof k.api_key === 'string' && k.api_key.trim().length > 0;
         })
         .map((k: any) => {
           const lastUsed = k.last_used_at ? new Date(k.last_used_at) : null;
@@ -97,7 +96,7 @@ export async function getCandidateAiKeys(forceRefresh = false): Promise<AiKeyRec
             id: k.id,
             name: k.name || 'AI Key',
             provider: (k.provider === 'gemini' ? 'google' : (k.provider || 'google')) as any,
-            api_key: k.api_key,
+            api_key: k.api_key.trim(),
             model: effectiveModel,
             priority: k.priority || 1,
             status: 'active' as any,

@@ -1,3 +1,4 @@
+import {generateBounded,tryNextModel} from './_aiCall.js';
 import {transactionParts,TRANSACTION_CLARIFICATION} from '../shared/amountEvidence.js';
 import { safeError, safeWarn } from './_logger.js';
 import { requireEligibleCaller } from './auth.js';
@@ -86,7 +87,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const candidateKeys = await getCandidateAiKeys();
 
     if (candidateKeys.length === 0) {
-      return res.status(500).json({ error: 'No active AI keys configured' });
+      return res.status(503).json({ error: 'AI_NOT_CONFIGURED' });
     }
 
     // Build prompt with normalized financial context
@@ -95,6 +96,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Try each key with fastest active Gemini models first
     const activeModels = ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.5-flash'];
 
+    const aiDeadline=Date.now()+25000;
     for (const key of candidateKeys) {
       if (key.provider !== 'google' && (key.provider as string) !== 'gemini') continue;
       
@@ -105,16 +107,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const keyModels = [...new Set([primary, ...activeModels])];
 
       for (const modelToUse of keyModels) {
+        if(Date.now()>=aiDeadline)break;
         try {
           const ai = new GoogleGenAI({ apiKey: key.api_key.trim() });
           
-          // Timeout race: abort after 2800ms to prevent hanging on throttled keys
-          let timer: any;
-          const timeoutPromise = new Promise((_, reject) => {
-            timer = setTimeout(() => reject(new Error('AI_TIMEOUT')), 2800);
-          });
-
-          const generatePromise = ai.models.generateContent({
+          const response = await generateBounded(ai,{
             model: modelToUse,
             contents: prompt,
             config: {
@@ -122,10 +119,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               maxOutputTokens: 250,
               temperature: 0.1
             }
-          });
-
-          const response: any = await Promise.race([generatePromise, timeoutPromise]);
-          clearTimeout(timer);
+          },aiDeadline);
 
           if (response?.text) {
             const parsed = JSON.parse(response.text);
@@ -150,7 +144,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           safeWarn(`[PARSE] Key ${key.name} model ${modelToUse} failed:`, err?.message);
           recordKeyResult(key.id, false, err?.message, 'temporary').catch(() => {});
           // If timed out or throttled, immediately try next key
-          break;
+          if(!tryNextModel(err))break;
         }
       }
     }

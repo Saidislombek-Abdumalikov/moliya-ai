@@ -35,7 +35,7 @@ const categories: Record<EntryType, string[]> = {
 export async function parseAIText(text: string, cardsList: any[] = [], userId?: string): Promise<{ type: EntryType; amount: string; category: string; note: string; title?: string; debtWho?: string; date?: string; cardId?: string }> {
   if (transactionParts(text)?.length !== 1) throw new Error(TRANSACTION_CLARIFICATION)
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), 12000)
+  const timeoutId = setTimeout(() => controller.abort(), 40000)
   let res: Response
   try {
     res = await fetch('/api/parse-expense', {
@@ -48,6 +48,7 @@ export async function parseAIText(text: string, cardsList: any[] = [], userId?: 
 
   if (res.status === 401) throw new Error('SESSION_REQUIRED');
   if (res.status === 403) throw new Error('ACCOUNT_RESTRICTED');
+  if (res.status >= 500) {const failure=await res.json().catch(()=>({}));throw new Error(failure.error==='AI_NOT_CONFIGURED'?'AI_NOT_CONFIGURED':'AI_SERVICE_UNAVAILABLE');}
   if (res.status === 422) throw new Error(TRANSACTION_CLARIFICATION)
   if (res.status === 429) {
     const error = await res.json().catch(() => ({}))
@@ -74,6 +75,7 @@ export async function parseAIText(text: string, cardsList: any[] = [], userId?: 
 export default function AIButton({ visible = true, language = 'uz' }: { visible?: boolean; language?: 'uz' | 'uz_cyrl' | 'ru' | 'en' }) {
   const copy = aiButtonCopy(language)
   const sessionMessage = ({uz:'Sessiya tugagan. Bot orqali qayta kiring.',uz_cyrl:'Сессия тугаган. Бот орқали қайта киринг.',ru:'Сессия истекла. Войдите через бота снова.',en:'Session expired. Sign in through the bot again.'})[language];
+  const serviceMessage = ({uz:'AI xizmatidan javob kelmadi. Birozdan so‘ng qayta urinib ko‘ring.',uz_cyrl:'AI хизматидан жавоб келмади. Бироздан сўнг қайта уриниб кўринг.',ru:'Сервис ИИ не ответил. Попробуйте немного позже.',en:'The AI service did not respond. Please try again shortly.'})[language];
   const restrictedMessage = ({uz:'Hisobga kirish cheklangan. Botdagi tasdiqlarni tekshiring.',uz_cyrl:'Ҳисобга кириш чекланган. Ботдаги тасдиқларни текширинг.',ru:'Доступ ограничен. Проверьте подтверждения в боте.',en:'Access restricted. Check your verification in the bot.'})[language];
   const typeIndex = (type: EntryType) => (Object.keys(typeConfig) as EntryType[]).indexOf(type)
   const { addTransaction, hasSampleData, setHasSampleData, cards, userId } = useFinance()
@@ -115,13 +117,15 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
           const res = await fetch('/api/parse-receipt', {
             method: 'POST',
             headers: getClientAuthHeaders(),
-            body: JSON.stringify({ base64Image: base64Data, mimeType: file.type, userId })
+            body: JSON.stringify({ base64Image: base64Data, mimeType: file.type, userId }),
+            signal: AbortSignal.timeout(45000)
           })
 
           if (res.status === 401 || res.status === 403) {
             setAiError(res.status === 401 ? sessionMessage : restrictedMessage);
             setStep('form'); return;
           }
+          if (res.status >= 500) {setAiError(serviceMessage);setStep('form');return;}
           if (res.status === 429) {
             setAiError(copy.receiptLimit);
             setStep('form');
@@ -154,12 +158,13 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
           setStep('form')
         } catch (err: any) {
           console.error(err)
-          setAiError(copy.receiptFailed)
+          setAiError(err?.name === 'TimeoutError' || err?.name === 'AbortError' ? serviceMessage : copy.receiptFailed)
           setStep('form')
         } finally {
           setIsProcessing(false)
         }
       }
+      reader.onerror = () => {setAiError(copy.receiptFailed);setIsProcessing(false);setStep('form');}
       reader.readAsDataURL(file)
     } catch (err) {
       console.error(err)
@@ -217,7 +222,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
       console.error(e)
       setEntry(prev=>({...prev,amount:''}));
       const errTxt = e?.message || '';
-      setAiError(errTxt === 'SESSION_REQUIRED' ? sessionMessage : errTxt === 'ACCOUNT_RESTRICTED' ? restrictedMessage : errTxt === TRANSACTION_CLARIFICATION ? copy.clarify : /limit|quota|429/i.test(errTxt) ? copy.quota : copy.parseFailed);
+      setAiError(errTxt === 'SESSION_REQUIRED' ? sessionMessage : errTxt === 'ACCOUNT_RESTRICTED' ? restrictedMessage : ['AI_SERVICE_UNAVAILABLE','AI_NOT_CONFIGURED'].includes(errTxt) || e?.name === 'AbortError' ? serviceMessage : errTxt === TRANSACTION_CLARIFICATION ? copy.clarify : /limit|quota|429/i.test(errTxt) ? copy.quota : copy.parseFailed);
       setStep('form');
     } finally {
       setIsProcessing(false)
@@ -371,7 +376,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
             note: resultText,
             amount: ''
           }))
-          setAiError(e?.message === 'SESSION_REQUIRED' ? sessionMessage : e?.message === 'ACCOUNT_RESTRICTED' ? restrictedMessage : e?.message === TRANSACTION_CLARIFICATION ? copy.clarify : copy.parseFailed)
+          setAiError(e?.message === 'SESSION_REQUIRED' ? sessionMessage : e?.message === 'ACCOUNT_RESTRICTED' ? restrictedMessage : ['AI_SERVICE_UNAVAILABLE','AI_NOT_CONFIGURED'].includes(e?.message) || e?.name === 'AbortError' ? serviceMessage : e?.message === TRANSACTION_CLARIFICATION ? copy.clarify : copy.parseFailed)
           setStep('form')
         } finally {
           setIsProcessing(false)
@@ -514,8 +519,8 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
         className="gpu-layer"
         style={{
           position: 'fixed',
-          bottom: 'calc(env(safe-area-inset-bottom, 12px) + 82px)',
-          left: 'min(calc(50% + var(--app-max-width, 430px) / 2 - 76px), calc(100vw - 76px))',
+          bottom: 'calc(env(safe-area-inset-bottom, 0px) + 2cm)',
+          right: 'calc(max(0px, (100vw - var(--app-max-width, 430px)) / 2) + 2cm)' ,
           width: 56,
           height: 56,
           borderRadius: 18,

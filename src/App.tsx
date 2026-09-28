@@ -45,9 +45,9 @@ export default function App() {
     Boolean(onboarding?.phone && isValidPhoneNumber(onboarding.phone)));
 
   useEffect(() => {
-    setShowTour(registered && !!userId && dismissedTourFor.current !== userId &&
+    setShowTour(isAuthReady && registered && !!userId && dismissedTourFor.current !== userId &&
       !tourDone(localStorage, userId, onboarding?.tour_completed === true));
-  }, [registered, userId, onboarding?.tour_completed]);
+  }, [isAuthReady, registered, userId, onboarding?.tour_completed]);
 
   // Telegram Mini App viewport initialization & auto-expand
   // CRITICAL: This MUST be before conditional returns to avoid hooks violation
@@ -213,7 +213,7 @@ export default function App() {
 
       <BottomNav active={activeScreen} onChange={setActiveScreen} language={onboarding?.language} />
       <Suspense fallback={null}><AIButton visible={activeScreen !== 'profile'} language={onboarding?.language || 'uz'} /></Suspense>
-      {!isTelegramMiniApp() && <InstallPromptModal />}
+      {!showTour && !isTelegramMiniApp() && <InstallPromptModal />}
       {showTour && <Suspense fallback={null}><AppTour
         isOpen={showTour} 
         onClose={() => {

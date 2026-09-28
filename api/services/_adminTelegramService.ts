@@ -1,4 +1,4 @@
-import {normalizeTelegramKeyboard} from '../_telegramKeyboard.js';
+import {normalizeTelegramKeyboard,hasTelegramLinkButton} from '../_telegramKeyboard.js';
 import {supabase} from '../_supabaseClient.js';
 import {accountDenied} from '../_userPolicy.js';
 import {updateProfileSnapshot} from './_profileWriteService.js';
@@ -44,6 +44,7 @@ export async function adminTelegram(input:any) {
   }
 
  }
+ if(method.startsWith('send') && hasTelegramLinkButton(payload.reply_markup)) payload.protect_content=true;
  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),10000);
  try{
   const response=await fetch(`https://api.telegram.org/bot${token}/${method}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:controller.signal});

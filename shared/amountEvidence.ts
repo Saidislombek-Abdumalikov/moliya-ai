@@ -55,7 +55,7 @@ export function amountParts(source:string):string[]|null{
 }
 
 // This is a conservative recording gate, not a general-purpose language classifier.
-export const TRANSACTION_CLARIFICATION = 'Haqiqiy xarajat yoki daromadni aniq yozing: «taksiga 30 ming sarfladim». Savol, reja yoki noaniq matn saqlanmaydi.';
+export const TRANSACTION_CLARIFICATION = '🤔 Yozuv aniq emas. Summa va amalni yozing:\n• Taksiga 30 ming sarfladim\n• 5 mln maosh oldim\n• 100 ming qarz oldim / qarz berdim\nHozircha hech narsa saqlanmadi.';
 export function hasTransactionIntent(source:string):boolean {
  const text=source.toLowerCase().replace(/[`ʻ‘’ʼ]/g,"'").trim();
  if(/[?？]/.test(text) || /\b(?:qancha|necha|nima|nega|qanday|agar|ertaga|keyin|reja\w*|kerak|narx\w*|turadi|bo'ladi|bo'lsa|emas|yo'q|olmoqchi\w*|bermoqchi\w*|sarflamoqchi\w*|sarflayman|olaman|beraman|to'layman|would|could|will|price|if|not|tomorrow)\b/.test(text))return false;

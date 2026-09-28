@@ -410,14 +410,14 @@ export const TURBO_CATEGORY_MAP = [
     regex: /\b(maosh\w*|mayosh\w*|oylik\w*|avans\w*|ish\s+haqi|zarplata\w*|stipendiya\w*|tushdi|keldi|berishdi|topdim|daromad\w*|gonorar\w*)\b/i
   },
   {
-    category: 'Do\'st',
+    category: 'Boshqa',
     type: 'lending' as const,
-    regex: /\b(qarz\s*(?:berdim|bervordim)|qarzga\s*(?:berdim|bervordim))\b/i
+    regex: /^(?=.*\bqarz(?:ga)?\b)(?=.*\b(?:berdim|bervordim)\b)/i
   },
   {
-    category: 'Do\'st',
+    category: 'Boshqa',
     type: 'debt' as const,
-    regex: /\b(qarz\s*(?:oldim|oluvdim)|qarzga\s*(?:oldim|oluvdim))\b/i
+    regex: /^(?=.*\bqarz(?:ga)?\b)(?=.*\b(?:oldim|oluvdim)\b)/i
   }
 ];
 
@@ -492,6 +492,8 @@ export function normalizeUzbekFinancialText(rawText: string): NormalizedFinancia
 export function parseTurboFinancialText(rawText: string, todayStr?: string): TurboParseResult | null {
   if (!rawText || typeof rawText !== 'string') return null;
   const clean = rawText.trim();
+  if (/\b(?:maosh|oylik|avans)\w*\b/i.test(clean) && /\b(?:berdim|bervordim)\b/i.test(clean)) return null;
+  if (/\b(?:qaytardim|qaytarib|qaytdi|qaytarishdi|uzdim|uzildi|qutuldim)\b/i.test(clean) && /qarz/i.test(clean)) return null;
   const lower = clean.toLowerCase().replace(/[`ʻ‘’]/g, "'");
   const fallbackDate = todayStr || getServerDateTimeContext().currentDate;
 
@@ -580,6 +582,7 @@ function parseSingleTurboTransaction(text: string, todayStr: string): TurboTrans
   let matched = false;
 
   const typeMatches = TURBO_CATEGORY_MAP.filter(item => item.regex.test(text));
+  if (/\bqarz(?:ga)?\b/i.test(text) && !typeMatches.some(item => ['debt','lending'].includes(item.type))) return null;
   if (new Set(typeMatches.map(item => item.type)).size > 1) return null;
   const ambiguousCategory = new Set(typeMatches.map(item => item.category)).size > 1;
   for (const item of typeMatches) {
@@ -736,6 +739,7 @@ CRITICAL UZBEK NUMBER & CATEGORY RULES:
 Rules:
 - Never invent, estimate or infer a missing amount. If missing or ambiguous, return amount:null and needs_clarification:true. Do not use quantities, dates, phone numbers or model numbers as amounts.
 - If relative date (e.g. "kecha", "bugun"), calculate YYYY-MM-DD from ${ctx.currentDate}. If no date, use ${ctx.currentDate}.
+- Amount alone does not establish transaction type. Borrowing is not income; lending is not an expense. Repaying an existing debt must not become a new debt/lending record: ask for clarification. Never invent a relationship such as friend/family; use Boshqa when unknown.
 - 'debt' = borrowed money from someone; 'lending' = lent money to someone. Fill 'debtWho' with the person's name if present.
 - 'title': short 2-3 word title. 'note': clean description with currency annotation.
 
@@ -948,6 +952,13 @@ export function validateAiFinancialOutput(rawJson: any, normalizedInput: Normali
     };
   }
 
+  const source=normalizedInput.originalText.toLowerCase().replace(/[`ʻ‘’ʼ]/g, "'");
+  const debtRepayment=/qarz/.test(source) && /\b(?:qaytardim|qaytarib|qaytdi|qaytarishdi|uzdim|uzildi|qutuldim)\b/.test(source);
+  const outgoing=/\b(?:sarfladim|ishlatdim|to'ladim|toladim|spent|paid)\b/.test(source);
+  const paidIncomeLabel=normalizedInput.inferredType==='income' && /\b(?:berdim|bervordim)\b/.test(source);
+  const ambiguousDebt=/\bqarz(?:ga)?\b/.test(source) && !['debt','lending'].includes(normalizedInput.inferredType || '');
+  if(debtRepayment || paidIncomeLabel || ambiguousDebt || (outgoing && rawJson.type !== 'expense'))
+    return {isValid:false,type:'expense',amount:0,category:'Boshqa',name:'',note:'',...defaultParsed,error:AMOUNT_CLARIFICATION};
   const evidence=explicitAmount(normalizedInput.originalText);
   const sourceTypes = new Set(TURBO_CATEGORY_MAP.filter(item => item.regex.test(normalizedInput.originalText)).map(item => item.type));
   const sourceCategories = new Set(TURBO_CATEGORY_MAP.filter(item => item.regex.test(normalizedInput.originalText)).map(item => item.category));

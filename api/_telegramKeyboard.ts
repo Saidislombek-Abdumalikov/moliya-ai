@@ -25,3 +25,10 @@ export function normalizeTelegramKeyboard(markup:any):any {
     });
   })};
 }
+
+// Telegram protects the message; this is not authentication or URL secrecy.
+export function hasTelegramLinkButton(markup: any): boolean {
+  return Array.isArray(markup?.inline_keyboard) && markup.inline_keyboard.some((row: any) =>
+    Array.isArray(row) && row.some((button: any) =>
+      typeof button?.url === 'string' || typeof button?.web_app?.url === 'string'));
+}

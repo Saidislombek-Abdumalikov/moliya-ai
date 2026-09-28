@@ -3,7 +3,7 @@ import { motion } from 'motion/react'
 import type { OnboardingResult } from './Onboarding'
 import { useFinance, baseTransactions } from '../FinanceContext'
 import { financialKind, financialTotals } from '../../shared/financialTotals'
-import { answerFinancialQuestion, financialInsight } from '../../shared/financialAssistant'
+import { financialInsight } from '../../shared/financialAssistant'
 
 interface Props {
   onboarding?: OnboardingResult | null
@@ -180,8 +180,6 @@ export default function AnalyticsScreen({ onboarding }: Props) {
   const t = translations[lang as keyof typeof translations]
 
   const [period, setPeriod] = useState<'daily' | 'weekly' | 'monthly' | 'all'>('monthly')
-  const [assistantQuestion, setAssistantQuestion] = useState('')
-  const [submittedQuestion, setSubmittedQuestion] = useState('')
 
   const firstExpense = onboarding?.firstExpense
   // Advice uses saved records only; sample/demo transactions never become personal facts.
@@ -531,21 +529,7 @@ export default function AnalyticsScreen({ onboarding }: Props) {
           <p style={{ fontSize: 13, color: '#5B21B6', lineHeight: 1.65, opacity: 0.85 }}>
             {financialInsight(realRecords, lang as 'uz' | 'uz_cyrl' | 'ru' | 'en')}
           </p>
-          <form onSubmit={e => { e.preventDefault(); setSubmittedQuestion(assistantQuestion.trim()) }}
-            style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-            <input value={assistantQuestion} maxLength={300} onChange={e => setAssistantQuestion(e.target.value)}
-              placeholder={lang === 'ru' ? 'Сколько я потратил в этом месяце?' : lang === 'en' ? 'How much did I spend this month?' : lang === 'uz_cyrl' ? 'Шу ой қанча сарфладим?' : 'Shu oy qancha sarfladim?'}
-              aria-label={lang === 'ru' ? 'Финансовый вопрос' : lang === 'en' ? 'Financial question' : 'Moliyaviy savol'}
-              style={{ flex: 1, minWidth: 0, padding: 10, borderRadius: 10, border: '1px solid #D9D2ED' }} />
-            <button type="submit" disabled={!assistantQuestion.trim()}
-              style={{ border: 0, borderRadius: 10, background: '#7C3AED', color: '#fff', padding: '8px 12px', cursor: 'pointer' }}>
-              {lang === 'ru' ? 'Спросить' : lang === 'en' ? 'Ask' : lang === 'uz_cyrl' ? 'Сўраш' : 'So‘rash'}
-            </button>
-          </form>
-          {submittedQuestion && <p role="status" style={{ fontSize: 13, color: '#4C1D95', whiteSpace: 'pre-line', marginTop: 12 }}>
-            {answerFinancialQuestion(submittedQuestion, realRecords, lang as 'uz' | 'uz_cyrl' | 'ru' | 'en') ||
-              (lang === 'ru' ? 'Спросите о доходах, расходах или совете.' : lang === 'en' ? 'Ask about income, expenses or advice.' : 'Daromad, xarajat yoki maslahat haqida so‘rang.')}
-          </p>}
+
         </div>
       </div>
     </div>

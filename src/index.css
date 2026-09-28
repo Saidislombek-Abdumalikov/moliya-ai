@@ -56,7 +56,7 @@ html, body {
 .app-container { min-height: 100%; touch-action: auto; }
 .gpu-layer { -webkit-overflow-scrolling: touch; }
 @media (min-width: 768px) and (pointer: fine) {
-  #root { --app-max-width: 720px; scrollbar-width: thin; scrollbar-color: #C4B5FD transparent; }
+  #root { scrollbar-width: thin; scrollbar-color: #C4B5FD transparent; }
 }
 @media (pointer: coarse) {
   #root { overscroll-behavior-y: none; }
@@ -73,6 +73,17 @@ button, input, select, textarea {
   font-family: inherit;
   transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
   touch-action: manipulation;
+}
+
+/* Desktop uses the same phone-width layout. Only actionable controls get a
+   hand cursor; report text and editable inputs keep normal selection cursors. */
+:where(button, a[href], [role="button"], summary, select,
+  input[type="button"], input[type="submit"], input[type="reset"],
+  input[type="checkbox"], input[type="radio"], label[for]) {
+  cursor: pointer;
+}
+:where(button, input, select):disabled, [aria-disabled="true"] {
+  cursor: not-allowed !important;
 }
 
 button:active {
