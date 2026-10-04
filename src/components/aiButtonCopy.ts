@@ -2,6 +2,7 @@ export type AppLanguage = 'uz' | 'uz_cyrl' | 'ru' | 'en';
 
 const copy = {
   uz: {
+    throttle: "So‘rovlar juda tez yuborildi. Biroz kutib qayta urinib ko‘ring.",
     types: ['Xarajat', 'Daromad', 'Qarz oldim', 'Qarz berdim'],
     voice: ['Qancha xarajat qildingiz va nima uchun?', 'Qancha daromad oldingiz?', 'Kimdan qancha qarz oldingiz?', 'Kimga qancha pul berdingiz?'],
     amount: "SUMMA (SO'M)", category: 'KATEGORIYA', account: 'HISOBNI TANLANG', cash: 'Naqd pul (Umumiy balans)', date: 'SANA VA VAQT', note: 'IZOH', optional: 'Ixtiyoriy...',
@@ -10,6 +11,7 @@ const copy = {
     tips: ["💡 Xarajatlarni muntazam yozib boring.", "⚡ Summani tekshirib, keyin saqlang.", "🎯 Oylik limitingizni kuzating.", "👑 VIP imkoniyatlarini profil orqali ko'ring."]
   },
   uz_cyrl: {
+    throttle: "Сўровлар жуда тез юборилди. Бироз кутиб қайта уриниб кўринг.",
     types: ['Харажат', 'Даромад', 'Қарз олдим', 'Қарз бердим'],
     voice: ['Қанча харажат қилдингиз ва нима учун?', 'Қанча даромад олдингиз?', 'Кимдан қанча қарз олдингиз?', 'Кимга қанча пул бердингиз?'],
     amount: 'СУММА (СЎМ)', category: 'ТОИФА', account: 'ҲИСОБНИ ТАНЛАНГ', cash: 'Нақд пул (Умумий баланс)', date: 'САНА ВА ВАҚТ', note: 'ИЗОҲ', optional: 'Ихтиёрий...',
@@ -18,6 +20,7 @@ const copy = {
     tips: ['💡 Харажатларни мунтазам ёзиб боринг.', '⚡ Суммани текшириб, кейин сақланг.', '🎯 Ойлик лимитингизни кузатинг.', '👑 VIP имкониятларини профил орқали кўринг.']
   },
   ru: {
+    throttle: "Слишком много запросов. Немного подождите и повторите.",
     types: ['Расход', 'Доход', 'Взял в долг', 'Дал в долг'],
     voice: ['Сколько потратили и на что?', 'Сколько получили?', 'У кого и сколько заняли?', 'Кому и сколько одолжили?'],
     amount: 'СУММА (СУМ)', category: 'КАТЕГОРИЯ', account: 'ВЫБЕРИТЕ СЧЁТ', cash: 'Наличные (общий баланс)', date: 'ДАТА И ВРЕМЯ', note: 'ПРИМЕЧАНИЕ', optional: 'Необязательно...',
@@ -26,6 +29,7 @@ const copy = {
     tips: ['💡 Регулярно записывайте расходы.', '⚡ Проверяйте сумму перед сохранением.', '🎯 Следите за месячным лимитом.', '👑 Возможности VIP доступны в профиле.']
   },
   en: {
+    throttle: "Too many requests. Wait a moment and try again.",
     types: ['Expense', 'Income', 'Borrowed', 'Lent'],
     voice: ['How much did you spend and on what?', 'How much did you earn?', 'How much did you borrow and from whom?', 'How much did you lend and to whom?'],
     amount: 'AMOUNT (UZS)', category: 'CATEGORY', account: 'SELECT ACCOUNT', cash: 'Cash (total balance)', date: 'DATE AND TIME', note: 'NOTE', optional: 'Optional...',
@@ -36,10 +40,14 @@ const copy = {
 } as const;
 
 const categories: Record<AppLanguage, Record<string, string>> = {
-  uz: {},
-  uz_cyrl: {'Oziq-ovqat':'Озиқ-овқат','Transport':'Транспорт',"Ko'ngil ochar":'Кўнгилочар','Kiyim':'Кийим','Kommunal':'Коммунал','Sog\'liq':'Соғлиқ','Ta\'lim':'Таълим','Boshqa':'Бошқа','Maosh':'Маош','Freelance':'Эркин иш','Biznes':'Бизнес','Investitsiya':'Инвестиция','Sovg\'a':'Совға','Do\'st':'Дўст','Bank':'Банк','Oila':'Оила','Hamkasb':'Ҳамкасб'},
-  ru: {'Oziq-ovqat':'Продукты','Transport':'Транспорт',"Ko'ngil ochar":'Развлечения','Kiyim':'Одежда','Kommunal':'Коммунальные','Sog\'liq':'Здоровье','Ta\'lim':'Образование','Boshqa':'Другое','Maosh':'Зарплата','Freelance':'Фриланс','Biznes':'Бизнес','Investitsiya':'Инвестиции','Sovg\'a':'Подарок','Do\'st':'Друг','Bank':'Банк','Oila':'Семья','Hamkasb':'Коллега'},
-  en: {'Oziq-ovqat':'Food','Transport':'Transport',"Ko'ngil ochar":'Entertainment','Kiyim':'Clothing','Kommunal':'Utilities','Sog\'liq':'Health','Ta\'lim':'Education','Boshqa':'Other','Maosh':'Salary','Freelance':'Freelance','Biznes':'Business','Investitsiya':'Investment','Sovg\'a':'Gift','Do\'st':'Friend','Bank':'Bank','Oila':'Family','Hamkasb':'Colleague'}
+  uz: {
+    throttle: "So‘rovlar juda tez yuborildi. Biroz kutib qayta urinib ko‘ring.",},
+  uz_cyrl: {
+    throttle: "Сўровлар жуда тез юборилди. Бироз кутиб қайта уриниб кўринг.",'Oziq-ovqat':'Озиқ-овқат','Transport':'Транспорт',"Ko'ngil ochar":'Кўнгилочар','Kiyim':'Кийим','Kommunal':'Коммунал','Sog\'liq':'Соғлиқ','Ta\'lim':'Таълим','Boshqa':'Бошқа','Maosh':'Маош','Freelance':'Эркин иш','Biznes':'Бизнес','Investitsiya':'Инвестиция','Sovg\'a':'Совға','Do\'st':'Дўст','Bank':'Банк','Oila':'Оила','Hamkasb':'Ҳамкасб'},
+  ru: {
+    throttle: "Слишком много запросов. Немного подождите и повторите.",'Oziq-ovqat':'Продукты','Transport':'Транспорт',"Ko'ngil ochar":'Развлечения','Kiyim':'Одежда','Kommunal':'Коммунальные','Sog\'liq':'Здоровье','Ta\'lim':'Образование','Boshqa':'Другое','Maosh':'Зарплата','Freelance':'Фриланс','Biznes':'Бизнес','Investitsiya':'Инвестиции','Sovg\'a':'Подарок','Do\'st':'Друг','Bank':'Банк','Oila':'Семья','Hamkasb':'Коллега'},
+  en: {
+    throttle: "Too many requests. Wait a moment and try again.",'Oziq-ovqat':'Food','Transport':'Transport',"Ko'ngil ochar":'Entertainment','Kiyim':'Clothing','Kommunal':'Utilities','Sog\'liq':'Health','Ta\'lim':'Education','Boshqa':'Other','Maosh':'Salary','Freelance':'Freelance','Biznes':'Business','Investitsiya':'Investment','Sovg\'a':'Gift','Do\'st':'Friend','Bank':'Bank','Oila':'Family','Hamkasb':'Colleague'}
 };
 
 export const aiButtonCopy = (language: AppLanguage) => copy[language] || copy.uz;

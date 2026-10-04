@@ -108,7 +108,7 @@ assert.equal((await call(receipt,{base64Image:tinyPng,mimeType:'image/png',userI
 assert.equal(quotaCalls,receiptQuota);assert.equal(providerCalls.length,0);
 console.log('Text 400000 ishlatdim, authenticated audio, mismatched audio, malformed audio, receipt clarity and all modality auth gates passed.');
 reset([key('voice-key')],'audio-concurrent');result=await call(expense,{base64Audio:wav,userId});assert.equal(result.statusCode,200);assert.equal(audioStarted,2);
-reset([key('text-key')]);result=await call(expense,{text:'bugun kursga 2.5 mln sarfladim',userId});assert.equal(result.statusCode,200);assert.equal(result.body.amount,'2 500 000');assert.ok(JSON.stringify(providerBodies[0]).includes('2.5 mln'));assert.equal(result.body.category,"Ta'lim");
+reset([key('text-key')]);result=await call(expense,{text:'bugun kursga jami 2.5 mln pul sarfladim',userId});assert.equal(result.statusCode,200);assert.equal(result.body.amount,'2 500 000');assert.ok(JSON.stringify(providerBodies[0]).includes('2.5 mln'));assert.equal(result.body.category,"Ta'lim");
 console.log('Concurrent independent audio calls and original decimal-multiplier prompt passed.');
 let aborted=false;
 const fake:any={models:{generateContent:({config}:any)=>new Promise((_resolve,reject)=>{config.abortSignal.addEventListener('abort',()=>{aborted=true;reject(Error('aborted'))},{once:true})})}};

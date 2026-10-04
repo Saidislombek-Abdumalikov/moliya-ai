@@ -1,7 +1,7 @@
 import {parseReceiptImage} from './_receiptParser.js';
 import {audioMime,parseFinancialAudio} from './_audioParser.js';
 import {withVoiceProgress} from './_voiceEvidence.js';
-import {hasTelegramLinkButton} from './_telegramKeyboard.js';
+import {hasTelegramLinkButton,withBotAppLinks} from './_telegramKeyboard.js';
 import {generateBounded,tryNextModel} from './_aiCall.js';
 import {saveBotMessageTransactions,resolveBotDraft} from './services/_botDraftService.js';
 import { messageDeliveryKey, claimBotMessage, completeBotMessage } from './services/_botMessageDelivery.js';
@@ -80,6 +80,7 @@ async function editTelegramMessageReplyMarkup(chatId: number | string, messageId
 // transaction keyboards remain interactive even when a user starts the bot.
 async function sendOrReplaceSystemMessage(chatId: number | string, text: string,
   replyMarkup?: any, userId?: string, customType = 'bot_response') {
+  replyMarkup = withBotAppLinks(replyMarkup, appUrl);
   if (!BOT_TOKEN) return null;
   try {
     const response=await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,{
@@ -115,6 +116,7 @@ async function sendTelegramMessage(
   userId?: string,
   customType: string = 'bot_response'
 ) {
+  replyMarkup = withBotAppLinks(replyMarkup, appUrl);
   if (!BOT_TOKEN) {
     safeError('[BOT] TELEGRAM_BOT_TOKEN is missing');
     return null;
@@ -167,6 +169,7 @@ async function editTelegramMessage(
   userId?: string,
   customType: string = 'bot_response'
 ) {
+  replyMarkup = withBotAppLinks(replyMarkup, appUrl);
   if (!BOT_TOKEN) return null;
   try {
 

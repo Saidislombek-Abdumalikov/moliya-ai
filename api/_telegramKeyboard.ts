@@ -32,3 +32,21 @@ export function hasTelegramLinkButton(markup: any): boolean {
     Array.isArray(row) && row.some((button: any) =>
       typeof button?.url === 'string' || typeof button?.web_app?.url === 'string'));
 }
+
+// Keep both opening modes visible, without changing callbacks or issuing login tokens.
+export function withBotAppLinks(markup: any, appUrl: string): any {
+  if (!Array.isArray(markup?.inline_keyboard)) return markup;
+  const origin = new URL(appUrl).origin;
+  const isApp = (value: unknown) => {
+    try { return typeof value === 'string' && new URL(value).origin === origin; }
+    catch { return false; }
+  };
+  const buttons = markup.inline_keyboard.flat();
+  if (!buttons.some((b: any) => isApp(b?.web_app?.url))) return markup;
+  const rows = markup.inline_keyboard.flatMap((row: any[]) =>
+    row.some(b => isApp(b?.web_app?.url) || isApp(b?.url))
+      ? row.map(b => [b]) : [row]);
+  if (!buttons.some((b: any) => isApp(b?.url)))
+    rows.push([{text: '🌐 Veb-ilovani ochish', url: appUrl}]);
+  return {...markup, inline_keyboard: rows};
+}

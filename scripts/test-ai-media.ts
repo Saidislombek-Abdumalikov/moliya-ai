@@ -31,3 +31,14 @@ assert.equal(buildUzbekFinancialPrompt('100 dollar sarfladim').includes('11,850'
 console.log('AI review: decimal form amounts, education/medicine shorthand, source date and prompt currency rules passed.');
 
 assert.equal(parseTurboFinancialText('50k taksi va 100k bozor va 70 ming Akmalga berdim'),null,'A multi-entry message must not silently save only the recognized subset');
+
+const {formatMoneyInput}=await import('../shared/moneyInput.js');
+for(const [raw,expected] of [['1000','1 000'],['25000','25 000'],['12500.50','12 500.50'],['1000000,','1 000 000,'],['','']])assert.equal(formatMoneyInput(raw),expected);
+for(const text of ["Men bugun taksiga o'n ming so'm.","Taksi uchun 10 ming so'm."]) {
+ assert.equal(validateAudioReadings({transcription:text,type:'expense',amount:10000,category:'Transport'},{transcription:"Taksiga 10 ming so'm"})?.amount,10000,text);
+}
+for(const text of ["Men ertaga taksi uchun 10 ming so'm", "Men taksi uchun 10 ming so'm sarflamadim", "Taksi uchun 10 ming yoki 15 ming so'm"])
+ assert.equal(validateAudioReadings({transcription:text,type:'expense',amount:10000},{transcription:text}),null,text);
+console.log('Natural voice phrasing and thousands formatting passed; uncertain/future/negated recordings rejected.');
+
+assert.equal(parseTurboFinancialText('Men bugun taksi uchun 10 ming')?.transactions[0].amount,10000,'Clear short phrase must use local parser without cloud AI');

@@ -51,3 +51,17 @@ browser.dispatchEvent(event());assert.equal(pendingInstall(),null);
 delete browser.Telegram;(globalThis as any).location.hash='#tgWebAppPlatform=android';
 browser.dispatchEvent(event());assert.equal(pendingInstall(),null);
 console.log('Release fixes: session migration/logout, desktop viewport, URL keyboards and install suppression passed.');
+
+const {withBotAppLinks}=await import('../api/_telegramKeyboard.js');
+const origin='https://moliya-ai-pi.vercel.app';
+const input={inline_keyboard:[[{text:'App',web_app:{url:origin}},{text:'Edit',callback_data:'edit:123'}]]};
+const links=withBotAppLinks(input,origin);
+assert.equal(links.inline_keyboard.length,3);
+assert.equal(links.inline_keyboard[2][0].url,origin);
+assert.equal(links.inline_keyboard[1][0].callback_data,'edit:123');
+assert.equal(input.inline_keyboard.length,1);
+assert.deepEqual(withBotAppLinks(links,origin),links);
+const consent={inline_keyboard:[[{text:'Accept',callback_data:'accept_oferta:v1'}]]};
+assert.deepEqual(withBotAppLinks(consent,origin),consent);
+assert.equal(withBotAppLinks({inline_keyboard:[[{text:'App',web_app:{url:origin}},{text:'Web',url:origin+'?code=one-time'}]]},origin).inline_keyboard[1][0].url,origin+'?code=one-time');
+console.log('Bot opening modes: separate rows, web fallback, no duplicate, consent unchanged, login code retained.');

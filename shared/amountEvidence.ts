@@ -63,7 +63,7 @@ export function hasTransactionIntent(source:string):boolean {
  // Completed actions; longer statements still require the AI parser.
  if(/\b(?:sarfladim|ishlatdim|to'ladim|toladim|berdim|oldim|tushdi|topdim|spent|paid|earned|received)\b/.test(text))return true;
  // Shorthand is accepted only when every non-amount word is a known label.
- const tokens=text.replace(/\b(?:bugun|kecha|kechagi)\b/g,' ').replace(/[.,!]/g,' ').split(/\s+/).filter(Boolean);
+ const tokens=text.replace(/\b(?:men|bugun|kecha|kechagi|uchun)\b/g,' ').replace(/[.,!]/g,' ').split(/\s+/).filter(Boolean);
  const labels=new Set(['taksi','taksiga','taxi','bozor','bozorlik','bozorlikka','non','nonga','ovqat','ovqatga','maosh','oylik','ijara','ijaraga','benzin','benzinga','internet','internetga','kommunal','transport','kafe','kafega','kurs','kursga','kontrakt','kontraktga','kitob','kitobga','dori','doriga','kiyim','kiyimga','telefon','telefonga','ovqatlandim']);
  let labelCount=0;
  for(const token of tokens){
@@ -79,5 +79,5 @@ export function transactionParts(source:string):string[]|null {
  return parts && parts.every(hasTransactionIntent)?parts:null;
 }
 export function isShortTransaction(source:string):boolean {
- return !!transactionParts(source) && source.trim().split(/\s+/).length<=4;
+ return !!transactionParts(source) && source.toLowerCase().replace(/\b(?:men|bugun|kecha|kechagi|uchun)\b/g,' ').trim().split(/\s+/).length<=4;
 }

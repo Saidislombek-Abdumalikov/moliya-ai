@@ -1,4 +1,4 @@
-import {readMoneyInput} from '../../shared/moneyInput';
+import {readMoneyInput,formatMoneyInput} from '../../shared/moneyInput';
 import {prepareReceiptImage} from '../receiptImage';
 import {recordedWav,blobDataUrl} from '../audioRecorder';
 import {transactionParts,TRANSACTION_CLARIFICATION} from '../../shared/amountEvidence';
@@ -35,6 +35,13 @@ const categories: Record<EntryType, string[]> = {
   lending: ['Do\'st', 'Hamkasb', 'Oila', 'Boshqa'],
 }
 
+// HTTP 429 can mean temporary request throttling, not an exhausted daily quota.
+export async function ai429Code(response: Response): Promise<string> {
+  const data = await response.json().catch(() => ({}))
+  return ['QUOTA_EXCEEDED', 'quota_exceeded'].includes(data.error || data.code)
+    ? 'AI_QUOTA' : 'AI_RATE_LIMIT'
+}
+
 export async function parseAIText(text: string, cardsList: any[] = [], userId?: string): Promise<{ type: EntryType; amount: string; category: string; note: string; title?: string; debtWho?: string; date?: string; cardId?: string }> {
   if (transactionParts(text)?.length !== 1) throw new Error(TRANSACTION_CLARIFICATION)
   const controller = new AbortController()
@@ -54,8 +61,7 @@ export async function parseAIText(text: string, cardsList: any[] = [], userId?: 
   if (res.status >= 500) {const failure=await res.json().catch(()=>({}));throw new Error(failure.error==='AI_NOT_CONFIGURED'?'AI_NOT_CONFIGURED':'AI_SERVICE_UNAVAILABLE');}
   if (res.status === 422) throw new Error(TRANSACTION_CLARIFICATION)
   if (res.status === 429) {
-    const error = await res.json().catch(() => ({}))
-    throw new Error(error.message || 'AI limiti tugadi. Ma’lumotni qo‘lda kiriting.')
+    throw new Error(await ai429Code(res))
   }
   if (res.ok) {
     const data = await res.json()
@@ -132,7 +138,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
           }
           if (res.status >= 500) {setAiError(serviceMessage);setStep('form');return;}
           if (res.status === 429) {
-            setAiError(copy.receiptLimit);
+            setAiError((await ai429Code(res)) === 'AI_QUOTA' ? copy.quota : copy.throttle);
             setStep('form');
             return;
           }
@@ -235,7 +241,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
       console.error(e)
       setEntry(prev=>({...prev,amount:''}));
       const errTxt = e?.message || '';
-      setAiError(errTxt === 'SESSION_REQUIRED' ? sessionMessage : errTxt === 'ACCOUNT_RESTRICTED' ? restrictedMessage : ['AI_SERVICE_UNAVAILABLE','AI_NOT_CONFIGURED'].includes(errTxt) || e?.name === 'AbortError' ? serviceMessage : errTxt === TRANSACTION_CLARIFICATION ? copy.clarify : /limit|quota|429/i.test(errTxt) ? copy.quota : copy.parseFailed);
+      setAiError(errTxt === 'SESSION_REQUIRED' ? sessionMessage : errTxt === 'ACCOUNT_RESTRICTED' ? restrictedMessage : ['AI_SERVICE_UNAVAILABLE','AI_NOT_CONFIGURED'].includes(errTxt) || e?.name === 'AbortError' ? serviceMessage : errTxt === TRANSACTION_CLARIFICATION ? copy.clarify : errTxt === 'AI_RATE_LIMIT' ? copy.throttle : errTxt === 'AI_QUOTA' ? copy.quota : copy.parseFailed);
       setStep('form');
     } finally {
       setIsProcessing(false)
@@ -299,7 +305,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
           if(generation!==voiceGeneration.current)return
           if(response.status===401)throw new Error('SESSION_REQUIRED')
           if(response.status===403)throw new Error('ACCOUNT_RESTRICTED')
-          if(response.status===429)throw new Error('AI_QUOTA')
+          if(response.status===429)throw new Error(await ai429Code(response))
           if(response.status>=500)throw new Error('AI_SERVICE_UNAVAILABLE')
           if(!response.ok)throw new Error('AUDIO_UNCLEAR')
           const parsed=await response.json()
@@ -311,7 +317,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
         }catch(error:any){
           if(generation!==voiceGeneration.current)return
           setEntry(prev=>({...prev,amount:''}))
-          setAiError(error.message==='SESSION_REQUIRED'?sessionMessage:error.message==='ACCOUNT_RESTRICTED'?restrictedMessage:error.message==='AI_QUOTA'?copy.quota:error.message==='AI_SERVICE_UNAVAILABLE' || error.name==='AbortError'?serviceMessage:copy.clarify)
+          setAiError(error.message==='SESSION_REQUIRED'?sessionMessage:error.message==='ACCOUNT_RESTRICTED'?restrictedMessage:error.message==='AI_QUOTA'?copy.quota:error.message==='AI_RATE_LIMIT'?copy.throttle:error.message==='AI_SERVICE_UNAVAILABLE' || error.name==='AbortError'?serviceMessage:copy.clarify)
           setStep('form')
         }finally{
           clearTimeout(timeout)
@@ -982,10 +988,20 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                     type="text"
                     inputMode="decimal"
                     placeholder="0"
-                    value={entry.amount}
+                    value={formatMoneyInput(entry.amount)}
                     onChange={(e) => {
                       const raw=e.target.value.replace(/[\u00a0\u202f]/g,' ')
-                      if(/^[\d ]*(?:[.,]\d{0,2})?$/.test(raw))setEntry(prev=>({...prev,amount:raw}))
+                      if(/^[\d ]*(?:[.,]\d{0,2})?$/.test(raw)) {
+                        const input=e.target;
+                        const before=raw.slice(0,input.selectionStart ?? raw.length).replace(/ /g,'').length;
+                        const formatted=formatMoneyInput(raw);
+                        setEntry(prev=>({...prev,amount:formatted}));
+                        requestAnimationFrame(()=>{
+                          let index=0,count=0;
+                          while(index<formatted.length && count<before){if(formatted[index]!==' ')count++;index++;}
+                          if(document.activeElement===input)input.setSelectionRange(index,index);
+                        });
+                      }
                     }}
                     style={{
                       width: '100%',
