@@ -27,6 +27,8 @@ try {
   assert.equal(valid.type, 'expense')
   assert.equal(valid.amount, '30 000')
   checks++
+  globalThis.fetch = async () => new Response(JSON.stringify({type:'expense',amount:'12 500.50',category:'Boshqa'}),{status:200});
+  assert.equal((await parseAIText('12500.50 som ishlatdim')).amount,'12 500.50');checks++;
   let calls = 0
   globalThis.fetch = async () => { calls++; throw new Error('unexpected fetch') }
   await assert.rejects(parseAIText('suv 50 ming'), error => error instanceof Error && error.message === TRANSACTION_CLARIFICATION)

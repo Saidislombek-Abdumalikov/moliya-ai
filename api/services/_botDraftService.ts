@@ -21,3 +21,14 @@ export async function stageBotDraft(userId:string,chatId:number|string,messageId
 export async function resolveBotDraft(userId:string,id:string,action:'confirm'|'cancel') {
   return draftRpc(userId,id,action);
 }
+
+// Reuse the atomic draft RPC as an idempotency ledger, without a user prompt.
+// A repeated Telegram message cannot recreate a deleted or already-saved entry.
+export async function saveBotMessageTransactions(userId:string,chatId:number|string,messageId:number,items:any[]) {
+  const draft=await stageBotDraft(userId,chatId,messageId,items);
+  if(draft.status==='confirmed')return {status:'confirmed',replayed:true,transactions:[]};
+  if(draft.status!=='pending')throw new Error('BOT_TRANSACTION_NOT_SAVABLE');
+  const result=await resolveBotDraft(userId,draft.id,'confirm');
+  if(result.status!=='confirmed')throw new Error('BOT_TRANSACTION_NOT_SAVED');
+  return result;
+}

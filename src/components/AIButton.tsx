@@ -1,3 +1,6 @@
+import {readMoneyInput} from '../../shared/moneyInput';
+import {prepareReceiptImage} from '../receiptImage';
+import {recordedWav,blobDataUrl} from '../audioRecorder';
 import {transactionParts,TRANSACTION_CLARIFICATION} from '../../shared/amountEvidence';
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
@@ -56,7 +59,7 @@ export async function parseAIText(text: string, cardsList: any[] = [], userId?: 
   }
   if (res.ok) {
     const data = await res.json()
-    if (['expense', 'income', 'debt', 'lending'].includes(data.type) && typeof data.amount === 'string' && /^(?:[0-9]+|[1-9][0-9]{0,2}(?: [0-9]{3})+)$/.test(data.amount) && Number(data.amount.replace(/ /g, '')) > 0 && typeof data.category === 'string' && data.category.trim()) {
+    if (['expense', 'income', 'debt', 'lending'].includes(data.type) && readMoneyInput(data.amount) !== null && typeof data.category === 'string' && data.category.trim()) {
       return {
         type: data.type,
         amount: String(data.amount),
@@ -91,7 +94,10 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
   const [aiError, setAiError] = useState('')
   const [tipIndex, setTipIndex] = useState(0)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const recognitionRef = useRef<any>(null)
+  const recorderRef = useRef<MediaRecorder | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const voiceGeneration = useRef(0)
+  const requestRef = useRef<AbortController | null>(null)
   const isStartingVoiceRef = useRef(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -110,14 +116,13 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
     setIsProcessing(true)
     setAiError('')
     try {
-      const reader = new FileReader()
-      reader.onload = async () => {
-        const base64Data = reader.result as string
+      const base64Data = await prepareReceiptImage(file)
+      {
         try {
           const res = await fetch('/api/parse-receipt', {
             method: 'POST',
             headers: getClientAuthHeaders(),
-            body: JSON.stringify({ base64Image: base64Data, mimeType: file.type, userId }),
+            body: JSON.stringify({ base64Image: base64Data, mimeType: 'image/jpeg', userId }),
             signal: AbortSignal.timeout(45000)
           })
 
@@ -164,13 +169,21 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
           setIsProcessing(false)
         }
       }
-      reader.onerror = () => {setAiError(copy.receiptFailed);setIsProcessing(false);setStep('form');}
-      reader.readAsDataURL(file)
+
     } catch (err) {
-      console.error(err)
+      setAiError(copy.receiptFailed)
+      setStep('form')
       setIsProcessing(false)
-    }
+    } finally { e.target.value='' }
   }
+
+  useEffect(() => () => {
+    voiceGeneration.current++
+    requestRef.current?.abort()
+    if(timerRef.current)clearTimeout(timerRef.current)
+    if(recorderRef.current?.state==='recording')recorderRef.current.stop()
+    streamRef.current?.getTracks().forEach(track=>track.stop())
+  }, [])
 
   if (!visible) return null
 
@@ -229,215 +242,94 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
     }
   }
 
-  const getMicPermissionStatus = async (): Promise<'granted' | 'denied' | 'prompt'> => {
-    // 1. Query browser permission API if supported
-    if (typeof navigator !== 'undefined' && navigator.permissions?.query) {
-      try {
-        const result = await navigator.permissions.query({ name: 'microphone' as PermissionName })
-        if (result.state === 'granted') {
-          localStorage.setItem('mic_perm_granted', 'true')
-          return 'granted'
-        }
-        if (result.state === 'denied') {
-          localStorage.removeItem('mic_perm_granted')
-          return 'denied'
-        }
-        return result.state
-      } catch {
-        // Some environments (iOS Safari, older WebViews) throw on microphone query
-      }
-    }
-
-    // 2. Check cached permission flag
-    if (localStorage.getItem('mic_perm_granted') === 'true') {
-      return 'granted'
-    }
-
-    return 'prompt'
+  const stopVoice = () => {
+    voiceGeneration.current++
+    if(timerRef.current)clearTimeout(timerRef.current)
+    requestRef.current?.abort()
+    const rec=recorderRef.current
+    if(rec && rec.state!=='inactive')rec.stop()
+    recorderRef.current=null
+    streamRef.current?.getTracks().forEach(track=>track.stop())
+    streamRef.current=null
+    isStartingVoiceRef.current=false
+    setRecording(false)
+    setIsProcessing(false)
   }
 
-  const stopVoice = () => {
-    if (recognitionRef.current) {
-      try {
-        if (typeof recognitionRef.current.abort === 'function') {
-          recognitionRef.current.abort()
-        } else if (typeof recognitionRef.current.stop === 'function') {
-          recognitionRef.current.stop()
-        }
-      } catch {}
-      recognitionRef.current = null
-    }
-    setRecording(false)
-    isStartingVoiceRef.current = false
+  const finishVoice = () => {
+    if(timerRef.current)clearTimeout(timerRef.current)
+    const rec=recorderRef.current
+    if(rec?.state==='recording')rec.stop()
   }
 
   const startVoice = async () => {
-    // Prevent duplicate calls, rapid clicking, and race conditions
-    if (isStartingVoiceRef.current || recording) {
-      return
-    }
-    isStartingVoiceRef.current = true
-
-    try {
-      // Check if Web Speech API is supported before any permissions
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-      if (!SpeechRecognition) {
-        throw new Error("SPEECH_NOT_SUPPORTED")
+    if(isStartingVoiceRef.current || recording || isProcessing)return
+    isStartingVoiceRef.current=true
+    const generation=++voiceGeneration.current
+    setAiError('')
+    try{
+      if(!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder==='undefined')throw new Error('MIC_UNSUPPORTED')
+      const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true},video:false})
+      if(generation!==voiceGeneration.current){stream.getTracks().forEach(t=>t.stop());return}
+      streamRef.current=stream
+      const mime=['audio/webm;codecs=opus','audio/mp4','audio/ogg;codecs=opus'].find(type=>MediaRecorder.isTypeSupported(type))
+      const rec=new MediaRecorder(stream,mime?{mimeType:mime}:{})
+      recorderRef.current=rec
+      const chunks:Blob[]=[]
+      rec.ondataavailable=event=>{if(event.data.size)chunks.push(event.data)}
+      rec.onerror=()=>{
+        stopVoice();setStep('type');setAiError(copy.parseFailed)
       }
-
-      // Step 1: Check if permission is already granted or denied
-      const permStatus = await getMicPermissionStatus()
-
-      if (permStatus === 'denied') {
-        setRecording(false)
-        setStep('type')
-        setAiError(
-          (language === 'uz' || language === 'uz_cyrl')
-            ? (language === 'uz_cyrl'
-                ? "Микрофон рухсати берилмаган. Илтимос, браузер ёки Telegram созламаларидан микрофонга рухсат беринг 🎙️"
-                : "Mikrofon ruxsati berilmagan. Iltimos, brauzer yoki Telegram sozlamalaridan mikrofonga ruxsat bering 🎙️")
-            : language === 'ru'
-            ? 'Доступ к микрофону запрещен. Пожалуйста, разрешите доступ к микрофону в настройках 🎙️'
-            : 'Microphone permission denied. Please allow microphone access in your settings 🎙️'
-        )
-        return
-      }
-
-      // Step 2: If permission has NOT yet been granted ('prompt'), request ONCE via native getUserMedia.
-      // If already 'granted', SKIP getUserMedia completely to prevent double prompts!
-      if (permStatus !== 'granted') {
-        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-          try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-            stream.getTracks().forEach(t => t.stop())
-            localStorage.setItem('mic_perm_granted', 'true')
-          } catch (micErr: any) {
-            console.warn('Microphone permission denied by user/browser:', micErr)
-            localStorage.removeItem('mic_perm_granted')
-            setRecording(false)
-            setStep('type')
-            setAiError(
-              (language === 'uz' || language === 'uz_cyrl')
-                ? (language === 'uz_cyrl'
-                    ? "Микрофон рухсати берилмаган. Илтимос, браузер ёки Telegram созламаларидан микрофонга рухсат беринг 🎙️"
-                    : "Mikrofon ruxsati berilmagan. Iltimos, brauzer yoki Telegram sozlamalaridan mikrofonga ruxsat bering 🎙️")
-                : language === 'ru'
-                ? 'Доступ к микрофону запрещен. Пожалуйста, разрешите доступ к микрофону в настройках 🎙️'
-                : 'Microphone permission denied. Please allow microphone access in your settings 🎙️'
-            )
-            return
-          }
-        }
-      }
-
-      // Step 3: Clean up any previous speech recognition instance
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.abort ? recognitionRef.current.abort() : recognitionRef.current.stop()
-        } catch {}
-        recognitionRef.current = null
-      }
-
-      // Step 4: Start recording immediately
-      setStep('voice')
-      setRecording(true)
-
-      const rec = new SpeechRecognition()
-      rec.lang = (language === 'uz' || language === 'uz_cyrl') ? 'uz-UZ' : language === 'ru' ? 'ru-RU' : 'en-US'
-      rec.interimResults = false
-      rec.maxAlternatives = 1
-
-      rec.onresult = async (event: any) => {
-        const resultText = event.results[0][0].transcript
-        setRecording(false)
-        setIsProcessing(true)
-        setAiError('')
-
-        try {
-          const parsed = await parseAIText(resultText, cards, userId || undefined)
-          const localISOTime = (new Date(Date.now() - new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 16)
-          setEntry(prev => ({
-            ...prev,
-            type: parsed.type,
-            amount: parsed.amount,
-            note: resultText,
-            category: parsed.category,
-            title: parsed.title,
-            debtWho: parsed.debtWho,
-            date: parsed.date || localISOTime,
-            cardId: parsed.cardId || prev.cardId || 'cash',
-          }))
+      rec.onstop=async()=>{
+        stream.getTracks().forEach(track=>track.stop())
+        if(generation!==voiceGeneration.current)return
+        recorderRef.current=null;streamRef.current=null
+        if(timerRef.current)clearTimeout(timerRef.current)
+        setRecording(false);setIsProcessing(true)
+        const controller=new AbortController();requestRef.current=controller
+        const timeout=setTimeout(()=>controller.abort(),45000)
+        try{
+          const wav=await recordedWav(new Blob(chunks,{type:rec.mimeType}))
+          if(generation!==voiceGeneration.current)return
+          const dataUrl=await blobDataUrl(wav)
+          const response=await fetch('/api/parse-expense',{
+            method:'POST',headers:getClientAuthHeaders(),signal:controller.signal,
+            body:JSON.stringify({base64Audio:dataUrl.split(',')[1],userId})
+          })
+          if(generation!==voiceGeneration.current)return
+          if(response.status===401)throw new Error('SESSION_REQUIRED')
+          if(response.status===403)throw new Error('ACCOUNT_RESTRICTED')
+          if(response.status===429)throw new Error('AI_QUOTA')
+          if(response.status>=500)throw new Error('AI_SERVICE_UNAVAILABLE')
+          if(!response.ok)throw new Error('AUDIO_UNCLEAR')
+          const parsed=await response.json()
+          if(!['expense','income','debt','lending'].includes(parsed.type) || !Number.isFinite(Number(parsed.amount)) || Number(parsed.amount)<=0)throw new Error('AUDIO_UNCLEAR')
+          setSelectedType(parsed.type)
+          setAiText(parsed.transcription || '')
+          setEntry(prev=>({...prev,type:parsed.type,amount:String(parsed.amount),category:parsed.category || 'Boshqa',note:parsed.transcription || parsed.note || '',title:parsed.title,debtWho:parsed.debtWho,date:parsed.date,cardId:prev.cardId || 'cash'}))
           setStep('form')
-        } catch (e: any) {
-          console.error(e)
-          setAiText(resultText)
-          setEntry(prev => ({
-            ...prev,
-            note: resultText,
-            amount: ''
-          }))
-          setAiError(e?.message === 'SESSION_REQUIRED' ? sessionMessage : e?.message === 'ACCOUNT_RESTRICTED' ? restrictedMessage : ['AI_SERVICE_UNAVAILABLE','AI_NOT_CONFIGURED'].includes(e?.message) || e?.name === 'AbortError' ? serviceMessage : e?.message === TRANSACTION_CLARIFICATION ? copy.clarify : copy.parseFailed)
+        }catch(error:any){
+          if(generation!==voiceGeneration.current)return
+          setEntry(prev=>({...prev,amount:''}))
+          setAiError(error.message==='SESSION_REQUIRED'?sessionMessage:error.message==='ACCOUNT_RESTRICTED'?restrictedMessage:error.message==='AI_QUOTA'?copy.quota:error.message==='AI_SERVICE_UNAVAILABLE' || error.name==='AbortError'?serviceMessage:copy.clarify)
           setStep('form')
-        } finally {
-          setIsProcessing(false)
+        }finally{
+          clearTimeout(timeout)
+          if(generation===voiceGeneration.current){setIsProcessing(false);requestRef.current=null}
         }
       }
-
-      rec.onerror = (e: any) => {
-        console.error("Speech recognition error:", e)
-        stopVoice()
-        setStep('type')
-        if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-          localStorage.removeItem('mic_perm_granted')
-          setAiError(
-            (language === 'uz' || language === 'uz_cyrl')
-              ? (language === 'uz_cyrl'
-                  ? "Микрофон рухсати берилмаган. Илтимос, браузер ёки Telegram созламаларидан микрофонга рухсат беринг 🎙️"
-                  : "Mikrofon ruxsati berilmagan. Iltimos, brauzer yoki Telegram sozlamalaridan mikrofonga ruxsat bering 🎙️")
-              : language === 'ru'
-              ? 'Доступ к микрофону запрещен. Пожалуйста, разрешите доступ к микрофону в настройках 🎙️'
-              : 'Microphone permission denied. Please allow microphone access in your settings 🎙️'
-          )
-        } else {
-          setAiError(
-            (language === 'uz' || language === 'uz_cyrl')
-              ? (language === 'uz_cyrl'
-                  ? "Овозни таниш бу браузерда ишламади. Илтимос, матн билан ёзинг ёки Telegram Bot-ga овозли хабар юборинг 🎙️"
-                  : "Ovozni tanish bu brauzerda ishlamadi. Iltimos, matn bilan yozing yoki Telegram Bot-ga ovozli xabar yuboring 🎙️")
-              : language === 'ru'
-              ? 'Распознавание речи не сработало. Введите текст или отправьте голосовое боту 🎙️'
-              : 'Speech recognition did not work. Please type or send a voice message to Telegram Bot 🎙️'
-          )
-        }
-      }
-
-      rec.onend = () => {
-        setRecording(false)
-        isStartingVoiceRef.current = false
-      }
-
-      recognitionRef.current = rec
-      rec.start()
-    } catch (e: any) {
-      console.error("Voice start error:", e)
-      setRecording(false)
-      setStep('type')
-      if (e?.message === 'SPEECH_NOT_SUPPORTED') {
-        setAiError(
-          (language === 'uz' || language === 'uz_cyrl')
-            ? (language === 'uz_cyrl'
-                ? "Овозни таниш бу браузерда қўллаб-қувватланмайди. Илтимос, матн билан ёзинг ёки Telegram Bot-ga овозли хабар юборинг 🎙️"
-                : "Ovozni tanish bu brauzerda qo'llab-quvvatlanmaydi. Iltimos, matn bilan yozing yoki Telegram Bot-ga ovozli xabar yuboring 🎙️")
-            : language === 'ru'
-            ? 'Распознавание речи не поддерживается. Введите текст или отправьте голосовое боту 🎙️'
-            : 'Speech recognition is not supported. Please type text or send a voice message to Telegram Bot 🎙️'
-        )
-      }
-    } finally {
-      isStartingVoiceRef.current = false
-    }
+      rec.start(1000)
+      setStep('voice');setRecording(true)
+      timerRef.current=setTimeout(()=>{if(rec.state==='recording')rec.stop()},45000)
+    }catch(error:any){
+      if(generation!==voiceGeneration.current)return
+      streamRef.current?.getTracks().forEach(t=>t.stop());streamRef.current=null
+      setStep('type');setRecording(false)
+      setAiError(error.name==='NotAllowedError'
+        ? ({uz:'🎙 Mikrofon uchun ruxsat bering: brauzer yoki Telegram sozlamalarini tekshiring.',uz_cyrl:'🎙 Микрофонга рухсат беринг: браузер ёки Telegram созламаларини текширинг.',ru:'🎙 Разрешите доступ к микрофону в настройках браузера или Telegram.',en:'🎙 Allow microphone access in your browser or Telegram settings.'})[language]
+        : ({uz:'🎙 Mikrofonni ochib bo‘lmadi. Ilovani yangilang va yana urinib ko‘ring.',uz_cyrl:'🎙 Микрофонни очиб бўлмади. Иловaни янгиланг ва яна уриниб кўринг.',ru:'🎙 Не удалось открыть микрофон. Обновите приложение и повторите.',en:'🎙 Could not open the microphone. Update the app and try again.'})[language])
+    }finally{if(generation===voiceGeneration.current)isStartingVoiceRef.current=false}
   }
-
 
   const handleSave = async () => {
     // Save transaction to context and Firestore
@@ -450,7 +342,8 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
       }
     }
 
-    let numAmount = Number(String(entry.amount).replace(/[^\d]/g, '')) || 0
+    let numAmount = readMoneyInput(entry.amount)
+    if(numAmount===null){setAiError(copy.clarify);return}
     const now = Date.now()
 
     if (entry.type === 'expense' || entry.type === 'lending') {
@@ -663,7 +556,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                     fontWeight: 800,
                     color: entry.type === 'income' ? '#16A34A' : '#DC2626',
                   }}>
-                    {entry.type === 'income' ? '+' : '-'}{Number(String(entry.amount).replace(/[^\d]/g, '') || 0).toLocaleString('uz-UZ').replace(/,/g, ' ')} so'm
+                    {entry.type === 'income' || entry.type === 'debt' ? '+' : '-'}{(readMoneyInput(entry.amount) || 0).toLocaleString('uz-UZ').replace(/,/g, ' ')} so'm
                   </span>
                   {entry.category && (
                     <span style={{ fontSize: 13, fontWeight: 600, color: '#5C548A' }}>
@@ -1030,6 +923,9 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                   ))}
                 </div>
 
+                <button onClick={finishVoice} disabled={!recording} style={{display:'block',margin:'24px auto 0',padding:'12px 24px',borderRadius:12,border:0,background:'#7C3AED',color:'white',cursor:'pointer'}}>
+                  {({uz:'To‘xtatish va tahlil qilish',uz_cyrl:'Тўхтатиш ва таҳлил қилиш',ru:'Остановить и разобрать',en:'Stop and analyze'})[language]}
+                </button>
                 <button onClick={() => { stopVoice(); setStep('type') }} style={{
                   marginTop: 28, padding: '10px 24px', borderRadius: 12,
                   border: '1px solid #E8E3F8', background: 'transparent',
@@ -1083,13 +979,13 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                     <div style={{ marginBottom: 14 }}>
                       <label style={{ fontSize: 12, color: '#8B82C4', fontWeight: 500, display: 'block', marginBottom: 6 }}>{copy.amount}</label>
                   <input
-                    type="tel"
+                    type="text"
+                    inputMode="decimal"
                     placeholder="0"
                     value={entry.amount}
                     onChange={(e) => {
-                      const raw = e.target.value.replace(/\D/g, '')
-                      const fmt = raw.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')
-                      setEntry((prev) => ({ ...prev, amount: fmt }))
+                      const raw=e.target.value.replace(/[\u00a0\u202f]/g,' ')
+                      if(/^[\d ]*(?:[.,]\d{0,2})?$/.test(raw))setEntry(prev=>({...prev,amount:raw}))
                     }}
                     style={{
                       width: '100%',
@@ -1286,15 +1182,15 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                   </button>
                   <button
                     onClick={handleSave}
-                    disabled={!entry.amount || isSaving}
+                    disabled={readMoneyInput(entry.amount)===null || isSaving}
                     style={{
                       flex: 1, padding: '14px',
                       borderRadius: 14, border: 'none',
-                      background: (!entry.amount || isSaving) ? '#EDE9FE' : '#7C3AED',
-                      color: (!entry.amount || isSaving) ? '#8B82C4' : '#fff',
+                      background: (readMoneyInput(entry.amount)===null || isSaving) ? '#EDE9FE' : '#7C3AED',
+                      color: (readMoneyInput(entry.amount)===null || isSaving) ? '#8B82C4' : '#fff',
                       fontSize: 15, fontWeight: 600, fontFamily: 'inherit',
-                      cursor: (!entry.amount || isSaving) ? 'default' : 'pointer',
-                      boxShadow: (entry.amount && !isSaving) ? '0 4px 16px rgba(124, 58, 237, 0.3)' : 'none',
+                      cursor: (readMoneyInput(entry.amount)===null || isSaving) ? 'default' : 'pointer',
+                      boxShadow: (readMoneyInput(entry.amount)!==null && !isSaving) ? '0 4px 16px rgba(124, 58, 237, 0.3)' : 'none',
                     }}
                   >
                     {isSaving

@@ -531,7 +531,7 @@ export function parseTurboFinancialText(rawText: string, todayStr?: string): Tur
       const single = parseSingleTurboTransaction(part, fallbackDate);
       if (single) multiResults.push(single);
     }
-    if (multiResults.length > 1) {
+    if (multiResults.length === parts.length) {
       return {
         intent: 'record_transaction',
         transactions: multiResults,
@@ -612,7 +612,18 @@ function parseSingleTurboTransaction(text: string, todayStr: string): TurboTrans
     }
   }
 
-  // A number alone does not prove a category or even an expense type.
+  // A completed spending verb establishes expense even without a category.
+  // Limit this shortcut to amount/currency words + the verb: arbitrary prose
+  // still goes through the AI parser rather than being guessed locally.
+  if (!matched && /\b(?:sarfladim|ishlatdim|to'ladim|toladim|spent|paid)\b/i.test(text)) {
+    const rest = text.toLowerCase().replace(/[`ʻ‘’ʼ]/g, "'")
+      .replace(/\b(?:sarfladim|ishlatdim|to'ladim|toladim|spent|paid|bugun|kecha)\b/g, '')
+      .replace(/\d+(?:[ .,]\d+)*/g, '')
+      .replace(/\b(?:so'm|som|sum|uzs|ming|mln|million|dollar|usd|eur|euro|rubl|rub|k|m)\b/g, '')
+      .replace(/[\s.,!$€₽]/g, '');
+    if (!rest) { matched = true; type = 'expense'; category = 'Boshqa'; }
+  }
+  // A number alone is never a transaction.
   if (!matched) return null;
 
   // Counterparty Detection: e.g. "Akmalga 200$ qarz berdim", "Sardordan 100 ming oldim"
@@ -721,20 +732,16 @@ ${sanitizedInput}
 
 Categories: 'Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\\'liq', 'Ta\\'lim', 'Ko\\'ngil ochar', 'Maosh', 'Freelance', 'Biznes', 'Sovg\\'a', 'Investitsiya', 'Boshqa'.
 Types: 'expense', 'income', 'debt', 'lending'.
-Currency: Default is Uzbek So'm (UZS). Extract amount as integer in UZS.
+Currency: Default is Uzbek So'm (UZS). Preserve exact amounts, including decimals.
 
-CRITICAL CURRENCY CONVERSION RULES (Live Bank.uz rates):
-- If amount is in USD ($ / dollar / usd / доллар), convert to Uzbek So'm at live market rate from bank.uz (~11,850 UZS). E.g. "400$" -> 4740000. "100 dollar" -> 1185000. "50$" -> 592500. Always include the original dollar amount in the note (e.g. note: "telefon 400$ (~4 740 000 so'm)").
-- If amount is in RUB (rubl / руб / ₽), convert at live rate 1 RUB ≈ 136 UZS. E.g. "1000 rubl" -> 136000.
-- If amount is in EUR (€ / euro / yevro), convert at live rate 1 EUR ≈ 13,620 UZS.
-- If amount is in GBP (£ / funt), convert at live rate 1 GBP ≈ 15,980 UZS.
-- If amount is in KZT (₸ / tenge), convert at live rate 1 KZT ≈ 27 UZS.
+CURRENCY RULES:
+Extract the original amount and currency. Never convert currency yourself or invent an exchange rate. The server calculates UZS from source text using its configured currency data. Preserve the original currency in the note.
 
 CRITICAL UZBEK NUMBER & CATEGORY RULES:
 - "ming" / "минг" / "k" = THOUSAND (1,000 UZS). E.g. "500 ming" = 500000 (500 thousand, NEVER 500 million!). E.g. "30 ming" = 30000.
 - "million" / "млн" / "mln" = MILLION (1,000,000 UZS). E.g. "14 mln" = 14000000.
 - NEVER confuse "ming" with "million"!
-- Courses and study ("kurs", "o'qish", "kontrakt", "maktab", "repetitor", "dars", "kitob") are ALWAYS category: "Ta'lim", type: "expense".
+- Courses and study ("kurs", "o'qish", "kontrakt", "maktab", "repetitor", "dars", "kitob") are category "Ta'lim" when the user paid for education. Category words alone must not override borrowing, lending or explicitly earned income.
 
 Rules:
 - Never invent, estimate or infer a missing amount. If missing or ambiguous, return amount:null and needs_clarification:true. Do not use quantities, dates, phone numbers or model numbers as amounts.
@@ -989,7 +996,13 @@ export function validateAiFinancialOutput(rawJson: any, normalizedInput: Normali
   const name = (rawJson.title || rawJson.note || normalizedInput.originalText).slice(0, 80);
 
   // Validate or assign date deterministically
-  const parsedDate = parseSafeDate(rawJson.date, defaultDate);
+  let sourceDate=rawJson.date;
+  if(/\b(?:kecha|kechagi)\b/.test(source) || /\bo'tgan kuni\b/.test(source)){
+    const date=new Date(defaultDate+'T12:00:00Z');
+    date.setUTCDate(date.getUTCDate()-(/\bo'tgan kuni\b/.test(source)?2:1));
+    sourceDate=date.toISOString().slice(0,10);
+  }
+  const parsedDate = parseSafeDate(sourceDate, defaultDate);
 
   return {
     isValid: true,

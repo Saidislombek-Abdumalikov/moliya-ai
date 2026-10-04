@@ -372,6 +372,16 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
   const [deleteConfirmTx, setDeleteConfirmTx] = useState<any>(null)
   const [deleteConfirmCard, setDeleteConfirmCard] = useState<string | null>(null)
   const [editTx, setEditTx] = useState<any>(null)
+  useEffect(() => {
+    const url=new URL(window.location.href);
+    const id=url.searchParams.get('editTransaction');
+    if(!id || !userId) return;
+    const tx=customTransactions.find(item=>item.id===id);
+    if(!tx)return;
+    setEditTx({...tx});
+    url.searchParams.delete('editTransaction');
+    window.history.replaceState({},'',url.pathname+url.search+url.hash);
+  },[userId,customTransactions])
   const [newCardNumber, setNewCardNumber] = useState('')
   const [newCardBank, setNewCardBank] = useState('')
   const [newCardBalance, setNewCardBalance] = useState('')
@@ -2399,6 +2409,19 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                 </h3>
                 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                  <label style={{fontSize:12,color:'#8B82C4'}}>
+                    {lang==='ru'?'Тип':lang==='en'?'Type':lang==='uz_cyrl'?'Тури':'Turi'}
+                    <select value={editTx.type} onChange={e=>setEditTx({...editTx,type:e.target.value,amount:(['income','debt'].includes(e.target.value)?1:-1)*Math.abs(editTx.amount)})}
+                      style={{display:'block',width:'100%',padding:12,borderRadius:12,border:'1px solid #E4E2F0'}}>
+                      {(['expense','income','debt','lending'] as const).map((type,i)=><option key={type} value={type}>{(lang==='ru'?['Расход','Доход','Полученный долг','Выданный долг']:lang==='en'?['Expense','Income','Borrowed','Lent']:lang==='uz_cyrl'?['Харажат','Даромад','Қарз олиш','Қарз бериш']:['Xarajat','Daromad','Qarz olish','Qarz berish'])[i]}</option>)}
+                    </select>
+                  </label>
+                  <label style={{fontSize:12,color:'#8B82C4'}}>
+                    {lang==='ru'?'Категория':lang==='en'?'Category':lang==='uz_cyrl'?'Тоифа':'Kategoriya'}
+                    <input value={editTx.category || ''} maxLength={80} onChange={e=>setEditTx({...editTx,category:e.target.value})}
+                      style={{display:'block',width:'100%',padding:12,borderRadius:12,border:'1px solid #E4E2F0'}} />
+                  </label>
+
                   <div>
                     <label style={{ fontSize: 12, fontWeight: 600, color: '#8B82C4', marginBottom: 6, display: 'block' }}>
                       {lang === 'uz' ? 'Summa' : lang === 'uz_cyrl' ? 'Сумма' : lang === 'ru' ? 'Сумма' : 'Amount'}

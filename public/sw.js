@@ -1,88 +1,35 @@
-const CACHE_NAME = 'moliya-ai-cache-v2';
-const ASSETS_TO_CACHE = [
-  '/',
-  '/index.html',
-  '/logo.png',
-  '/manifest.json',
-  '/robots.txt'
-];
-
-// Install Event — Cache App Shell
-self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      console.log('[SW] Pre-caching offline app shell');
-      return cache.addAll(ASSETS_TO_CACHE);
-    }).then(() => self.skipWaiting())
-  );
+const CACHE_NAME = 'moliya-ai-cache-v3';
+const ASSETS_TO_CACHE = ['/', '/index.html', '/logo.png', '/manifest.json', '/robots.txt'];
+self.addEventListener('install', event => {
+  event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS_TO_CACHE)).then(() => self.skipWaiting()));
 });
-
-// Activate Event — Clean Old Caches immediately
-self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((cache) => {
-          if (cache !== CACHE_NAME) {
-            console.log('[SW] Clearing old cache:', cache);
-            return caches.delete(cache);
-          }
-        })
-      );
-    }).then(() => self.clients.claim())
-  );
+self.addEventListener('activate', event => {
+  event.waitUntil(caches.keys().then(names => Promise.all(names.filter(name => name.startsWith('moliya-ai-cache-') && name !== CACHE_NAME).map(name => caches.delete(name)))).then(() => self.clients.claim()));
 });
-
-// Cache purge on user logout / account deletion
-self.addEventListener('message', (event) => {
-  if (event.data && event.data.type === 'CLEAR_USER_CACHE') {
-    caches.delete(CACHE_NAME).then(() => {
-      console.log('[SW] Cache purged on logout/account-deletion');
-    });
-  }
+self.addEventListener('message', event => {
+  if (event.data?.type === 'CLEAR_USER_CACHE') event.waitUntil(caches.delete(CACHE_NAME));
 });
-
-// Fetch Event — Network-First for Navigation, Stale-While-Revalidate for Static Assets
-self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
-
-  // Skip non-GET requests and API calls
-  if (event.request.method !== 'GET' || url.pathname.startsWith('/api/')) {
+self.addEventListener('fetch', event => {
+  const request=event.request;
+  const url=new URL(request.url);
+  // External SDKs use the browser's script policy, not a worker fetch/connect policy.
+  // APIs, session URLs and private data must never enter the offline cache.
+  if(request.method!=='GET' || url.origin!==self.location.origin || url.pathname.startsWith('/api/'))return;
+  if(request.mode==='navigate') {
+    event.respondWith(fetch(request).catch(async()=>
+      await caches.match('/index.html') || new Response('Internetga ulaning va qayta urinib ko‘ring.',{status:503,headers:{'Content-Type':'text/plain; charset=utf-8'}})));
     return;
   }
-
-  // Network-First for navigation / HTML (ensures users immediately receive new deployment)
-  if (event.request.mode === 'navigate' || url.pathname === '/' || url.pathname === '/index.html') {
-    event.respondWith(
-      fetch(event.request)
-        .then((networkResponse) => {
-          if (networkResponse && networkResponse.status === 200) {
-            const responseToCache = networkResponse.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(event.request, responseToCache);
-            });
-          }
-          return networkResponse;
-        })
-        .catch(() => caches.match(event.request))
-    );
-    return;
-  }
-
-  // Stale-While-Revalidate for static assets (images, icons, etc.)
-  event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      const fetchPromise = fetch(event.request).then((networkResponse) => {
-        if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
-          const responseToCache = networkResponse.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, responseToCache);
-          });
-        }
-        return networkResponse;
-      }).catch(() => cachedResponse);
-
-      return cachedResponse || fetchPromise;
-    })
-  );
+  if(url.search || !(url.pathname.startsWith('/assets/') || ASSETS_TO_CACHE.includes(url.pathname)))return;
+  event.respondWith((async()=>{
+    const cached=await caches.match(request);
+    const refresh=fetch(request).then(async response=>{
+      if(response.ok && response.type==='basic') {
+        try {const cache=await caches.open(CACHE_NAME);await cache.put(request,response.clone());} catch {}
+      }
+      return response;
+    }).catch(()=>cached || Response.error());
+    event.waitUntil(refresh.then(()=>{}));
+    return cached || await refresh;
+  })());
 });

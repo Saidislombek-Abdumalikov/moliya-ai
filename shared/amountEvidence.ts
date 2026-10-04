@@ -63,8 +63,8 @@ export function hasTransactionIntent(source:string):boolean {
  // Completed actions; longer statements still require the AI parser.
  if(/\b(?:sarfladim|ishlatdim|to'ladim|toladim|berdim|oldim|tushdi|topdim|spent|paid|earned|received)\b/.test(text))return true;
  // Shorthand is accepted only when every non-amount word is a known label.
- const tokens=text.replace(/[.,!]/g,' ').split(/\s+/).filter(Boolean);
- const labels=new Set(['taksi','taksiga','taxi','bozor','bozorlik','bozorlikka','non','nonga','ovqat','ovqatga','maosh','oylik','ijara','ijaraga','benzin','benzinga','internet','internetga','kommunal','transport','kafe','kafega']);
+ const tokens=text.replace(/\b(?:bugun|kecha|kechagi)\b/g,' ').replace(/[.,!]/g,' ').split(/\s+/).filter(Boolean);
+ const labels=new Set(['taksi','taksiga','taxi','bozor','bozorlik','bozorlikka','non','nonga','ovqat','ovqatga','maosh','oylik','ijara','ijaraga','benzin','benzinga','internet','internetga','kommunal','transport','kafe','kafega','kurs','kursga','kontrakt','kontraktga','kitob','kitobga','dori','doriga','kiyim','kiyimga','telefon','telefonga','ovqatlandim']);
  let labelCount=0;
  for(const token of tokens){
   if(labels.has(token)){labelCount++;continue;}

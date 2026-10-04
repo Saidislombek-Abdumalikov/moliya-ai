@@ -1,3 +1,4 @@
+import {audioMime,parseFinancialAudio} from './_audioParser.js';
 import {generateBounded,tryNextModel} from './_aiCall.js';
 import {transactionParts,TRANSACTION_CLARIFICATION} from '../shared/amountEvidence.js';
 import { safeError, safeWarn } from './_logger.js';
@@ -30,7 +31,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
-    const { text, userId } = req.body || {};
+    const { text, userId, base64Audio } = req.body || {};
+    if (base64Audio !== undefined) {
+      const caller=await requireEligibleCaller(req,res);
+      if(!caller)return;
+      if(userId && userId!==caller.userId)return res.status(403).json({error:'USER_MISMATCH'});
+      if(typeof base64Audio!=='string' || base64Audio.length>3*1024*1024 || !/^[A-Za-z0-9+/]+={0,2}$/.test(base64Audio))return res.status(400).json({error:'INVALID_AUDIO'});
+      const buffer=Buffer.from(base64Audio,'base64');
+      if(!audioMime(buffer))return res.status(400).json({error:'INVALID_AUDIO'});
+      const quota=await checkAndRecordAiUsage(caller.userId,'voice','App audio','mini_app');
+      if(!quota.allowed)return res.status(quota.statusCode || 429).json({error:quota.code || 'quota_exceeded',message:quota.message});
+      try {
+        const parsed=await parseFinancialAudio(buffer);
+        if(!parsed)return res.status(422).json({error:'AMOUNT_CLARIFICATION_REQUIRED',needs_clarification:true,message:TRANSACTION_CLARIFICATION});
+        return res.status(200).json({success:true,...parsed,title:parsed.name,amount:String(parsed.amount)});
+      } catch(error:any) {
+        return res.status(503).json({error:error?.message==='AI_NOT_CONFIGURED'?'AI_NOT_CONFIGURED':'AI_PARSING_UNAVAILABLE'});
+      }
+    }
     if (!text || typeof text !== 'string') {
       return res.status(400).json({ error: 'Missing text' });
     }
@@ -91,7 +109,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Build prompt with normalized financial context
-    const prompt = buildUzbekFinancialPrompt(normalized.normalizedText || cleanText, undefined, await loadAiParserGuidance());
+    const prompt = buildUzbekFinancialPrompt(cleanText, undefined, await loadAiParserGuidance());
 
     // Try each key with fastest active Gemini models first
     const activeModels = ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.5-flash'];

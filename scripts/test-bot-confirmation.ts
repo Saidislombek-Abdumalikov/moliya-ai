@@ -3,7 +3,7 @@ import {readFile} from 'node:fs/promises';
 import {PGlite} from '@electric-sql/pglite';
 process.env.SUPABASE_URL='http://127.0.0.1:54321';process.env.SUPABASE_SERVICE_ROLE_KEY='offline';
 const {supabase}=await import('../api/_supabaseClient.js');
-const {stageBotDraft,resolveBotDraft}=await import('../api/services/_botDraftService.js');
+const {stageBotDraft,resolveBotDraft,saveBotMessageTransactions}=await import('../api/services/_botDraftService.js');
 globalThis.fetch=async()=>{throw new Error('NETWORK_FORBIDDEN')};
 const db=new PGlite();
 await db.exec(`CREATE ROLE anon;CREATE ROLE authenticated;CREATE ROLE service_role;
@@ -22,6 +22,16 @@ async function transactions(uid=user){return (await db.query<any>('SELECT transa
 const items=[{type:'expense',amount:30000,title:'Taksi',date:'2026-09-25'}];
 async function stage(input=items,msg=5){return stageBotDraft(user,123,msg,input)}
 async function test(name:string,fn:()=>Promise<any>){await seed();await fn();count++;console.log('PASS '+name)}
+await test('automatic save commits once without a user confirmation',async()=>{
+ const a=await saveBotMessageTransactions(user,123,501,items);
+ assert.equal(a.status,'confirmed');assert.equal((await transactions()).length,1);
+ const b=await saveBotMessageTransactions(user,123,501,items);
+ assert.equal(b.replayed,true);assert.equal((await transactions()).length,1);
+});
+await test('automatic save keeps all four financial types and signs',async()=>{
+ await saveBotMessageTransactions(user,123,502,['expense','income','debt','lending'].map(type=>({type,amount:50000,date:'2026-09-28',title:type})));
+ assert.deepEqual((await transactions()).map((tx:any)=>[tx.type,tx.amount]),[['expense',-50000],['income',50000],['debt',50000],['lending',-50000]]);
+});
 await test('draft is not a financial write',async()=>{const d=await stage();assert.equal(d.status,'pending');assert.deepEqual(await transactions(),[]);assert.equal(d.transactions[0].amount,-30000)});
 await test('same Telegram message freezes the first preview',async()=>{const a=await stage();const b=await stage([{...items[0],amount:99999}]);assert.equal(a.id,b.id);assert.deepEqual(a.transactions,b.transactions)});
 await test('confirm saves once under repeated concurrent requests',async()=>{const d=await stage();const replies=await Promise.all(Array.from({length:20},()=>resolveBotDraft(user,d.id,'confirm')));assert.ok(replies.every(x=>x.status==='confirmed'));assert.equal((await transactions()).length,1);assert.equal(replies.filter(x=>!x.replayed).length,1)});
@@ -66,4 +76,55 @@ await test('webhook confirms once and preserves unrelated pending buttons',async
  assert.equal(sent.filter(x=>x.method==='editMessageText').length,edits);
 });
 await test('webhook database outage returns retryable failure without a write',async()=>{const d=await stage();const savedRpc=(supabase as any).rpc;(supabase as any).rpc=async()=>({data:null,error:{message:'private database detail'}});try{const res=await callback(d.id);assert.equal(res.statusCode,503);assert.equal(JSON.stringify(res.body).includes('private'),false);assert.deepEqual(await transactions(),[])}finally{(supabase as any).rpc=savedRpc}});
+// Full inbound message -> shared parser -> existing SQL autosave, transports mocked.
+await db.exec(await readFile(new URL('../migrations/12-bot-message-delivery.sql',import.meta.url),'utf8'));
+const {encodeWav}=await import('../src/audioRecorder.js');
+const wav=Buffer.from(await encodeWav(new Float32Array(16000)).arrayBuffer());
+(supabase as any).rpc=async(name:string,args:any)=>{
+ if(name==='moliya_ai_quota')return {data:{allowed:true,isPremium:true,isTrial:false,limit:null,usedCount:1},error:null};
+ if(name==='moliya_bot_message_delivery')return {data:(await db.query<any>('SELECT moliya_bot_message_delivery($1,$2,$3) AS v',[args.p_key,args.p_owner,args.p_action])).rows[0].v,error:null};
+ assert.equal(name,'moliya_bot_draft');return {data:await rpc(args.p_user_id,args.p_id,args.p_action,args.p_payload),error:null};
+};
+(supabase as any).from=(table:string)=>{
+ let uid=user,patch:any=null;
+ const execute=async()=>{
+  if(table==='ai_logs')return {data:null,error:null};
+  if(table==='ai_keys')return {data:[{id:'test-ai',api_key:'test-only',provider:'google',is_active:true}],error:null};
+  assert.equal(table,'users');
+  if(patch){for(const field of ['onboarding','device_info'])if(field in patch)await db.query(`UPDATE users SET ${field}=$1::jsonb WHERE id=$2`,[JSON.stringify(patch[field]),uid]);}
+  return {data:(await db.query('SELECT * FROM users WHERE id=$1',[uid])).rows[0] || null,error:null};
+ };
+ const q:any={select(){return q},update(v:any){patch=v;return q},insert(){return q},eq(k:string,v:any){if(k==='id')uid=v;return q},is(){return q},maybeSingle:execute,then(ok:any,bad:any){return execute().then(ok,bad)}};return q;
+};
+let transportId=1000;
+globalThis.fetch=async(input:any,options:any)=>{
+ const req=input instanceof Request?input:new Request(input,options),url=req.url;
+ if(url.includes('generativelanguage.googleapis.com')){
+  const content=await req.clone().json();const str=JSON.stringify(content.contents);
+  const parsed=str.includes('Read this receipt.')?{isReceipt:true,totalText:'25 000',currency:'UZS',category:'Boshqa',title:'Do‘kon'}:
+   str.includes('Transcribe exactly what is heard.')?{transcription:'400000 ishlatdim'}:
+   {transcription:'400000 ishlatdim',type:'expense',amount:400000,category:'Boshqa'};
+  return new Response(JSON.stringify({candidates:[{content:{role:'model',parts:[{text:JSON.stringify(parsed)}]},finishReason:'STOP'}]}),{status:200,headers:{'Content-Type':'application/json'}});
+ }
+ assert.ok(url.startsWith('https://api.telegram.org/'),url);
+ if(url.includes('/file/'))return new Response(new Uint8Array(url.endsWith('.png')?Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6nXcAAAAASUVORK5CYII=','base64'):wav));
+ const body=options?.body?JSON.parse(options.body):{};
+ sent.push({method:url.split('/').at(-1)!,body});
+ return new Response(JSON.stringify({ok:true,result:url.includes('/getFile?')?{file_path:url.includes('test-image')?'test.png':'test.wav'}:{message_id:++transportId}}),{status:200,headers:{'Content-Type':'application/json'}});
+};
+async function inbound(messageId:number,extra:any){
+ const res:any={statusCode:200,setHeader(){},status(n:number){this.statusCode=n;return this},json(body:any){this.body=body;return this}};
+ await handler({method:'POST',headers:{'x-telegram-bot-api-secret-token':'offline-secret'},body:{update_id:messageId,message:{message_id:messageId,chat:{id:123,type:'private'},from:{id:123},...extra}}} as any,res);
+ return res;
+}
+for(const [index,extra,expected] of [[601,{text:'400000 ishlatdim'},400000],[602,{voice:{file_id:'test-audio',duration:1,mime_type:'audio/wav'}},400000],[603,{photo:[{file_id:'test-image'}]},25000]] as const){
+ await test(`inbound ${index}: parse and save once without confirmation`,async()=>{
+  await db.query("UPDATE users SET onboarding='{"+'"language":"uz","completed":true'+"}' WHERE id=$1",[user]);
+  sent.length=0;
+  const result=await inbound(index,extra);assert.equal(result.statusCode,200,JSON.stringify(result.body));
+  const txs=await transactions();assert.equal(txs.length,1,JSON.stringify(result.body));assert.equal(txs[0].amount,-expected);assert.equal(txs[0].type,'expense');
+  assert.ok(sent.some(x=>x.body.text?.includes('Saqlandi') || x.body.text?.includes('saqlandi')));
+  assert.equal((await inbound(index,extra)).body.status,'duplicate');assert.equal((await transactions()).length,1);
+ });
+}
 console.log(`${count} bot confirmation checks passed. Offline PostgreSQL; not a live load test.`);await db.close();

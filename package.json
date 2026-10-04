@@ -13,7 +13,7 @@
     "test:admin-integration": "node --import tsx scripts/test-admin-consistency.ts && node --import tsx scripts/test-admin-layout.ts && node --import tsx scripts/test-notification-delivery.ts && node --import tsx scripts/test-admin-telegram.ts && node --import tsx scripts/test-admin-user-actions.ts && node --import tsx scripts/test-admin-chat-read.ts && node --import tsx scripts/test-admin-chat-clear.ts && node --import tsx scripts/test-admin-clear-recipients.ts && node --import tsx scripts/test-admin-ai-maintenance.ts && node --import tsx scripts/test-admin-chat-write.ts && node --import tsx scripts/test-admin-read-boundaries.ts && node --import tsx scripts/test-legal-settings.ts && node --import tsx scripts/test-legal-consent.ts && node --import tsx scripts/test-admin-db-boundary.ts && node --import tsx scripts/test-admin-cron.ts && node --import tsx scripts/test-scheduled-reports.ts",
     "start": "node server-build/server.cjs",
     "test:release-fixes": "node --import tsx scripts/test-release-fixes.ts && node --import tsx scripts/test-new-user-onboarding.ts && node --import tsx scripts/test-client-ai-boundary.ts && node --import tsx scripts/test-legal-consent.ts",
-    "test:ai": "node --import tsx scripts/test-ai-runtime.ts && node --import tsx scripts/test-client-ai-boundary.ts && node --import tsx scripts/test-amount-evidence.ts && node --import tsx scripts/test-transaction-directions.ts"
+    "test:ai": "node --import tsx scripts/test-ai-runtime.ts && node --import tsx scripts/test-client-ai-boundary.ts && node --import tsx scripts/test-amount-evidence.ts && node --import tsx scripts/test-transaction-directions.ts && node --import tsx scripts/test-ai-media.ts"
   },
   "dependencies": {
     "@google/genai": "^2.12.0",

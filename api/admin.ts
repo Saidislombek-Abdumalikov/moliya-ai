@@ -400,6 +400,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       try{
         const response=await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`,{
           method:'POST',headers:{'Content-Type':'application/json'},
+          signal:AbortSignal.timeout(8000),
           body:JSON.stringify({chat_id:telegramId,text:`Moliya Admin kirish kodi: ${code}\n5 daqiqa amal qiladi. Agar bu siz bo‘lmasangiz, kodni hech kimga aytmang.`})
         });
         delivered=response.ok && (await response.json()).ok===true;

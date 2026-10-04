@@ -85,7 +85,7 @@ export function normalizeBotTransactions(txItems: Array<Partial<FinancialTransac
     const txId = txItem.id || `tx_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`;
 
     const rawAmt = Math.abs(Number(txItem.amount) || 0);
-    const isIncome = txItem.type === 'income';
+    const isIncome = txItem.type === 'income' || txItem.type === 'debt';
     const signedAmount = isIncome ? rawAmt : -rawAmt;
 
     return {

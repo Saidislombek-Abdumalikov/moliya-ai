@@ -1,6 +1,9 @@
+import {parseReceiptImage} from './_receiptParser.js';
+import {audioMime,parseFinancialAudio} from './_audioParser.js';
+import {withVoiceProgress} from './_voiceEvidence.js';
 import {hasTelegramLinkButton} from './_telegramKeyboard.js';
 import {generateBounded,tryNextModel} from './_aiCall.js';
-import {stageBotDraft,resolveBotDraft} from './services/_botDraftService.js';
+import {saveBotMessageTransactions,resolveBotDraft} from './services/_botDraftService.js';
 import { messageDeliveryKey, claimBotMessage, completeBotMessage } from './services/_botMessageDelivery.js';
 import {transactionParts,TRANSACTION_CLARIFICATION} from '../shared/amountEvidence.js';
 import { updateProfileSnapshot } from './services/_profileWriteService.js';
@@ -301,7 +304,7 @@ const BOT_HELP_TEXT =
   `❓ <b>Moliya AI — yordam</b>\n\n` +
   `<blockquote>📝 “Taksiga 25 ming” yoki “14 mln maosh tushdi”\n` +
   `🎙 Ovozli xabar yoki 📸 chek rasmini yuboring.</blockquote>\n\n` +
-  `Summani tekshiring va yozuvni tasdiqlang.\n` +
+  `Aniq yozuv avtomatik saqlanadi. Xato bo‘lsa tahrirlang yoki o‘chiring.\n` +
   `📱 Ilovada kartalar, limit va statistikani ko‘rasiz.\n` +
   `👤 Tarif va AI limiti — profilingizda.`;
 
@@ -646,23 +649,30 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any) {
 
 function escapeBotHtml(value:any):string { return String(value).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]!)); }
 
-// A draft is durable before Telegram displays the confirmation buttons.
-async function requestTransactionConfirmation(userId:string, chatId:number|string, sourceMessageId:number, txs:any[], statusMsgId?:number) {
-  const draft=await stageBotDraft(userId,chatId,sourceMessageId,txs);
-  if(draft.status!=='pending') {
-    await sendTelegramMessage(chatId,'Bu xabar allaqachon ko‘rib chiqilgan. Yangi yozuv uchun yangi xabar yuboring.',undefined,userId);
-    return;
+// Persist first; the existing atomic RPC prevents duplicates across retries.
+async function saveAndShowTransaction(userId:string, chatId:number|string, sourceMessageId:number, txs:any[], statusMsgId?:number) {
+  const saved=await saveBotMessageTransactions(userId,chatId,sourceMessageId,txs);
+  const records=Array.isArray(saved.transactions)?saved.transactions:[];
+  let text:string;let keyboard:any;
+  if(saved.replayed || !records.length){
+    text='ℹ️ Bu xabar avval qayta ishlangan. Yangi yozuv yaratilmagan.';
+    keyboard={inline_keyboard:[[{text:'📱 Yozuvlarni ko‘rish',web_app:{url:appUrl}}]]};
+  }else if(records.length===1){
+    const card=buildTransactionSuccessCard(records[0],records[0].type==='income',records[0].id);
+    text=card.text;keyboard=card.keyboard;
+  }else{
+    text='✅ <b>Yozuvlar saqlandi</b>\n\n'+records.map((tx:any,i:number)=>`${i+1}. ${escapeBotHtml(({expense:'💸 Xarajat',income:'💰 Daromad',debt:'📥 Qarz olish',lending:'📤 Qarz berish'} as any)[tx.type])} · <b>${Math.abs(tx.amount).toLocaleString('en-US').replace(/,/g,' ')} so‘m</b> · ${escapeBotHtml(tx.category || 'Boshqa')}`).join('\n');
+    keyboard={inline_keyboard:records.map((tx:any,i:number)=>[
+      {text:`✏️ ${i+1}. Tahrirlash`,web_app:{url:transactionEditUrl(tx.id)}},
+      {text:`🗑 ${i+1}. O‘chirish`,callback_data:`del_${tx.id}`}
+    ])};
   }
-  const escape=escapeBotHtml;
-  const lines=draft.transactions.map((tx:any)=>{
-    const label=({expense:'💸 Xarajat',income:'💰 Daromad',debt:'📥 Qarz olish',lending:'📤 Qarz berish'} as Record<string,string>)[tx.type] || tx.type;
-    return `${escape(label)} · <b>${Math.abs(tx.amount).toLocaleString('en-US').replace(/,/g,' ')} so‘m</b>\n${escape(String(tx.category || 'Boshqa'))} · ${escape(String(tx.title || '').slice(0,80))}`;
-  });
-  const text='📝 <b>Yozuvni tekshiring</b>\n\n'+lines.join('\n\n')+'\n\nHali saqlanmadi. Tasdiqlang yoki bekor qiling. ⏳ 15 daqiqa.';
-  const keyboard={inline_keyboard:[[{text:'✅ Tasdiqlash',style:'success',callback_data:'txok_'+draft.id},{text:'✕ Bekor qilish',style:'danger',callback_data:'txno_'+draft.id}]]};
   let delivered=statusMsgId ? await editTelegramMessage(chatId,statusMsgId,text,keyboard,userId,'ai_response') : null;
   if(!delivered?.ok)delivered=await sendTelegramMessage(chatId,text,keyboard,userId,'ai_response');
-  if(!delivered?.ok)throw new Error('BOT_CONFIRMATION_DELIVERY_FAILED');
+  if(!delivered?.ok)throw new Error('BOT_RECEIPT_DELIVERY_FAILED');
+}
+function transactionEditUrl(id:string):string {
+  const url=new URL(appUrl);url.searchParams.set('editTransaction',id);return url.href;
 }
 
 // ── Category Emoji Map ───────────────────────────────────────
@@ -715,24 +725,16 @@ function buildTransactionSuccessCard(tx: {
 
   const text =
     `✨ <b>Muvaffaqiyatli saqlandi!</b>\n\n` +
-    `${isInc ? '🟢' : '🔴'} <b>Turi:</b> ${isInc ? 'Daromad' : 'Xarajat'}\n` +
+    `${escapeBotHtml(({income:'💰 Daromad',expense:'💸 Xarajat',debt:'📥 Qarz olish',lending:'📤 Qarz berish'} as Record<string,string>)[tx.type || 'expense'])}\n` +
     `${emoji} <b>Kategoriya:</b> ${escapeBotHtml(cat)}\n` +
     `💰 <b>Summa:</b> ${formattedAmount} so'm\n` +
     `📝 <b>Izoh:</b> ${escapeBotHtml(label)}\n` +
-    `📅 <b>Sana:</b> ${tx.date || 'Bugun'}${tx.time ? ` | ${tx.time}` : ''}\n\n` +
-    `───────────────────\n` +
-    `${randomHook}`;
+    `📅 <b>Sana:</b> ${escapeBotHtml(tx.date || 'Bugun')}${tx.time ? ` | ${escapeBotHtml(tx.time)}` : ''}`;
 
-  const keyboard = {
-    inline_keyboard: [
-      [{ text: "📱 Mini Appni ochish (Jonli Balans) 🚀", web_app: { url: appUrl } }],
-      [
-        { text: "📊 Bugungi hisobot", callback_data: "today_stats" },
-        { text: "⭐ VIP Premium", callback_data: "view_premium" }
-      ],
-      [{ text: "🗑 Bekor qilish", callback_data: `del_${txId}` }]
-    ]
-  };
+  const keyboard = {inline_keyboard:[[
+    {text:'✏️ Tahrirlash',web_app:{url:transactionEditUrl(txId)}},
+    {text:'🗑 O‘chirish',style:'danger',callback_data:`del_${txId}`}
+  ],[{text:'📱 Mini App',style:'primary',web_app:{url:appUrl}}]]};
 
   return { text, keyboard };
 }
@@ -810,9 +812,9 @@ async function parseTextWithAi(text: string) {
     ? candidateKeys
     : (envKey ? [{ id: 'env_gemini', api_key: envKey, name: 'ENV Key', model: 'gemini-3.5-flash-lite' }] : []);
 
-  if (keysToTry.length === 0) return null;
+  if (keysToTry.length === 0) throw new Error('AI_NOT_CONFIGURED');
 
-  const prompt = buildUzbekFinancialAiPrompt(normalized.normalizedText, undefined, await loadAiParserGuidance());
+  const prompt = buildUzbekFinancialAiPrompt(text, undefined, await loadAiParserGuidance());
   const aiDeadline=Date.now()+25000;
   const activeModels = ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.5-flash'];
 
@@ -844,6 +846,7 @@ async function parseTextWithAi(text: string) {
         if (response?.text) {
           const rawParsed = JSON.parse(response.text);
           const validated = validateAiFinancialOutput(rawParsed, normalized);
+          if (!validated.isValid) return null;
           if (validated.isValid) {
             recordKeyResult(keyObj.id, true).catch(() => {});
             return {
@@ -880,7 +883,7 @@ async function parseTextWithAi(text: string) {
     }
   }
 
-  return null;
+  throw new Error('AI_PARSING_UNAVAILABLE');
 }
 
 // ── Unified Interface Renderers ──────────────────────────────
@@ -1935,7 +1938,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         `👋 <b>Salom, ${escapeTelegramHtml(fromUser.first_name || 'foydalanuvchi')}!</b>\n\n` +
         `<blockquote>${planLabel}\n⚡ Bugungi AI: ${quotaStatus}</blockquote>\n\n` +
         `📝 “Taksiga 25 ming” deb yozing, 🎙 ovoz yoki 📸 chek yuboring.\n` +
-        `Yozuvni saqlashdan oldin tasdiqlaysiz.\n\n` +
+        `Saqlangan yozuvni tahrirlash yoki o‘chirish mumkin.\n\n` +
         `👇 <b>Moliya AI</b>ni oching:`;
 
       const quickCode = await createQuickExchangeCode(fromUser.id);
@@ -2137,7 +2140,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const fileUrl = await getTelegramFileUrl(audioMsg.file_id);
       if (fileUrl) {
         try {
-          const audioRes = await fetch(fileUrl);
+          const audioRes = await fetch(fileUrl,{signal:AbortSignal.timeout(10000)});
+          if(!audioRes.ok)throw new Error('AUDIO_DOWNLOAD_FAILED');
           const arrayBuffer = await audioRes.arrayBuffer();
           const audioBuffer = Buffer.from(arrayBuffer);
 
@@ -2148,16 +2152,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return res.status(200).json({ status: 'audio_too_large' });
           }
 
-          // Audio file signature / magic bytes verification (OGG, MP3, M4A/AAC, WAV)
-          const isOgg = audioBuffer.length >= 4 && audioBuffer.slice(0, 4).toString('ascii') === 'OggS';
-          const isMp3 = audioBuffer.length >= 3 && (
-            audioBuffer.slice(0, 3).toString('ascii') === 'ID3' ||
-            (audioBuffer[0] === 0xFF && (audioBuffer[1] & 0xE0) === 0xE0)
-          );
-          const isM4a = audioBuffer.length >= 8 && audioBuffer.slice(4, 8).toString('ascii') === 'ftyp';
-          const isWav = audioBuffer.length >= 12 && audioBuffer.slice(0, 4).toString('ascii') === 'RIFF' && audioBuffer.slice(8, 12).toString('ascii') === 'WAVE';
-
-          if (!isOgg && !isMp3 && !isM4a && !isWav) {
+          if (!audioMime(audioBuffer)) {
             safeWarn('[BOT] Audio payload failed magic bytes validation');
             if (statusMsgId) {
               await editTelegramMessage(chatId, statusMsgId, "⚠️ Yuborilgan audio formati qo'llab-quvvatlanmaydi.", undefined, userId);
@@ -2167,134 +2162,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return res.status(200).json({ status: 'invalid_audio_format' });
           }
 
-          const base64Audio = audioBuffer.toString('base64');
+          const updateVoiceProgress=async(text:string)=>{
+            if(!statusMsgId)return false;
+            const response=await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`,{
+              method:'POST',headers:{'Content-Type':'application/json'},signal:AbortSignal.timeout(2000),
+              body:JSON.stringify({chat_id:chatId,message_id:statusMsgId,text,parse_mode:'HTML'})
+            });
+            return response.ok && (await response.json()).ok===true;
+          };
 
-          if (statusMsgId) {
-            editTelegramMessage(
-              chatId,
-              statusMsgId,
-              `🧠 <b>Moliya AI ovozni qayta ishlamoqda...</b>\n📊 <i>Xarajat summasi hisoblanmoqda...</i>`,
-              undefined,
-              userId
-            ).catch(() => {});
-          }
-
-          const candidateKeys = await getCandidateAiKeys();
-          const envKey = process.env.GEMINI_API_KEY;
-          const keysToTry = candidateKeys.length > 0
-            ? candidateKeys
-            : (envKey ? [{ id: 'env_gemini', api_key: envKey, name: 'ENV Key', model: 'gemini-3.6-flash' }] : []);
-
-          // gemini-3.6-flash has superior voice/audio capabilities and lower latency
-          const activeModels = ['gemini-3.6-flash', 'gemini-3.5-flash-lite'];
-
-          const aiDeadline=Date.now()+30000;
-          for (const keyObj of keysToTry) {
-            const rawApiKey = (keyObj.api_key || '').trim();
-            if (!rawApiKey) continue;
-
-            const modelsToTry = [...new Set(['gemini-3.6-flash', keyObj.model, ...activeModels])].filter(Boolean);
-
-            let parsed: any = null;
-            const srvCtx = getServerDateTimeContext();
-            for (const modelToUse of modelsToTry) {
-              if(Date.now()>=aiDeadline)break;
-              try {
-                const ai = new GoogleGenAI({ apiKey: rawApiKey });
-                const prompt = `Listen to this financial voice audio in Uzbek or Russian.
-Include a "transcription" field containing only the verbatim words actually heard, including the amount. Never add an amount to the transcription. If unclear, use transcription:"" and amount:null. Do not estimate an amount.
-Extract the transaction into JSON with these exact fields:
-{"transcription":"verbatim words heard","type":"expense"|"income"|"debt"|"lending","amount":number,"category":string,"title":string,"note":string,"date":"YYYY-MM-DD","debtWho":string}
-CRITICAL RULES:
-- Default type is "expense".
-- Spending money (taksi, ovqat, to'ladim, to'lov qildim, kurs, kontrakt, ketdi, sarfladim, xarid, bozorlik, dori, kiyim) is ALWAYS "expense".
-- "kurs", "o'qish", "kontrakt", "maktab", "repetitor", "dars" is ALWAYS category "Ta'lim", type "expense".
-- Only mark type="income" if words clearly indicate receiving money (maosh, oylik, daromad, stipendiya, tushdi, berishdi, topdim).
-- CRITICAL FOR UZBEK NUMBERS:
-  * "ming" / "минг" / "k" = THOUSAND (1,000 UZS). E.g. "500 ming" = 500000 (500 thousand, NEVER 500 million!). E.g. "30 ming" = 30000.
-  * "million" / "млн" / "mln" = MILLION (1,000,000 UZS). E.g. "14 mln" = 14000000.
-  * NEVER confuse "ming" with "million"!
-- amount: total integer number in UZS (e.g. 500000, 25000, 50000, 14000000).
-- note: Uzbek transcription of what was said in the voice note.
-Today: ${srvCtx.currentDate}. Output valid JSON only.`;
-
-                const audioResult = await generateBounded(ai,{
-                  model: modelToUse,
-                  contents: [
-                    {
-                      role: 'user',
-                      parts: [
-                        {
-                          inlineData: {
-                            mimeType: audioMsg.mime_type || (message.voice ? 'audio/ogg' : 'audio/mp3'),
-                            data: base64Audio
-                          }
-                        },
-                        { text: prompt }
-                      ]
-                    }
-                  ],
-                  config: {
-                    responseMimeType: "application/json",
-                    maxOutputTokens: 250,
-                    temperature: 0.1
-                  }
-                },aiDeadline,12000);
-
-                if (audioResult?.text) {
-                  const resJson = JSON.parse(audioResult.text);
-                  const voiceTranscription = typeof resJson.transcription==='string'?resJson.transcription:'';
-                  if(!transactionParts(voiceTranscription) || transactionParts(voiceTranscription)!.length!==1)continue;
-
-                  // Authoritative Check: If voice note transcription parses cleanly with Local Turbo Engine, use it!
-                  if (voiceTranscription) {
-                    const turboRes = parseTurboFinancialText(voiceTranscription);
-                    if (turboRes && turboRes.transactions.length > 0 && turboRes.overall_confidence >= 0.85) {
-                      const first = turboRes.transactions[0];
-                      parsed = {
-                        isValid: true,
-                        type: first.type,
-                        amount: first.amount,
-                        currency: first.currency,
-                        category: first.category,
-                        name: first.description,
-                        note: voiceTranscription,
-                        date: first.date || srvCtx.currentDate,
-                        time: first.time,
-                        debtWho: first.counterparty || ''
-                      };
-                      recordKeyResult(keyObj.id, true).catch(() => {});
-                      break;
-                    }
-                  }
-
-                  const validated = validateAiFinancialOutput(resJson, normalizeUzbekFinancialText(voiceTranscription), srvCtx.currentDate);
-                  if (validated.isValid && validated.amount > 0) {
-                    parsed = validated;
-                    recordKeyResult(keyObj.id, true).catch(() => {});
-                    break;
-                  }
-
-                }
-              } catch (voiceErr: any) {
-                safeWarn(`[BOT] Voice model ${modelToUse} failed:`, voiceErr?.message);
-                recordKeyResult(keyObj.id, false, voiceErr?.message, 'temporary').catch(() => {});
-                if(!tryNextModel(voiceErr))break; // Rotate throttled keys; retain model fallback.
-              }
-            }
-
+          const parsed:any = await withVoiceProgress(()=>parseFinancialAudio(audioBuffer),updateVoiceProgress);
             if (parsed) {
-              // Safeguard against false-positive income classifications for common expenses
-              const incomeKeywords = /\b(maosh|oylik|daromad|avans|stipendiya|tushdi|keldi|ish haqi|berishdi|topdim)\b/i;
-              const isKnownExpenseCat = ['Transport', 'Oziq-ovqat', 'Kiyim', 'Kommunal', 'Sog\'liq', 'Ta\'lim'].includes(parsed.category);
-              if (parsed.type === 'income' && (isKnownExpenseCat || !incomeKeywords.test(`${parsed.title || ''} ${parsed.note || ''}`))) {
-                parsed.type = 'expense';
-              }
-
               const txId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
               const safeD = parseSafeDate(parsed.date);
               const rawAmt = Math.abs(Number(parsed.amount) || 0);
-              const isIncome = parsed.type === 'income';
+              const isIncome = parsed.type === 'income' || parsed.type === 'debt';
               const signedAmount = isIncome ? rawAmt : -rawAmt;
 
               const defaultTitle = message.voice ? 'Ovozli xarajat' : 'Audio xarajat';
@@ -2321,15 +2203,16 @@ Today: ${srvCtx.currentDate}. Output valid JSON only.`;
                   await editTelegramMessage(
                     chatId,
                     statusMsgId,
-                    `📝 <b>Tasdiqlash uchun tayyorlanmoqda...</b>`,
+                    `📝 <b>Yozuv saqlanmoqda…</b>`,
                     undefined,
                     userId
                   );
                 }
 
-                await requestTransactionConfirmation(userId,chatId,message.message_id,[newTx],statusMsgId);
+                await saveAndShowTransaction(userId,chatId,message.message_id,[newTx],statusMsgId);
                 return res.status(200).json({ status: 'ok' });
               } catch (saveErr) {
+          if ((saveErr as Error)?.message==='BOT_RECEIPT_DELIVERY_FAILED') return res.status(503).json({error:'BOT_RECEIPT_DELIVERY_FAILED'});
                 safeError('[BOT] Error saving voice transaction to Supabase:', saveErr);
                 if (statusMsgId) {
                   await editTelegramMessage(chatId, statusMsgId, "⚠️ Ovozli yozuv saqlanmadi. Qayta urinib ko‘ring.", undefined, userId);
@@ -2339,15 +2222,18 @@ Today: ${srvCtx.currentDate}. Output valid JSON only.`;
                 return res.status(500).json({ error: 'DB_SAVE_FAILED' });
               }
             }
-          }
         } catch (voiceErr) {
           safeError('[BOT] Voice/Audio parsing error:', voiceErr);
+          const notice='⚠️ AI xizmatidan javob kelmadi. Hech narsa saqlanmadi. Birozdan so‘ng qayta urinib ko‘ring.';
+          if(statusMsgId)await editTelegramMessage(chatId,statusMsgId,notice,undefined,userId);
+          else await sendTelegramMessage(chatId,notice,undefined,userId);
+          return res.status(200).json({status:'ai_unavailable'});
         }
       }
 
       const unparsedMsg = message.voice
-        ? `🎙 <b>Ovozli xabar tahlil qilindi, lekin summa aniqlanmadi.</b>\n\nIltimos, xarajat summasi bilan aniqroq gapiring (masalan: <i>"taksiga 30 ming"</i>) yoki matn orqali yozing.`
-        : `🎵 <b>Audio tahlil qilindi, lekin xarajat summasi aniqlanmadi.</b>\n\nIltimos, xarajat summasi bilan aniqroq gapiring yoki matn orqali yozing.`;
+        ? `🎙 <b>Ovozli yozuv ishonchli aniqlanmadi. Hech narsa saqlanmadi.</b>\n\nIltimos, xarajat summasi bilan aniqroq gapiring (masalan: <i>"taksiga 30 ming"</i>) yoki matn orqali yozing.`
+        : `🎵 <b>Audio yozuv ishonchli aniqlanmadi. Hech narsa saqlanmadi.</b>\n\nIltimos, xarajat summasi bilan aniqroq gapiring yoki matn orqali yozing.`;
       const unparsedKb = {
         inline_keyboard: [
           [{ text: "📱 Moliya Mini Appni ochish", web_app: { url: appUrl } }]
@@ -2395,8 +2281,10 @@ Today: ${srvCtx.currentDate}. Output valid JSON only.`;
       const fileUrl = await getTelegramFileUrl(photo.file_id);
       if (fileUrl) {
         try {
-          const imgRes = await fetch(fileUrl);
+          const imgRes = await fetch(fileUrl,{signal:AbortSignal.timeout(10000)});
+          if(!imgRes.ok)throw new Error('IMAGE_DOWNLOAD_FAILED');
           const arrayBuffer = await imgRes.arrayBuffer();
+          if(arrayBuffer.byteLength>10*1024*1024)throw new Error('IMAGE_TOO_LARGE');
           const base64Img = Buffer.from(arrayBuffer).toString('base64');
 
           if (statusMsgId) {
@@ -2409,77 +2297,10 @@ Today: ${srvCtx.currentDate}. Output valid JSON only.`;
             );
           }
 
-          const candidateKeys = await getCandidateAiKeys();
-          const envKey = process.env.GEMINI_API_KEY;
-          const keysToTry = candidateKeys.length > 0
-            ? candidateKeys
-            : (envKey ? [{ id: 'env_gemini', api_key: envKey, name: 'ENV Key', model: 'gemini-3.5-flash-lite' }] : []);
-
-          const activeModels = ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.5-flash'];
-
-          const aiDeadline=Date.now()+30000;
-          for (const keyObj of keysToTry) {
-            const rawApiKey = (keyObj.api_key || '').trim();
-            if (!rawApiKey) continue;
-
-            let primary = keyObj.model || 'gemini-3.5-flash-lite';
-            if (primary === 'gemini-flash-latest' || primary.includes('2.0-flash') || primary.includes('3.1-flash')) {
-              primary = 'gemini-3.5-flash-lite';
-            }
-            const modelsToTry = [...new Set([primary, ...activeModels])];
-
-            let parsed: any = null;
-            for (const modelToUse of modelsToTry) {
-              if(Date.now()>=aiDeadline)break;
-              try {
-                const ai = new GoogleGenAI({ apiKey: rawApiKey });
-                const prompt = `You are an OCR receipt scanner for Moliya AI. Extract receipt info into JSON:
-- type: 'expense'
-- amount: total integer amount paid in UZS
-- category: choose best fit from ['Oziq-ovqat', 'Transport', 'Kiyim', 'Kommunal', 'Sog\\'liq', 'Ko\\'ngil ochar', 'Boshqa']
-- note: store or merchant name and summary
-- title: merchant name`;
-
-                const imgResult = await generateBounded(ai,{
-                  model: modelToUse,
-                  contents: [
-                    {
-                      role: 'user',
-                      parts: [
-                        {
-                          inlineData: {
-                            mimeType: 'image/jpeg',
-                            data: base64Img
-                          }
-                        },
-                        { text: prompt }
-                      ]
-                    }
-                  ],
-                  config: {
-                    responseMimeType: "application/json",
-                    maxOutputTokens: 200,
-                    temperature: 0.1
-                  }
-                },aiDeadline,12000);
-
-                if (imgResult.text) {
-                  const resJson = JSON.parse(imgResult.text);
-                  if (resJson.amount && Number(resJson.amount) > 0) {
-                    parsed = resJson;
-                    recordKeyResult(keyObj.id, true).catch(() => {});
-                    break;
-                  }
-                }
-              } catch (imgErr: any) {
-                recordKeyResult(keyObj.id, false, imgErr?.message, 'temporary').catch(() => {});
-                if(!tryNextModel(imgErr))break;
-              }
-            }
-
+          const parsed=await parseReceiptImage(base64Img,'image/jpeg');
             if (parsed) {
               const txId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-              const safeD = parseSafeDate(parsed.date);
+              const safeD = parseSafeDate(undefined);
               const newTx = {
                 id: txId,
                 type: 'expense',
@@ -2501,23 +2322,27 @@ Today: ${srvCtx.currentDate}. Output valid JSON only.`;
                   await editTelegramMessage(
                     chatId,
                     statusMsgId,
-                    `📝 <b>Tasdiqlash uchun tayyorlanmoqda...</b>`,
+                    `📝 <b>Yozuv saqlanmoqda…</b>`,
                     undefined,
                     userId
                   );
                 }
 
-                await requestTransactionConfirmation(userId,chatId,message.message_id,[newTx],statusMsgId);
+                await saveAndShowTransaction(userId,chatId,message.message_id,[newTx],statusMsgId);
                 return res.status(200).json({ status: 'ok' });
               } catch (saveErr) {
+          if ((saveErr as Error)?.message==='BOT_RECEIPT_DELIVERY_FAILED') return res.status(503).json({error:'BOT_RECEIPT_DELIVERY_FAILED'});
                 safeError('[BOT] Error saving receipt transaction to Supabase:', saveErr);
                 await sendTelegramMessage(chatId, "⚠️ Chek yozuvi saqlanmadi. Qayta urinib ko‘ring.", undefined, userId);
                 return res.status(500).json({ error: 'DB_SAVE_FAILED' });
               }
             }
-          }
         } catch (imgErr) {
           safeError('[BOT] Receipt parsing error:', imgErr);
+          const notice='⚠️ AI xizmatidan javob kelmadi. Hech narsa saqlanmadi. Birozdan so‘ng qayta urinib ko‘ring.';
+          if(statusMsgId)await editTelegramMessage(chatId,statusMsgId,notice,undefined,userId);
+          else await sendTelegramMessage(chatId,notice,undefined,userId);
+          return res.status(200).json({status:'ai_unavailable'});
         }
       }
 
@@ -2643,7 +2468,15 @@ Today: ${srvCtx.currentDate}. Output valid JSON only.`;
       );
       const statusMsgId = statusMsg?.result?.message_id;
 
-      const parsed = await parseTextWithAi(text);
+      let parsed: Awaited<ReturnType<typeof parseTextWithAi>>;
+      try { parsed=await parseTextWithAi(text); }
+      catch(error) {
+        safeError('[BOT] Text AI unavailable',error);
+        const notice='⚠️ AI xizmatidan javob kelmadi. Hech narsa saqlanmadi. Birozdan so‘ng qayta urinib ko‘ring.';
+        if(statusMsgId)await editTelegramMessage(chatId,statusMsgId,notice,undefined,userId);
+        else await sendTelegramMessage(chatId,notice,undefined,userId);
+        return res.status(200).json({status:'ai_unavailable'});
+      }
 
       // 1. Intent: query_finances (e.g. "balansim qancha?", "oylik xarajatim qancha bo'ldi?")
       if (parsed?.intent === 'query_finances') {
@@ -2685,9 +2518,10 @@ Today: ${srvCtx.currentDate}. Output valid JSON only.`;
       // 3. Multi-Transaction (e.g. "50k taksiga va 120 ming bozorlikka")
       if (parsed?.transactions && parsed.transactions.length > 1) {
         try {
-          await requestTransactionConfirmation(userId,chatId,message.message_id,parsed.transactions,statusMsgId);
+          await saveAndShowTransaction(userId,chatId,message.message_id,parsed.transactions,statusMsgId);
                 return res.status(200).json({ status: 'ok' });
         } catch (saveErr) {
+          if ((saveErr as Error)?.message==='BOT_RECEIPT_DELIVERY_FAILED') return res.status(503).json({error:'BOT_RECEIPT_DELIVERY_FAILED'});
           safeError('[BOT] Error saving multi-transactions to Supabase:', saveErr);
           if (statusMsgId) {
             await editTelegramMessage(chatId, statusMsgId, "⚠️ Yozuvlar saqlanmadi. Qayta urinib ko‘ring.", undefined, userId);
@@ -2720,9 +2554,10 @@ Today: ${srvCtx.currentDate}. Output valid JSON only.`;
         };
 
         try {
-          await requestTransactionConfirmation(userId,chatId,message.message_id,[newTx],statusMsgId);
+          await saveAndShowTransaction(userId,chatId,message.message_id,[newTx],statusMsgId);
                 return res.status(200).json({ status: 'ok' });
         } catch (saveErr) {
+          if ((saveErr as Error)?.message==='BOT_RECEIPT_DELIVERY_FAILED') return res.status(503).json({error:'BOT_RECEIPT_DELIVERY_FAILED'});
           safeError('[BOT] Error saving text transaction to Supabase:', saveErr);
           if (statusMsgId) {
             await editTelegramMessage(chatId, statusMsgId, "⚠️ Yozuv saqlanmadi. Qayta urinib ko‘ring.", undefined, userId);
