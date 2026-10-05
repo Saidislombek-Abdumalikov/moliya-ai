@@ -1,3 +1,4 @@
+import {debtPrincipalText,withDebtDetails} from '../shared/debts.js';
 import {audioMime,parseFinancialAudio} from './_audioParser.js';
 import {generateBounded,tryNextModel} from './_aiCall.js';
 import {transactionParts,TRANSACTION_CLARIFICATION} from '../shared/amountEvidence.js';
@@ -54,7 +55,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Input boundary defense: cap text at 1000 characters and trim
-    const cleanText = text.slice(0, 1000).trim();
+    const sourceText=text.slice(0,1000).trim();
+    const cleanText = debtPrincipalText(sourceText);
     if (!cleanText) {
       return res.status(400).json({ error: 'Empty text' });
     }
@@ -64,7 +66,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const effectiveQuotaUserId=caller.userId;
     if(userId && userId!==caller.userId) return res.status(403).json({error:'USER_MISMATCH'});
 
-    if(!transactionParts(text))return res.status(422).json({success:false,error:'AMOUNT_CLARIFICATION_REQUIRED',needs_clarification:true,message:TRANSACTION_CLARIFICATION});
+    if(!transactionParts(cleanText))return res.status(422).json({success:false,error:'AMOUNT_CLARIFICATION_REQUIRED',needs_clarification:true,message:TRANSACTION_CLARIFICATION});
 
     // 1. ROCKET FAST TURBO PATH (<1ms): Local Deterministic NLP Engine
     const turboRes = parseTurboFinancialText(cleanText);
@@ -75,10 +77,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if(!quota.allowed) return res.status(quota.statusCode || 429).json({error:quota.code || 'quota_exceeded',message:quota.message});
       return res.status(200).json({
         success: true,
+        ...withDebtDetails({type:tx.type},sourceText),
         type: tx.type || 'expense',
         amount: fmtAmt,
         category: tx.category,
-        note: tx.description,
+        note: sourceText,
         title: tx.description.slice(0, 80),
         debtWho: tx.counterparty || '',
         currency: tx.currency,
@@ -148,10 +151,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               const fmtAmt = Number(validated.amount).toLocaleString('en-US').replace(/,/g, ' ');
               return res.status(200).json({
                 success: true,
+                ...withDebtDetails({type:validated.type},sourceText),
                 type: validated.type || 'expense',
                 amount: fmtAmt,
                 category: validated.category || 'Boshqa',
-                note: validated.note || cleanText,
+                note: sourceText,
                 title: validated.name || cleanText,
                 debtWho: validated.debtWho || '',
                 date: validated.date || new Date().toISOString().slice(0, 10)

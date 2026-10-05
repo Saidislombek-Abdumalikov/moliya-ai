@@ -184,13 +184,14 @@ export default function AnalyticsScreen({ onboarding }: Props) {
   const firstExpense = onboarding?.firstExpense
   // Advice uses saved records only; sample/demo transactions never become personal facts.
   const realRecords = [
-    ...customTransactions.map(tx => ({ amount: parseAmt(tx), type: tx.type, category: tx.category, date: tx.date })),
+    ...customTransactions.map(tx => ({ debtPaymentFor: tx.debtPaymentFor, amount: parseAmt(tx), type: tx.type, category: tx.category, date: tx.date })),
     ...(firstExpense ? [{ amount: -Math.abs(firstExpense.amount), type: 'expense', category: firstExpense.category, date: firstExpense.date }] : [])
   ]
 
   // Real, signed transaction list: saved transactions + onboarding's declared first expense
   const allTx = [
     ...customTransactions.map((tx) => ({
+      debtPaymentFor: tx.debtPaymentFor,
       amount: parseAmt(tx),
       type: tx.type,
       category: tx.category,

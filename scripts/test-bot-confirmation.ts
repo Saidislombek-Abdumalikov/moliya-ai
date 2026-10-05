@@ -81,6 +81,7 @@ await db.exec(await readFile(new URL('../migrations/12-bot-message-delivery.sql'
 const {encodeWav}=await import('../src/audioRecorder.js');
 const wav=Buffer.from(await encodeWav(new Float32Array(16000)).arrayBuffer());
 (supabase as any).rpc=async(name:string,args:any)=>{
+ if(name==='moliya_financial_write')return {data:(await db.query<any>('SELECT moliya_financial_write($1,$2,$3::jsonb,$4::jsonb) AS v',[args.p_user_id,args.p_action,JSON.stringify(args.p_payload),JSON.stringify(args.p_expected)])).rows[0].v,error:null};
  if(name==='moliya_ai_quota')return {data:{allowed:true,isPremium:true,isTrial:false,limit:null,usedCount:1},error:null};
  if(name==='moliya_bot_message_delivery')return {data:(await db.query<any>('SELECT moliya_bot_message_delivery($1,$2,$3) AS v',[args.p_key,args.p_owner,args.p_action])).rows[0].v,error:null};
  assert.equal(name,'moliya_bot_draft');return {data:await rpc(args.p_user_id,args.p_id,args.p_action,args.p_payload),error:null};
@@ -103,7 +104,7 @@ globalThis.fetch=async(input:any,options:any)=>{
   const content=await req.clone().json();const str=JSON.stringify(content.contents);
   const parsed=str.includes('Read this receipt.')?{isReceipt:true,totalText:'25 000',currency:'UZS',category:'Boshqa',title:'Do‘kon'}:
    str.includes('Transcribe exactly what is heard.')?{transcription:'400000 ishlatdim'}:
-   {transcription:'400000 ishlatdim',type:'expense',amount:400000,category:'Boshqa'};
+   {transcription:'400000 ishlatdim',type:'expense',amount:400000,currency:'UZS',category:'Boshqa'};
   return new Response(JSON.stringify({candidates:[{content:{role:'model',parts:[{text:JSON.stringify(parsed)}]},finishReason:'STOP'}]}),{status:200,headers:{'Content-Type':'application/json'}});
  }
  assert.ok(url.startsWith('https://api.telegram.org/'),url);
@@ -127,4 +128,15 @@ for(const [index,extra,expected] of [[601,{text:'400000 ishlatdim'},400000],[602
   assert.equal((await inbound(index,extra)).body.status,'duplicate');assert.equal((await transactions()).length,1);
  });
 }
+await test('debt due-date reply updates the existing loan without another transaction',async()=>{
+ await db.query("UPDATE users SET onboarding='{\"language\":\"uz\",\"completed\":true}' WHERE id=$1",[user]);
+ sent.length=0;
+ await inbound(700,{text:'Alidan 100 ming qarz oldim'});
+ const before=await transactions();assert.equal(before.length,1);assert.equal(before[0].type,'debt');assert.equal(before[0].debtWho,'Ali');assert.ok(before[0].debtDatePromptId);
+ assert.ok(sent.some(x=>x.body.reply_markup?.force_reply));
+ const response=await inbound(701,{text:'ertaga',reply_to_message:{message_id:before[0].debtDatePromptId}});
+ assert.equal(response.statusCode,200);
+ const after=await transactions();assert.equal(after.length,1);assert.equal(after[0].id,before[0].id);assert.equal(after[0].debtDateConfirmed,true);
+ const {localDay,addDays}=await import('../shared/debts.js');assert.equal(after[0].debtDueDate,addDays(localDay(),1));
+});
 console.log(`${count} bot confirmation checks passed. Offline PostgreSQL; not a live load test.`);await db.close();

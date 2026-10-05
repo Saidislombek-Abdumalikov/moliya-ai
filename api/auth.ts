@@ -151,7 +151,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     action = cleanUrl.replace(/^\/api\/auth\/?/, '').trim();
   }
 
-  const tier = action === 'check-login-request' ? 'auth_poll' : ['sync-data','logout','wipe-data','notifications','legal'].includes(action) ? 'general' : 'auth_exchange';
+  const tier = action === 'check-login-request' ? 'auth_poll' : ['sync-data','logout','wipe-data','notifications','legal','debts'].includes(action) ? 'general' : 'auth_exchange';
   if (!(await applyRateLimit(req,res,tier))) return;
 
   const BOT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
@@ -171,6 +171,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         privacy_policy: typeof data?.onboarding?.privacy_policy === 'string' && data.onboarding.privacy_policy.trim()
           ? data.onboarding.privacy_policy.trim() : DEFAULT_PRIVACY_POLICY_TEXT });
     } catch { return res.status(503).json({ error: 'LEGAL_TEXT_UNAVAILABLE' }); }
+  }
+
+  if(action==='debts') {
+    if(req.method!=='POST')return res.status(405).json({error:'METHOD_NOT_ALLOWED'});
+    const caller=await requireEligibleCaller(req,res);if(!caller)return;
+    const {txId,operation,payload,expected}=req.body||{};
+    if(typeof txId!=='string'||txId.length>200||!expected||typeof expected!=='object'||Array.isArray(expected)||!['pay','edit','dismiss'].includes(operation))return res.status(400).json({error:'INVALID_DEBT_ACTION'});
+    const {data,error}=await supabase.rpc('moliya_debt_action',{p_user_id:caller.userId,p_session_token:caller.sessionToken,p_tx_id:txId,p_action:operation,p_payload:payload||{},p_expected:expected});
+    if(error||!data)return res.status(503).json({error:'DEBT_STORE_UNAVAILABLE'});
+    return res.status(data.success?200:data.statusCode||400).json(data);
   }
 
   if(action==='notifications') {

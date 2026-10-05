@@ -1,9 +1,10 @@
 // Financial amounts are unsigned magnitudes; the transaction type controls cash flow.
 // A legacy record without a type may use its signed amount. Unknown types are ignored.
 export type FinancialKind = 'income' | 'expense' | 'debt' | 'lending';
-export type FinancialRecord = { type?: unknown; amount?: unknown; category?: unknown };
+export type FinancialRecord = { type?: unknown; amount?: unknown; category?: unknown; debtPaymentFor?: unknown };
 
 export function financialKind(tx: FinancialRecord): FinancialKind | null {
+  if (tx?.debtPaymentFor) return null;
   const type = typeof tx?.type === 'string' ? tx.type.toLowerCase().trim() : '';
   if (type === 'income' || type === 'expense' || type === 'debt' || type === 'lending') return type;
   if (type) return null;
@@ -19,12 +20,19 @@ export function financialAmount(tx: FinancialRecord): number {
 }
 
 export function financialTotals(records: readonly FinancialRecord[]) {
+  let repaymentsIn=0,repaymentsOut=0;
   let income = 0, expense = 0, borrowed = 0, lent = 0, count = 0;
   let incomeCount = 0, expenseCount = 0;
   const categories: Record<string, number> = Object.create(null);
   for (const tx of records) {
     const type = financialKind(tx);
     const amount = financialAmount(tx);
+    if (tx.debtPaymentFor) {
+      if (amount && (tx.type === 'income' || tx.type === 'expense')) {
+        count++; if (tx.type === 'income') repaymentsIn += amount; else repaymentsOut += amount;
+      }
+      continue;
+    }
     if (!type || !amount) continue;
     count++;
     if (type === 'income') { income += amount; incomeCount++; }
@@ -37,5 +45,5 @@ export function financialTotals(records: readonly FinancialRecord[]) {
     if (type === 'lending') lent += amount;
   }
   return { income, expense, borrowed, lent, count, incomeCount, expenseCount,
-    operatingNet: income - expense, cashFlow: income + borrowed - expense - lent, categories };
+    operatingNet: income - expense, repaymentsIn,repaymentsOut,cashFlow: income + borrowed + repaymentsIn - expense - lent - repaymentsOut, categories };
 }

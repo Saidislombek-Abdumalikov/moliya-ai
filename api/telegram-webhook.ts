@@ -1,3 +1,5 @@
+import {debtPrincipalText,withDebtDetails,debtDueFromText,validDay,reminderPromise} from '../shared/debts.js';
+import {mutateFinancialData} from './services/_financialDataService.js';
 import {parseReceiptImage} from './_receiptParser.js';
 import {audioMime,parseFinancialAudio} from './_audioParser.js';
 import {withVoiceProgress} from './_voiceEvidence.js';
@@ -653,7 +655,8 @@ async function verifyAndMarkLoginRequest(requestId: string, fromUser: any) {
 function escapeBotHtml(value:any):string { return String(value).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]!)); }
 
 // Persist first; the existing atomic RPC prevents duplicates across retries.
-async function saveAndShowTransaction(userId:string, chatId:number|string, sourceMessageId:number, txs:any[], statusMsgId?:number) {
+async function saveAndShowTransaction(userId:string, chatId:number|string, sourceMessageId:number, txs:any[], statusMsgId?:number,sourceText='') {
+  txs=txs.map(tx=>({...withDebtDetails(tx,sourceText||tx.note||''),...(sourceText?{note:sourceText}:{})}));
   const saved=await saveBotMessageTransactions(userId,chatId,sourceMessageId,txs);
   const records=Array.isArray(saved.transactions)?saved.transactions:[];
   let text:string;let keyboard:any;
@@ -670,9 +673,18 @@ async function saveAndShowTransaction(userId:string, chatId:number|string, sourc
       {text:`🗑 ${i+1}. O‘chirish`,callback_data:`del_${tx.id}`}
     ])};
   }
+  for(const tx of records.filter((t:any)=>['debt','lending'].includes(t.type))){text+='\n\n🔔 '+escapeBotHtml(reminderPromise(tx.debtDueDate,tx.date))+(!tx.debtDateConfirmed?' Sanani ilovadagi Qarzlar bo‘limida ham belgilashingiz mumkin.':'');}
   let delivered=statusMsgId ? await editTelegramMessage(chatId,statusMsgId,text,keyboard,userId,'ai_response') : null;
   if(!delivered?.ok)delivered=await sendTelegramMessage(chatId,text,keyboard,userId,'ai_response');
   if(!delivered?.ok)throw new Error('BOT_RECEIPT_DELIVERY_FAILED');
+  for(const tx of records.filter((t:any)=>['debt','lending'].includes(t.type)&&!t.debtDateConfirmed)){
+    try {
+    const question=await sendTelegramMessage(chatId,`📅 ${escapeBotHtml(tx.debtWho||'Qarz')}: qachon qaytariladi? Shu xabarga javob bering: masalan, “ertaga”, “7 kundan keyin”, “2026-12-20” yoki “hali kelishilmagan”.`,{force_reply:true,selective:true},userId);
+    if(question?.ok && question.result?.message_id){
+      await mutateFinancialData(userId,'put_transaction',{...tx,debtDatePromptId:question.result.message_id},tx);
+    }
+    } catch { safeWarn('Debt date follow-up unavailable'); }
+  }
 }
 function transactionEditUrl(id:string):string {
   const url=new URL(appUrl);url.searchParams.set('editTransaction',id);return url.href;
@@ -783,6 +795,7 @@ function buildMultiTransactionSuccessCard(txs: any[]) {
 }
 
 async function parseTextWithAi(text: string) {
+  text=debtPrincipalText(text);
   // 1. ROCKET FAST PATH (<1ms): Local Turbo Deterministic NLP Engine
   const turboResult = parseTurboFinancialText(text);
   if (turboResult && turboResult.overall_confidence >= 0.85) {
@@ -2080,6 +2093,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ status: 'ok' });
     }
 
+    // A date reply updates only its own already-saved debt, never creates a new expense.
+    if(text && message.reply_to_message?.message_id && eligibleUser(user)){
+      const debt=(Array.isArray(user.transactions)?user.transactions:[]).find((t:any)=>t.debtDatePromptId===message.reply_to_message.message_id);
+      if(debt){
+        if(debt.debtDateConfirmed){await sendTelegramMessage(chatId,'Sana avval belgilangan. Uni ilovadagi Qarzlar bo‘limida o‘zgartiring.',undefined,userId);return res.status(200).json({status:'debt_date_already_set'});}
+        const unknown=/^(hali )?(kelishilmagan|bilmayman|sanasiz)$/i.test(text);
+        const due=validDay(text)?text:debtDueFromText('qaytaraman '+text);
+        if(!due&&!unknown){await sendTelegramMessage(chatId,'Sanani YYYY-MM-DD ko‘rinishida yoki “hali kelishilmagan” deb oldingi savolga javob bering.',undefined,userId);return res.status(200).json({status:'debt_date_needed'});}
+        const next={...debt,debtDueDate:due,debtDateConfirmed:true};
+        await mutateFinancialData(userId,'put_transaction',next,debt);
+        await sendTelegramMessage(chatId,'✅ '+reminderPromise(due,debt.date),undefined,userId);
+        return res.status(200).json({status:'debt_date_saved'});
+      }
+    }
+
     // ── Voice & Audio Message (Audio Parsing) ───────────────────
     const audioMsg = message.voice || message.audio;
     if (audioMsg) {
@@ -2198,7 +2226,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 year: safeD.year,
                 time: safeD.time,
                 note: parsed.note || defaultNote,
-                debtWho: parsed.debtWho || ''
+                debtWho: parsed.debtWho || '',
+                debtDueDate:parsed.debtDueDate,
+                debtDateConfirmed:parsed.debtDateConfirmed
               };
 
               try {
@@ -2212,7 +2242,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   );
                 }
 
-                await saveAndShowTransaction(userId,chatId,message.message_id,[newTx],statusMsgId);
+                await saveAndShowTransaction(userId,chatId,message.message_id,[newTx],statusMsgId,newTx.note);
                 return res.status(200).json({ status: 'ok' });
               } catch (saveErr) {
           if ((saveErr as Error)?.message==='BOT_RECEIPT_DELIVERY_FAILED') return res.status(503).json({error:'BOT_RECEIPT_DELIVERY_FAILED'});
@@ -2331,7 +2361,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   );
                 }
 
-                await saveAndShowTransaction(userId,chatId,message.message_id,[newTx],statusMsgId);
+                await saveAndShowTransaction(userId,chatId,message.message_id,[newTx],statusMsgId,newTx.note);
                 return res.status(200).json({ status: 'ok' });
               } catch (saveErr) {
           if ((saveErr as Error)?.message==='BOT_RECEIPT_DELIVERY_FAILED') return res.status(503).json({error:'BOT_RECEIPT_DELIVERY_FAILED'});
@@ -2438,8 +2468,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           return res.status(200).json({status:'financial_answer'});
         }
       }
-      const intentCheck=parseTurboFinancialText(text);
-      if(!transactionParts(text) && !['query_finances','general_question'].includes(intentCheck?.intent || '')){
+      const intentCheck=parseTurboFinancialText(debtPrincipalText(text));
+      if(!transactionParts(debtPrincipalText(text)) && !['query_finances','general_question'].includes(intentCheck?.intent || '')){
         await sendTelegramMessage(chatId,TRANSACTION_CLARIFICATION,undefined,userId);
         return res.status(200).json({status:'needs_clarification'});
       }
@@ -2521,7 +2551,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // 3. Multi-Transaction (e.g. "50k taksiga va 120 ming bozorlikka")
       if (parsed?.transactions && parsed.transactions.length > 1) {
         try {
-          await saveAndShowTransaction(userId,chatId,message.message_id,parsed.transactions,statusMsgId);
+          await saveAndShowTransaction(userId,chatId,message.message_id,parsed.transactions,statusMsgId,text);
                 return res.status(200).json({ status: 'ok' });
         } catch (saveErr) {
           if ((saveErr as Error)?.message==='BOT_RECEIPT_DELIVERY_FAILED') return res.status(503).json({error:'BOT_RECEIPT_DELIVERY_FAILED'});
@@ -2557,7 +2587,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         };
 
         try {
-          await saveAndShowTransaction(userId,chatId,message.message_id,[newTx],statusMsgId);
+          await saveAndShowTransaction(userId,chatId,message.message_id,[newTx],statusMsgId,text);
                 return res.status(200).json({ status: 'ok' });
         } catch (saveErr) {
           if ((saveErr as Error)?.message==='BOT_RECEIPT_DELIVERY_FAILED') return res.status(503).json({error:'BOT_RECEIPT_DELIVERY_FAILED'});

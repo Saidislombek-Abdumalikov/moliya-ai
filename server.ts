@@ -1,3 +1,4 @@
+import debtReminders from './api/debt-reminders.js';
 import express from 'express';
 import path from 'node:path';
 import auth from './api/auth.js';
@@ -14,6 +15,7 @@ app.all('/api/auth',adapt(auth));app.all('/api/auth/:action',adapt(auth));
 app.all('/api/admin',adapt(admin));app.all('/api/admin/:route',adapt(admin));
 app.all('/api/telegram-webhook',adapt(webhook));
 app.all('/api/parse-expense',adapt(expense));app.all('/api/parse-receipt',adapt(receipt));
+app.all('/api/debt-reminders',adapt(debtReminders));
 app.get('/api/currency-rates',adapt(rates));app.get('/api/health',(_req,res)=>res.json({ok:true}));
 app.use('/api',(_req,res)=>res.status(404).json({error:'NOT_FOUND'}));
 app.use((err:any,_req:any,res:any,_next:any)=>res.status(err?.type==='entity.too.large'?413:500).json({error:'REQUEST_FAILED'}));

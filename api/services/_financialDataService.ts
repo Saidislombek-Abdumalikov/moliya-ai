@@ -1,3 +1,4 @@
+import {withDebtDetails} from '../../shared/debts.js';
 import { safeError } from '../_logger.js';
 import { supabase } from '../_supabaseClient.js';
 
@@ -15,6 +16,9 @@ export interface FinancialTransaction {
   year?: number;
   time?: string;
   debtWho?: string;
+  debtPersonId?:string;
+  debtDueDate?:string|null;
+  debtDateConfirmed?:boolean;
   counterparty?: string | null;
   description?: string;
   name?: string;
@@ -89,6 +93,7 @@ export function normalizeBotTransactions(txItems: Array<Partial<FinancialTransac
     const signedAmount = isIncome ? rawAmt : -rawAmt;
 
     return {
+      ...withDebtDetails({type:txItem.type,debtDueDate:txItem.debtDueDate,debtDateConfirmed:txItem.debtDateConfirmed},txItem.note||txItem.description||''),
       id: txId,
       type: txItem.type || 'expense',
       amount: signedAmount,
@@ -101,6 +106,7 @@ export function normalizeBotTransactions(txItems: Array<Partial<FinancialTransac
       month: finalMonth,
       year: finalYear,
       time: finalTime,
+      ...(['debt','lending'].includes(txItem.type||'')?{debtPersonId:txItem.debtPersonId||'person_'+txId}:{}),
       debtWho: txItem.debtWho || txItem.counterparty || ''
     };
   });

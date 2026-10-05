@@ -63,6 +63,10 @@
     {
       "path": "/api/admin?route=run-scheduled-reports",
       "schedule": "0 15 * * *"
+    },
+    {
+      "path": "/api/debt-reminders",
+      "schedule": "0 4 * * *"
     }
   ],
   "rewrites": [
@@ -95,6 +99,9 @@
       "maxDuration": 60
     },
     "api/telegram-webhook.ts": {
+      "maxDuration": 60
+    },
+    "api/debt-reminders.ts": {
       "maxDuration": 60
     }
   }

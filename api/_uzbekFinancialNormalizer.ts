@@ -521,7 +521,11 @@ export function parseTurboFinancialText(rawText: string, todayStr?: string): Tur
     };
   }
 
-  if(!transactionParts(clean)?.every(isShortTransaction))return null;
+  const simpleNamedDebt = (part:string) => {
+    const match=part.trim().match(/^([a-z'‘’ʻʼ]+)(dan|ga)\s+\d[\d .,]*(?:ming|mln|million|so'm|som|sum|uzs)?\s+qarz\s+(oldim|berdim)$/i);
+    return !!match && (match[2].toLowerCase()==='dan' ? match[3].toLowerCase()==='oldim' : match[3].toLowerCase()==='berdim');
+  };
+  if(!transactionParts(clean)?.every(part=>isShortTransaction(part)||simpleNamedDebt(part)))return null;
 
   // 3. Multi-Transaction Splitting (e.g. "50k taksiga va 100k bozorlikka")
   const parts = clean.split(/\s+(?:va\s+yana|va|hamda|\+)\s+/i);

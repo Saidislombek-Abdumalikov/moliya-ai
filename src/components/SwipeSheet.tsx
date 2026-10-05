@@ -1,9 +1,9 @@
 import { useState, useRef, type ReactNode } from 'react';
 import { motion, useDragControls, useReducedMotion, type HTMLMotionProps } from 'motion/react';
 
-type Props = Omit<HTMLMotionProps<'div'>,'children'> & { children?:ReactNode; onDismiss: () => void; locked?: boolean };
+type Props = Omit<HTMLMotionProps<'div'>,'children'> & { children?:ReactNode; footer?:ReactNode; scrollBody?:boolean; onDismiss: () => void; locked?: boolean };
 // Drag starts only on the handle; forms and content keep native scrolling.
-export default function SwipeSheet({onDismiss,locked=false,children,style,...props}:Props) {
+export default function SwipeSheet({onDismiss,locked=false,children,footer,scrollBody=false,style,...props}:Props) {
   const dragged=useRef(false);
   const controls=useDragControls();
   const reduced=useReducedMotion();
@@ -17,13 +17,14 @@ export default function SwipeSheet({onDismiss,locked=false,children,style,...pro
       else if(info.offset.y < -35)setExpanded(true);
     }}
     transition={reduced?{duration:0}:props.transition}
-    style={{...style,overscrollBehavior:'contain',...(expanded?{height:'90dvh',maxHeight:'90dvh'}:{})}}>
+    style={{...style,...(scrollBody?{display:'flex',flexDirection:'column',overflow:'hidden'} as const:{}),overscrollBehavior:'contain',...(expanded?{height:'90dvh',maxHeight:'90dvh'}:{})}}>
     <button type="button" aria-label="Oynani kengaytirish" disabled={locked}
       onPointerDown={e=>{dragged.current=false;if(!locked)controls.start(e);}}
       onClick={()=>{if(!dragged.current)setExpanded(v=>!v);}}
-      style={{display:'block',width:72,height:28,padding:0,margin:'-8px auto 4px',border:0,background:'transparent',touchAction:'none',cursor:locked?'default':'grab'}}>
+      style={{flexShrink:0,display:'block',width:72,height:28,padding:0,margin:'-8px auto 4px',border:0,background:'transparent',touchAction:'none',cursor:locked?'default':'grab'}}>
       <span style={{display:'block',width:40,height:4,margin:'auto',borderRadius:4,background:'#C4B5FD'}} />
     </button>
-    {children}
+    {scrollBody?<div style={{minHeight:0,overflowY:'auto',overscrollBehavior:'contain',flex:'1 1 auto'}}>{children}</div>:children}
+    {footer && <div style={{flexShrink:0,background:'#fff',paddingTop:8,borderTop:'1px solid #F0ECF8'}}>{footer}</div>}
   </motion.div>;
 }

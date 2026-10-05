@@ -33,6 +33,11 @@ export interface Transaction {
   time?: string
   title?: string
   debtWho?: string
+  debtPersonId?: string
+  debtDueDate?: string | null
+  debtDateConfirmed?: boolean
+  debtPaymentFor?: string
+  debtDismissed?: string
   messageId?: string | number
   cardId?: string
 }
@@ -180,6 +185,7 @@ interface FinanceContextType {
   deleteCard: (id: string) => Promise<void>
   updateSecurity: (updated: SecurityOpts) => Promise<any>
   addTransaction: (tx: Omit<Transaction, 'id' | 'date'> & { id?: string | number; date?: string; messageId?: string | number; day?: number; month?: number; year?: number; time?: string }) => Promise<any>
+  debtAction: (tx:Transaction,operation:'pay'|'edit'|'dismiss',payload?:any)=>Promise<void>
   deleteTransaction: (id: string | number) => Promise<any>
   clearAllData: () => Promise<void>
   clearOnlyFinancialData: () => Promise<void>
@@ -864,6 +870,15 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setSecurity(updatedSec);
   };
 
+  const debtAction=async(tx:Transaction,operation:'pay'|'edit'|'dismiss',payload:any={})=>{
+    const token=readSessionToken();
+    const response=await fetchWithTimeout('/api/auth/debts',{method:'POST',headers:getClientAuthHeaders(),body:JSON.stringify({txId:String(tx.id),operation,payload,expected:tx})});
+    const data=await response.json();
+    if(!response.ok){await refreshUserData().catch(()=>{});throw new Error(response.status===409?'Qarz o‘zgargan. Yangilangan holatni tekshiring.':data.code==='INVALID_PAYMENT_AMOUNT'?'Summa qolgan qarzdan oshmasin.':'Saqlanmadi. Qayta urinib ko‘ring.');}
+    if(token!==readSessionToken() || logoutPending.current)return;
+    if(Array.isArray(data.transactions)){++refreshSequence.current;setCustomTransactions(data.transactions);localStorage.setItem('user_transactions_v1',JSON.stringify(data.transactions));}
+  };
+
   const addTransaction = async (tx: Omit<Transaction, 'id' | 'date'> & { id?: string | number; date?: string; messageId?: string | number; day?: number; month?: number; year?: number; time?: string }): Promise<Transaction> => {
 
     // Deterministic client date normalization: ensures real date, day, month, year, time
@@ -903,7 +918,9 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
 
     const txId = tx.id ? String(tx.id) : (`tx_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`);
+    const previous=customTransactions.find(t=>String(t.id)===txId) || null;
     const newTx: Transaction = {
+      ...previous,
       id: txId,
       type: tx.type || 'expense',
       amount: Number(tx.amount) || 0,
@@ -911,6 +928,9 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       category: tx.category || 'Boshqa',
       title: tx.title || tx.note || tx.category || '',
       debtWho: tx.debtWho,
+      debtPersonId:tx.debtPersonId ?? previous?.debtPersonId,
+      debtDueDate:tx.debtDueDate===undefined?previous?.debtDueDate:tx.debtDueDate,
+      debtDateConfirmed:tx.debtDateConfirmed ?? previous?.debtDateConfirmed,
       messageId: tx.messageId,
       cardId: tx.cardId || 'cash',
       date: finalDate,
@@ -920,7 +940,6 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       time: tx.time || finalTime
     };
 
-    const previous=customTransactions.find(t=>String(t.id)===txId) || null;
     await writeFinancial('put_transaction',newTx,previous);
 
     return newTx;
@@ -1078,6 +1097,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         updateSecurity,
         addTransaction,
         deleteTransaction,
+        debtAction,
         clearAllData,
         clearOnlyFinancialData,
         logout,

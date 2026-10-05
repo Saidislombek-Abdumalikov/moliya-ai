@@ -1,3 +1,4 @@
+import DebtsHub from './DebtsHub';
 import SwipeSheet from './SwipeSheet';
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
@@ -605,6 +606,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
     const cleanAmt = isExpense ? -Math.abs(rawAmt) : Math.abs(rawAmt)
     const isNegative = cleanAmt < 0
     return {
+      ...t,
       id: t.id || `custom-${idx}`,
       type: t.type || (isNegative ? 'expense' : 'income'),
       name: t.title || t.debtWho || t.note || t.category,
@@ -828,6 +830,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
         </div>
       </div>
 
+      <DebtsHub />
       {/* Balance card */}
       <div id="home_cards_section" style={{ padding: '0 20px 20px' }}>
         <div

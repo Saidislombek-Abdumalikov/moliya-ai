@@ -10,7 +10,6 @@ const {default:receipt}=await import('../api/parse-receipt.js');
 const token='sess_'+'a'.repeat(48),userId='moliya_user_tg_123';
 const user:any={id:userId,telegram_id:'123',phone:'+998901234567',onboarding:{session_token:token,session_expires_at:new Date(Date.now()+60000).toISOString()},bot_verification:{telegram_id:'123',phone:'+998901234567',phone_source:'telegram_own_contact',phone_verified_at:'2026-01-01',consent_source:'telegram_button',consent_version:'v1',consent_accepted_at:'2026-01-01'}};
 let providerBodies:any[]=[];
-let audioStarted=0,releaseAudio:(()=>void)|null=null;
 let keys:any[]=[],quotaCalls=0,mode='success',providerCalls:Array<{key:string;model:string}>=[];
 (supabase as any).from=(table:string)=>{
  const filters:Array<[string,any]>=[];let patch:any=null;
@@ -38,11 +37,6 @@ globalThis.fetch=async(input:any,options:any)=>{
  const req=input instanceof Request?input:new Request(input,options);
  assert.equal(new URL(req.url).hostname,'generativelanguage.googleapis.com','Only mocked Gemini is allowed');
  const body=await req.clone().json();providerBodies.push(body);
- if(mode==='audio-concurrent'){
-   audioStarted++;
-   if(audioStarted===1)await new Promise<void>((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('AUDIO_CALLS_WERE_SEQUENTIAL')),1000);releaseAudio=()=>{clearTimeout(timer);resolve()}});
-   else releaseAudio?.();
- }
  assert.ok(body.generationConfig.maxOutputTokens>=2048);
  const key=req.headers.get('x-goog-api-key')||new URL(req.url).searchParams.get('key')||'';
  const model=new URL(req.url).pathname.split('/models/')[1].split(':')[0];providerCalls.push({key,model});
@@ -52,14 +46,13 @@ globalThis.fetch=async(input:any,options:any)=>{
  let parsed:any={isReceipt:true,totalText:'65 000',currency:'UZS',type:'expense',amount:65000,category:'Transport',title:'Velosiped ta’miri',note:'Ta’mirlash',date:'2026-09-28'};
  const isAudio=JSON.stringify(body.contents).includes('audio/wav');
  if(isAudio){
-   const verification=JSON.stringify(body.contents).includes('Transcribe exactly what is heard.');
-   parsed=verification?{transcription:mode==='audio-mismatch'?'15 ming taksiga':"10 so'm taksiga"}:{transcription:"10 so'm taksiga",type:'expense',amount:10,category:'Transport'};
+   parsed={transcription:"10 so'm taksiga",type:'expense',amount:10,currency:'UZS',category:'Transport',needs_clarification:mode==='audio-unclear'};
  }
  if(mode==='receipt-unclear')parsed={isReceipt:false,needs_clarification:true};
  return response(200,{candidates:[{content:{role:'model',parts:[{text:JSON.stringify(parsed)}]},finishReason:'STOP'}]});
 };
 const key=(id:string,model='gemini-3.5-flash-lite')=>({id,name:'test',provider:'gemini',api_key:id,is_active:true,model});
-function reset(rows:any[],nextMode='success'){keys=rows;mode=nextMode;providerCalls=[];providerBodies=[];audioStarted=0;invalidateAiKeysCache();}
+function reset(rows:any[],nextMode='success'){keys=rows;mode=nextMode;providerCalls=[];providerBodies=[];invalidateAiKeysCache();}
 let requestId=0;
 async function call(handler:any,body:any,credential=token){
  const req:any={method:'POST',headers:{authorization:credential?'Bearer '+credential:'','x-forwarded-for':'offline-'+(++requestId)},body};
@@ -90,12 +83,15 @@ assert.equal(quotaCalls,before);assert.equal(providerCalls.length,0);
 // Regression for the user's exact phrase: no provider needed, one quota check.
 reset([]);result=await call(expense,{text:'400000 ishlatdim',userId});
 assert.equal(result.statusCode,200);assert.equal(result.body.amount,'400 000');assert.equal(result.body.type,'expense');assert.equal(result.body.category,'Boshqa');assert.equal(providerCalls.length,0);
+reset([]);result=await call(expense,{text:'Alidan 100 ming qarz oldim, ertaga qaytaraman',userId});
+assert.equal(result.statusCode,200,JSON.stringify(result.body));assert.equal(result.body.type,'debt');assert.equal(result.body.amount,'100 000');assert.equal(result.body.debtWho,'Ali');
+const {localDay,addDays}=await import('../shared/debts.js');assert.equal(result.body.debtDueDate,addDays(localDay(),1));assert.equal(providerCalls.length,0);
 const {encodeWav}=await import('../src/audioRecorder.js');
 const wav=Buffer.from(await encodeWav(new Float32Array(16000)).arrayBuffer()).toString('base64');
 reset([key('voice-key')]);result=await call(expense,{base64Audio:wav,userId});
-assert.equal(result.statusCode,200,JSON.stringify(result.body));assert.equal(result.body.amount,'10');assert.equal(providerCalls.length,2);
-reset([key('voice-key')],'audio-mismatch');result=await call(expense,{base64Audio:wav,userId});
-assert.equal(result.statusCode,422);assert.equal(providerCalls.length,2,'Uncertain audio must not be retried until accepted');
+assert.equal(result.statusCode,200,JSON.stringify(result.body));assert.equal(result.body.amount,'10');assert.equal(providerCalls.length,1);
+reset([key('voice-key')],'audio-unclear');result=await call(expense,{base64Audio:wav,userId});
+assert.equal(result.statusCode,422);assert.equal(providerCalls.length,1,'Uncertain audio must not be retried until accepted');
 reset([key('voice-key')]);const voiceQuota=quotaCalls;
 assert.equal((await call(expense,{base64Audio:wav,userId},'')).statusCode,401);
 assert.equal((await call(expense,{base64Audio:wav,userId:'moliya_user_tg_999'})).statusCode,403);
@@ -106,10 +102,10 @@ reset([key('receipt-key')]);const receiptQuota=quotaCalls;
 assert.equal((await call(receipt,{base64Image:tinyPng,mimeType:'image/png',userId},'')).statusCode,401);
 assert.equal((await call(receipt,{base64Image:tinyPng,mimeType:'image/png',userId:'moliya_user_tg_999'})).statusCode,403);
 assert.equal(quotaCalls,receiptQuota);assert.equal(providerCalls.length,0);
-console.log('Text 400000 ishlatdim, authenticated audio, mismatched audio, malformed audio, receipt clarity and all modality auth gates passed.');
-reset([key('voice-key')],'audio-concurrent');result=await call(expense,{base64Audio:wav,userId});assert.equal(result.statusCode,200);assert.equal(audioStarted,2);
+console.log('Text 400000 ishlatdim, authenticated audio, unclear audio, malformed audio, receipt clarity and all modality auth gates passed.');
+reset([key('voice-key')]);result=await call(expense,{base64Audio:wav,userId});assert.equal(result.statusCode,200);assert.equal(providerCalls.length,1,'Audio must use one provider call');
 reset([key('text-key')]);result=await call(expense,{text:'bugun kursga jami 2.5 mln pul sarfladim',userId});assert.equal(result.statusCode,200);assert.equal(result.body.amount,'2 500 000');assert.ok(JSON.stringify(providerBodies[0]).includes('2.5 mln'));assert.equal(result.body.category,"Ta'lim");
-console.log('Concurrent independent audio calls and original decimal-multiplier prompt passed.');
+console.log('Single audio call and original decimal-multiplier prompt passed.');
 let aborted=false;
 const fake:any={models:{generateContent:({config}:any)=>new Promise((_resolve,reject)=>{config.abortSignal.addEventListener('abort',()=>{aborted=true;reject(Error('aborted'))},{once:true})})}};
 const keepAlive=setTimeout(()=>{},200);
