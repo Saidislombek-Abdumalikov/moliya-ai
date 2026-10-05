@@ -1,3 +1,4 @@
+import {logBotMessage} from './services/_telegramMessageService.js';
 import crypto from "node:crypto"
 import type { VercelRequest, VercelResponse } from "@vercel/node"
 import { supabase } from "./_supabaseClient.js"
@@ -122,6 +123,7 @@ export async function deliverDebtReminder(
       else await status("rejected")
       return "failed"
     }
+    if(Number.isSafeInteger(result.result?.message_id)) await logBotMessage(user.id,{id:'debt_'+result.result.message_id,message_id:result.result.message_id,chat_id:user.telegram_id,direction:'bot_to_user',sender:'bot',type:'bot_response',text:currentMessage,timestamp:new Date().toISOString()});
     await status("sent")
     await supabase
       .from("app_notifications")

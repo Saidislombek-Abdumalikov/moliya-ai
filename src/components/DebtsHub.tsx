@@ -1,3 +1,4 @@
+import {debtRelationships,debtPersonLabel} from '../../shared/debtPeople';
 import { useEffect, useMemo, useRef, useState } from "react"
 import { AnimatePresence, motion } from "motion/react"
 import SwipeSheet from "./SwipeSheet"
@@ -46,6 +47,7 @@ export default function DebtsHub() {
     [name, setName] = useState(""),
     [personId, setPersonId] = useState(""),
     [due, setDue] = useState("")
+  const [relationship,setRelationship]=useState("");
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [success, setSuccess] = useState(""),
@@ -95,7 +97,7 @@ export default function DebtsHub() {
   const tx = all.find((t) => String(t.id) === selected && isDebt(t))
   useEffect(() => {
     if (tx) {
-      setName(tx.debtWho || "")
+      setName(tx.debtWho || ""); setRelationship(tx.debtRelationship||"")
       setPersonId(tx.debtPersonId || "person_" + crypto.randomUUID())
       setDue(tx.debtDueDate || "")
       setAmount("")
@@ -182,47 +184,12 @@ export default function DebtsHub() {
     }, "")
   return (
     <>
-      <motion.button
-        whileTap={{ scale: 0.98 }}
-        onClick={() => setOpen(true)}
-        style={{
-          display: "block",
-          width: "calc(100% - 40px)",
-          margin: "0 20px 18px",
-          padding: 18,
-          border: "1px solid #E8E3F8",
-          borderRadius: 20,
-          background: "#fff",
-          textAlign: "left",
-          cursor: "pointer",
-        }}
-      >
-        <strong
-          style={{ display: "block", marginBottom: 12, color: "#1E1A3C" }}
-        >
-          Qarzlar <span style={{ float: "right" }}>↗</span>
-        </strong>
-        <span style={{ display: "flex", gap: 20 }}>
-          {(["debt", "lending"] as const).map((kind) => (
-            <span
-              key={kind}
-              style={{
-                flex: 1,
-                color: kind === "debt" ? "#B45309" : "#6D28D9",
-              }}
-            >
-              <small>{kind === "debt" ? "Qarzlarim" : "Haqdorligim"}</small>
-              <strong style={{ display: "block", marginTop: 4 }}>
-                {money(
-                  debts
-                    .filter((t) => t.type === kind)
-                    .reduce((sum, t) => sum + debtRemaining(t, all), 0),
-                )}{" "}
-                so‘m
-              </strong>
-            </span>
-          ))}
-        </span>
+      <motion.button className="home-summary-card debt-summary" whileTap={{scale:0.98}} onClick={()=>setOpen(true)}>
+        <span className="summary-title">Qarzlar <span>↗</span></span>
+        {(['debt','lending'] as const).map(kind=><span key={kind} className="debt-summary-line">
+          <span className="summary-caption">{kind==='debt'?'Qarzlarim':'Haqdorligim'}</span>
+          <strong className="summary-money" style={{color:kind==='debt'?'#B45309':'#0F766E'}}>{money(debts.filter(t=>t.type===kind).reduce((sum,t)=>sum+debtRemaining(t,all),0))} <small>so‘m</small></strong>
+        </span>)}
       </motion.button>
       <AnimatePresence>
         {notice && !open && reminders.length > 0 && (
@@ -434,7 +401,7 @@ export default function DebtsHub() {
                       }
                       onChange={(e) => {
                         const id = e.target.value
-                        setPersonId(id || "person_" + crypto.randomUUID())
+                        setPersonId(id || "person_" + crypto.randomUUID()); setRelationship(debts.find(t=>t.debtPersonId===id)?.debtRelationship||"")
                         if (id)
                           setName(people.find(([p]) => p === id)?.[1] || "")
                       }}
@@ -442,7 +409,7 @@ export default function DebtsHub() {
                       <option value="">Yangi / alohida odam</option>
                       {people.map(([id, n]) => (
                         <option value={id} key={id}>
-                          {n} · {id.slice(-4)}
+                          {debtPersonLabel(n,debts.find(t=>t.debtPersonId===id)?.debtRelationship)}
                         </option>
                       ))}
                     </select>
@@ -455,6 +422,7 @@ export default function DebtsHub() {
                     placeholder="Ism"
                     onChange={(e) => setName(e.target.value)}
                   />
+                  <label>Munosabat<select aria-label="Munosabat" style={input} value={relationship} onChange={e=>setRelationship(e.target.value)}><option value="">Tanlanmagan</option>{Object.entries(debtRelationships).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label>
                   <label>
                     Qaytarish sanasi
                     <input
@@ -485,6 +453,7 @@ export default function DebtsHub() {
                         () =>
                           debtAction(tx, "edit", {
                             personName: name.trim(),
+                            relationship,
                             personId,
                             dueDate: due || null,
                           }),
@@ -596,7 +565,7 @@ export default function DebtsHub() {
                           onClick={() => setPerson(g.key)}
                         >
                           <strong>
-                            {g.items[0].debtWho || "Nomsiz"} · {g.items.length}{" "}
+                            {debtPersonLabel(g.items[0].debtWho,g.items[0].debtRelationship)} · {g.items.length}{" "}
                             ta
                           </strong>
                           <p>

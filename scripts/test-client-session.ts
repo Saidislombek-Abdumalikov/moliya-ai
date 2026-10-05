@@ -10,7 +10,10 @@ check('new account sees tour', () => assert.equal(tourDone(storage, 'a', false),
 values.set(tourKey('a'), 'true');
 check('dismissal survives old server data', () => assert.equal(tourDone(storage, 'a', false), true));
 check('dismissal is scoped to account', () => assert.equal(tourDone(storage, 'b', false), false));
-check('server dismissal works on another device', () => assert.equal(tourDone(storage, 'b', true), true));
+check('server dismissal does not skip a new browser tour', () => assert.equal(tourDone(storage, 'b', true), false));
+values.set(tourKey('a','old','telegram'),'true');
+check('web tour is separate from Mini App',()=>assert.equal(tourDone(storage,'a',true,'old','web'),false));
+check('recreated account gets a fresh tour',()=>assert.equal(tourDone(storage,'a',true,'new','telegram'),false));
 values.set('user_tour_completed_v2', 'true');
 check('legacy global dismissal cannot hide another account tour', () => assert.equal(tourDone(storage, 'b', false), false));
 check('verified bot account enters without local onboarding flag', () => assert.equal(registrationReady('moliya_user_tg_123', {completed:true,oferta_accepted:true,phone:'+998901234567'}, true), true));

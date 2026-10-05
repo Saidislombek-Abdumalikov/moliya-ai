@@ -55,3 +55,8 @@ export function keepTelegramSwipesDisabled(tg: TelegramViewport | undefined): ()
     }
   };
 }
+
+// URL data remains signed Telegram data; the backend must still verify its HMAC.
+export function telegramLaunchData(sdk: {initData?:string}|undefined, hash:string, search='') {
+  return sdk?.initData || new URLSearchParams(hash.replace(/^#/, '')).get('tgWebAppData') || new URLSearchParams(search).get('tgWebAppData') || '';
+}

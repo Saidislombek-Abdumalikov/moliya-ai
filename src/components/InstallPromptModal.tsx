@@ -20,8 +20,8 @@ export default function InstallPromptModal() {
     const show=(manual=false)=>{
       if(blocked() || installCompleted() || (!manual && installDismissed())){setShowModal(false);return;}
       const event=pendingInstall(); setDeferredPrompt(event);
-      setInstallGuide(event ? null : guide || (manual ? 'browser' : null));
-      if(guide || event || manual) setShowModal(true);
+      setInstallGuide(event ? null : guide || 'browser');
+      setShowModal(true);
     };
     const installed=()=>{setIsInstalled(true);setShowModal(false);};
     const available=()=>{setIsInstalled(installCompleted());show();};
@@ -104,7 +104,7 @@ export default function InstallPromptModal() {
               </h4>
               <p style={{ margin: 0, fontSize: 11, color: '#C7D2FE', lineHeight: 1.3 }}>
                 {installGuide
-                  ? "Safari orqali qulay va tezkor kirish"
+                  ? "Bosh ekrandan qulay va tezkor kirish"
                   : "Tezkor kirish uchun ilovani o'rnating"}
               </p>
             </div>

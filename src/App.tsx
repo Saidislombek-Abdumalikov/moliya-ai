@@ -25,14 +25,19 @@ export default function App() {
   const [showTour, setShowTour] = useState(false);
   const dismissedTourFor = useRef<string | null>(null);
   const [activeScreen, setActiveScreen] = useState<Screen>('home');
+  const tourGeneration = onboarding?.account_created_at || '';
+  const tourSurface = isTelegramMiniApp() ? 'telegram' : 'web';
+  const tourIdentity = userId ? tourKey(userId,tourGeneration,tourSurface) : '';
   const [authWaitTimeout, setAuthWaitTimeout] = useState(false);
 
   useEffect(() => {
+    setAuthWaitTimeout(false);
+    if (isAuthReady) return;
     const timer = setTimeout(() => {
       setAuthWaitTimeout(true);
     }, 16000);
     return () => clearTimeout(timer);
-  }, []);
+  }, [isAuthReady]);
 
   // ═══════════════════════════════════════════════════════════
   // ALL HOOKS MUST BE BEFORE ANY CONDITIONAL RETURNS
@@ -45,9 +50,9 @@ export default function App() {
     Boolean(onboarding?.phone && isValidPhoneNumber(onboarding.phone)));
 
   useEffect(() => {
-    setShowTour(isAuthReady && registered && !!userId && dismissedTourFor.current !== userId &&
-      !tourDone(localStorage, userId, onboarding?.tour_completed === true));
-  }, [isAuthReady, registered, userId, onboarding?.tour_completed]);
+    setShowTour(isAuthReady && registered && !!userId && dismissedTourFor.current !== tourIdentity &&
+      !tourDone(localStorage, userId, onboarding?.tour_completed === true, tourGeneration, tourSurface));
+  }, [isAuthReady, registered, userId, onboarding?.tour_completed, tourGeneration, tourSurface, tourIdentity]);
 
   // Telegram Mini App viewport initialization & auto-expand
   // CRITICAL: This MUST be before conditional returns to avoid hooks violation
@@ -219,8 +224,8 @@ export default function App() {
         onClose={() => {
           setShowTour(false);
           if (userId) {
-            dismissedTourFor.current = userId;
-            localStorage.setItem(tourKey(userId), 'true');
+            dismissedTourFor.current = tourIdentity;
+            localStorage.setItem(tourKey(userId,tourGeneration,tourSurface), 'true');
           }
           // Keep dismissal on this device even when preference sync is offline.
           void updateOnboarding({ tour_completed: true }).catch(() => {});

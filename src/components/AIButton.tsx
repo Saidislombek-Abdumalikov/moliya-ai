@@ -1,3 +1,4 @@
+import {debtRelationships,debtPersonLabel} from '../../shared/debtPeople';
 import {debtPrincipalText,validDay,reminderPromise} from '../../shared/debts';
 import {prepareSilenceMonitor} from '../voiceSilence';
 import SwipeSheet from './SwipeSheet';
@@ -21,6 +22,7 @@ interface Entry {
   title?: string
   debtDueDate?: string | null
   debtDateConfirmed?: boolean
+  debtRelationship?: string
   debtPersonId?: string
   debtWho?: string
   date?: string
@@ -117,6 +119,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const recorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  const voiceTypeOverride = useRef<EntryType|null>(null)
   const voiceGeneration = useRef(0)
   const requestRef = useRef<AbortController | null>(null)
   const isStartingVoiceRef = useRef(false)
@@ -210,6 +213,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
   if (!visible) return null
 
   const openModal = () => {
+    voiceTypeOverride.current=null;setSelectedType('expense');
     setStep('type')
     const localISOTime = (new Date(Date.now() - new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 16)
     setEntry({ type: 'expense', amount: '', note: '', category: '', date: localISOTime, cardId: 'cash' })
@@ -298,6 +302,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
     const monitor=prepareSilenceMonitor()
     silenceMonitor.current=monitor
     setAutoAvailable(true)
+    voiceTypeOverride.current=null;
     const generation=++voiceGeneration.current
     setAiError('')
     try{
@@ -338,9 +343,10 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
           if(!response.ok)throw new Error('AUDIO_UNCLEAR')
           const parsed=await response.json()
           if(!['expense','income','debt','lending'].includes(parsed.type) || !Number.isFinite(Number(parsed.amount)) || Number(parsed.amount)<=0)throw new Error('AUDIO_UNCLEAR')
-          setSelectedType(parsed.type)
+          const resolvedType=voiceTypeOverride.current || parsed.type;
+          setSelectedType(resolvedType)
           setAiText(parsed.transcription || '')
-          setEntry(prev=>({...prev,type:parsed.type,amount:String(parsed.amount),category:parsed.category || 'Boshqa',note:parsed.transcription || parsed.note || '',title:parsed.title,debtWho:parsed.debtWho,debtDueDate:parsed.debtDueDate,debtDateConfirmed:parsed.debtDateConfirmed,debtPersonId:undefined,date:parsed.date,cardId:prev.cardId || 'cash'}))
+          setEntry(prev=>({...prev,type:resolvedType,amount:String(parsed.amount),category:resolvedType===parsed.type?parsed.category:categories[resolvedType as EntryType][0] || 'Boshqa',note:parsed.transcription || parsed.note || '',title:parsed.title,debtWho:parsed.debtWho,debtDueDate:parsed.debtDueDate,debtDateConfirmed:parsed.debtDateConfirmed,debtPersonId:undefined,date:parsed.date,cardId:prev.cardId || 'cash'}))
           setStep('form')
         }catch(error:any){
           if(generation!==voiceGeneration.current)return
@@ -422,7 +428,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
       category: entry.category,
       title: entry.title,
       debtWho: entry.debtWho?.trim(),
-      ...(['debt','lending'].includes(entry.type)?{debtDueDate:entry.debtDueDate||null,debtDateConfirmed:true,debtPersonId:entry.debtPersonId||'person_'+crypto.randomUUID()}:{}),
+      ...(['debt','lending'].includes(entry.type)?{debtDueDate:entry.debtDueDate||null,debtDateConfirmed:true,debtRelationship:entry.debtRelationship||'',debtPersonId:entry.debtPersonId||'person_'+crypto.randomUUID()}:{}),
       date: finalDate,
       cardId: entry.cardId === 'cash' ? undefined : entry.cardId,
     }
@@ -458,7 +464,6 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
     }
   }
 
-  const cfg = typeConfig[selectedType]
 
   return (
     <>
@@ -523,25 +528,10 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
               justifyContent: 'center',
             }}
           >
-            <SwipeSheet onDismiss={closeModal} locked={isProcessing || isSaving || recording || voiceStarting}
+            <SwipeSheet className="ai-compact-sheet" onDismiss={closeModal} locked={isProcessing || isSaving || recording || voiceStarting}
               scrollBody
               footer={!saved && !isProcessing && step==='form' ? (
                 <div style={{ display: 'flex', gap: 10, paddingTop: 0, paddingBottom: 2 }}>
-                  <button
-                    disabled={voiceStarting || isSaving}
-                    onClick={startVoice}
-                    style={{
-                      width: 48, height: 48, borderRadius: 14, flexShrink: 0,
-                      border: '1.5px solid #E8E3F8', background: '#F7F5FF',
-                      cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    }}
-                  >
-                    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                      <rect x="6" y="1" width="6" height="10" rx="3" fill="#7C3AED" fillOpacity="0.8" />
-                      <path d="M3 9C3 12.3 5.7 15 9 15C12.3 15 15 12.3 15 9" stroke="#7C3AED" strokeWidth="1.5" strokeLinecap="round" />
-                      <line x1="9" y1="15" x2="9" y2="17" stroke="#7C3AED" strokeWidth="1.5" strokeLinecap="round" />
-                    </svg>
-                  </button>
                   <button
                     onClick={handleSave}
                     id="ai_save_transaction"
@@ -569,7 +559,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
               style={{
                 width: '100%',
                 maxWidth: 'var(--app-max-width, 440px)',
-                maxHeight: '85dvh',
+                maxHeight: 'calc(100dvh - 12px)',
                 overflowY: 'auto',
                 background: '#FFFFFF',
                 borderRadius: '28px 28px 0 0',
@@ -579,8 +569,8 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
               }}
             >
               {/* Header Handle Bar with Close Button */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-                <div style={{ width: 28 }} />
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                <button aria-label="Orqaga" onClick={()=>{if(!recording&&!isProcessing)setStep('type')}} style={{border:0,background:'#F5F4FA',borderRadius:10,width:32,height:32}}>←</button>
                 <div />
                 <button
                   onClick={closeModal}
@@ -712,7 +702,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
 
             {/* Processing state with dynamic rotating tips */}
             {isProcessing && (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '30px 10px', minHeight: 270 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '14px 10px', minHeight: 180 }}>
                 {/* Glowing pulsating AI circle */}
                 <div style={{ position: 'relative', width: 90, height: 90, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 20 }}>
                   <motion.div
@@ -805,9 +795,9 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
             {!saved && !isProcessing && step === 'type' && (
               <>
                 <p style={{ fontSize: 18, fontWeight: 700, color: '#1E1A3C', marginBottom: 6 }}>{language === 'uz' ? "Nima qo'shmoqchisiz?" : language === 'uz_cyrl' ? "Нима қўшмоқчисиз?" : language === 'ru' ? "Что хотите добавить?" : "What to add?"}</p>
-                <p style={{ fontSize: 13, color: '#8B82C4', marginBottom: 20 }}>{language === 'uz' ? "Turini tanlang yoki ovoz bilan ayting" : language === 'uz_cyrl' ? "Турини танланг ёки овоз билан айтинг" : language === 'ru' ? "Выберите тип или скажите голосом" : "Select type or use voice"}</p>
+                <p style={{ fontSize: 13, color: '#8B82C4', marginBottom: 10 }}>{language === 'uz' ? "Turini tanlang yoki ovoz bilan ayting" : language === 'uz_cyrl' ? "Турини танланг ёки овоз билан айтинг" : language === 'ru' ? "Выберите тип или скажите голосом" : "Select type or use voice"}</p>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 20 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
                   {(Object.keys(typeConfig) as EntryType[]).map((t) => {
                     const c = typeConfig[t]
                     return (
@@ -815,19 +805,19 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                         key={t}
                         onClick={() => selectType(t)}
                         style={{
-                          padding: '18px 16px',
+                          padding: '12px 14px',
                           borderRadius: 16,
                           border: `1.5px solid ${c.color}22`,
                           background: c.bg,
                           cursor: 'pointer',
                           display: 'flex',
-                          flexDirection: 'column',
+                          flexDirection: 'row',
                           alignItems: 'flex-start',
                           gap: 8,
                           textAlign: 'left',
                         }}
                       >
-                        <span style={{ fontSize: 22, color: c.color, fontWeight: 700 }}>{c.icon}</span>
+                        <span style={{ fontSize: 20, color: c.color, fontWeight: 700 }}>{c.icon}</span>
                         <span style={{ fontSize: 15, fontWeight: 600, color: '#1E1A3C' }}>{copy.types[typeIndex(t)]}</span>
                       </button>
                     )
@@ -835,7 +825,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                 </div>
 
                 {/* AI Text Input section */}
-                <div style={{ marginBottom: 18 }}>
+                <div style={{ marginBottom: 10 }}>
                   <p style={{ fontSize: 11, fontWeight: 700, color: '#8B82C4', textTransform: 'uppercase', marginBottom: 8, letterSpacing: 0.6 }}>
                     {isProcessing ? (
                       <motion.span animate={{ opacity: [0.5, 1, 0.5] }} transition={{ repeat: Infinity, duration: 1.5 }}>
@@ -902,7 +892,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                       onChange={(e) => setAiText(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && handleAiTextSubmit()}
                       style={{
-                        flex: 1,
+                        flex: 1, minWidth: 0,
                         background: 'none',
                         border: 'none',
                         outline: 'none',
@@ -978,335 +968,29 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
               </>
             )}
 
-            {/* Step: voice recording */}
-            {!saved && !isProcessing && step === 'voice' && (
-              <div style={{ textAlign: 'center', padding: '10px 0 20px' }}>
-                <p style={{ fontSize: 16, fontWeight: 600, color: '#1E1A3C', marginBottom: 4 }}>
-                  {copy.voice[typeIndex(selectedType)]}
-                </p>
-                <p style={{ fontSize: 13, color: '#8B82C4', marginBottom: 32 }}>{language === 'uz' ? 'Gapiring, eshityapman...' : language === 'uz_cyrl' ? 'Гапиринг, эшитяпман...' : language === 'ru' ? 'Говорите, я слушаю...' : 'Speak, I am listening...'}</p>
-
+            {!saved && step==='voice' && <div className="ai-voice-panel">
+              <div className="ai-type-grid">{(Object.keys(typeConfig) as EntryType[]).map(t=><button key={t} aria-pressed={selectedType===t} onClick={()=>{voiceTypeOverride.current=t;setSelectedType(t)}} style={{background:selectedType===t?typeConfig[t].bg:'#F7F5FF',color:typeConfig[t].color,borderColor:selectedType===t?typeConfig[t].color:'transparent'}}>{copy.types[typeIndex(t)]}</button>)}</div>
+              {!isProcessing&&<>
+                <motion.div className="ai-record-orb" animate={recording&&!reducedMotion?{scale:[1,1.06,1]}:{}} transition={{repeat:Infinity,duration:1.3}}>🎙</motion.div>
+                <p style={{fontSize:14,margin:'8px 0'}}>{copy.voice[typeIndex(selectedType)]}</p>
                 {voiceModeSwitch}
-                {autoSend && !autoAvailable && <p role="status" style={{fontSize:12,color:'#766E9E'}}>{({uz:'Avtomatik to‘xtash ishlamadi. Tugmani bosing.',uz_cyrl:'Автоматик тўхташ ишламади. Тугмани босинг.',ru:'Автостоп недоступен. Нажмите кнопку.',en:'Auto-stop unavailable. Use the stop button.'})[language]}</p>}
-                {/* Smooth Mic animation */}
-                <div style={{ position: 'relative', width: 96, height: 96, margin: '0 auto 24px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  {recording && (
-                    <motion.div
-                      animate={{ scale: [1, 1.35, 1], opacity: [0.2, 0.5, 0.2] }}
-                      transition={{ repeat: Infinity, duration: 1.5, ease: "easeInOut" }}
-                      style={{
-                        position: 'absolute', inset: -10, borderRadius: '50%',
-                        background: '#7C3AED', zIndex: 1
-                      }}
-                    />
-                  )}
-                  <motion.div
-                    animate={recording ? { scale: [1, 1.06, 1] } : {}}
-                    transition={{ repeat: Infinity, duration: 1.2, ease: "easeInOut" }}
-                    style={{
-                      width: 96, height: 96, borderRadius: '50%',
-                      background: recording ? '#7C3AED' : '#EDE9FE',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      zIndex: 2, position: 'relative',
-                      boxShadow: recording ? '0 8px 24px rgba(124,58,237,0.4)' : 'none'
-                    }}
-                  >
-                    <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
-                      <rect x="12" y="2" width="12" height="20" rx="6" fill={recording ? 'white' : '#7C3AED'} fillOpacity="0.9" />
-                      <path d="M6 18C6 24.6 11.4 30 18 30C24.6 30 30 24.6 30 18" stroke={recording ? 'white' : '#7C3AED'} strokeWidth="2.5" strokeLinecap="round" />
-                      <line x1="18" y1="30" x2="18" y2="34" stroke={recording ? 'white' : '#7C3AED'} strokeWidth="2.5" strokeLinecap="round" />
-                    </svg>
-                  </motion.div>
-                </div>
+                {!autoAvailable&&autoSend&&<p style={{fontSize:11}}>Avtomatik to‘xtash mavjud emas. To‘xtatish tugmasini bosing.</p>}
+                <div className="ai-field-pair"><button className="ai-primary" onClick={finishVoice} disabled={!recording}>{language==='en'?'Stop and analyze':'To‘xtatish va tahlil'}</button><button className="ai-secondary" onClick={()=>{stopVoice();setStep('type')}}>{language==='en'?'Cancel':'Bekor qilish'}</button></div>
+              </>}
+            </div>}
 
-                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 6, height: 24 }}>
-                  {[16, 24, 18, 26, 14].map((h, i) => (
-                    <motion.div
-                      key={i}
-                      animate={recording ? { height: [10, h, 10] } : { height: 10 }}
-                      transition={{ repeat: Infinity, duration: 0.8, delay: i * 0.12, ease: "easeInOut" }}
-                      style={{
-                        width: 4,
-                        borderRadius: 2,
-                        background: '#7C3AED',
-                        opacity: recording ? 1 : 0.3,
-                      }}
-                    />
-                  ))}
-                </div>
-
-                <button onClick={finishVoice} disabled={!recording} style={{display:'block',margin:'24px auto 0',padding:'12px 24px',borderRadius:12,border:0,background:'#7C3AED',color:'white',cursor:'pointer'}}>
-                  {({uz:'To‘xtatish va tahlil qilish',uz_cyrl:'Тўхтатиш ва таҳлил қилиш',ru:'Остановить и разобрать',en:'Stop and analyze'})[language]}
-                </button>
-                <button onClick={() => { stopVoice(); setStep('type') }} style={{
-                  marginTop: 28, padding: '10px 24px', borderRadius: 12,
-                  border: '1px solid #E8E3F8', background: 'transparent',
-                  color: '#8B82C4', fontSize: 14, fontFamily: 'inherit', cursor: 'pointer',
-                }}>
-                  {language === 'uz' ? 'Bekor qilish' : language === 'uz_cyrl' ? 'Бекор қилиш' : language === 'ru' ? 'Отмена' : 'Cancel'}
-                </button>
-              </div>
-            )}
-
-            {/* Step: form */}
-            {!saved && !isProcessing && step === 'form' && (
-              <>
-                {/* Type switcher */}
-                <div style={{ display: 'flex', gap: 6, marginBottom: 18, overflowX: 'auto' }}>
-                  {(Object.keys(typeConfig) as EntryType[]).map((t) => {
-                    const c = typeConfig[t]
-                    const active = selectedType === t
-                    return (
-                      <button
-                        key={t}
-                        onClick={() => { setSelectedType(t); setEntry((e) => ({ ...e, type: t, category: categories[t][0] })) }}
-                        style={{
-                          flexShrink: 0,
-                          padding: '7px 14px',
-                          borderRadius: 20,
-                          border: `1.5px solid ${active ? c.color : '#E8E3F8'}`,
-                          background: active ? c.bg : 'transparent',
-                          color: active ? c.color : '#8B82C4',
-                          fontSize: 13,
-                          fontWeight: active ? 600 : 400,
-                          fontFamily: 'inherit',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        {copy.types[typeIndex(t)]}
-                      </button>
-                    )
-                  })}
-                </div>
-
-                <AnimatePresence mode="wait">
-                  <motion.div
-                    key={selectedType}
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -20 }}
-                    transition={{ duration: 0.15 }}
-                  >
-                    {/* Amount */}
-                    <div style={{ marginBottom: 12 }}>
-                      <label style={{ fontSize: 12, color: '#8B82C4', fontWeight: 500, display: 'block', marginBottom: 4 }}>{copy.amount}</label>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    placeholder="0"
-                    value={formatMoneyInput(entry.amount)}
-                    onChange={(e) => {
-                      const raw=e.target.value.replace(/[\u00a0\u202f]/g,' ')
-                      if(/^[\d ]*(?:[.,]\d{0,2})?$/.test(raw)) {
-                        const input=e.target;
-                        const before=raw.slice(0,input.selectionStart ?? raw.length).replace(/ /g,'').length;
-                        const formatted=formatMoneyInput(raw);
-                        setEntry(prev=>({...prev,amount:formatted}));
-                        requestAnimationFrame(()=>{
-                          let index=0,count=0;
-                          while(index<formatted.length && count<before){if(formatted[index]!==' ')count++;index++;}
-                          if(document.activeElement===input)input.setSelectionRange(index,index);
-                        });
-                      }
-                    }}
-                    style={{
-                      width: '100%',
-                      padding: '14px 16px',
-                      borderRadius: 14,
-                      border: '1.5px solid #E8E3F8',
-                      background: '#F7F5FF',
-                      fontSize: 22,
-                      fontWeight: 700,
-                      color: cfg.color,
-                      fontFamily: 'inherit',
-                      outline: 'none',
-                    }}
-                  />
-                </div>
-
-                {['debt','lending'].includes(entry.type)&&<div style={{padding:12,background:'#FAF8FF',borderRadius:14,marginBottom:12}}>
-                  <label style={{fontSize:12}}>Kim bilan qarz?</label>
-                  <select aria-label="Qarzdagi odam" value={entry.debtPersonId||''} onChange={e=>{const id=e.target.value;const person=customTransactions.find(t=>t.debtPersonId===id);setEntry(v=>({...v,debtPersonId:id||undefined,debtWho:person?.debtWho||v.debtWho}));}} style={{width:'100%',padding:10,margin:'6px 0',border:'1px solid #DDD6FE',borderRadius:10}}>
-                    <option value="">Yangi / alohida odam</option>{Array.from(new Map(customTransactions.filter(t=>t.debtPersonId).map(t=>[t.debtPersonId!,t.debtWho])).entries()).map(([id,name])=><option key={id} value={id}>{name} · {id.slice(-4)}</option>)}
-                  </select>
-                  <input aria-label="Qarzdagi odam ismi" maxLength={100} placeholder="Ism" value={entry.debtWho||''} onChange={e=>setEntry(v=>({...v,debtWho:e.target.value}))} style={{width:'100%',padding:10,border:'1px solid #DDD6FE',borderRadius:10,marginBottom:10}}/>
-                  <label style={{fontSize:12}}>Qachon qaytariladi?</label>
-                  <input aria-label="Qaytarish sanasi" type="date" value={entry.debtDueDate||''} onChange={e=>setEntry(v=>({...v,debtDueDate:e.target.value||null,debtDateConfirmed:!!e.target.value}))} style={{width:'100%',padding:10,border:'1px solid #DDD6FE',borderRadius:10,margin:'6px 0'}}/>
-                  <button type="button" onClick={()=>setEntry(v=>({...v,debtDueDate:null,debtDateConfirmed:true}))} style={{padding:8,border:0,borderRadius:8,background:entry.debtDateConfirmed&&!entry.debtDueDate?'#DDD6FE':'#F3EEFF',color:'#6D28D9'}}>Hali kelishilmagan</button>
-                  {entry.debtDateConfirmed&&<p style={{fontSize:12,marginTop:8}}>{entry.debtDueDate?'Tasdiqlasangiz: ':''}{reminderPromise(entry.debtDueDate,String(entry.date||'').slice(0,10))}</p>}
-                </div>}
-
-                {/* Category */}
-                <div style={{ marginBottom: 12 }}>
-                  <label style={{ fontSize: 12, color: '#8B82C4', fontWeight: 500, display: 'block', marginBottom: 4 }}>{copy.category}</label>
-                  <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 4 }}>
-                    {categories[selectedType].map((cat) => {
-                      // Xaritalangan emojilar
-                      const categoryEmoji: Record<string, string> = {
-                        'Oziq-ovqat': '🍔',
-                        'Transport': '🚗',
-                        "Ko'ngil ochar": '🎮',
-                        'Kiyim': '👕',
-                        'Kommunal': '💡',
-                        'Sog\'liq': '💊',
-                        'Ta\'lim': '📚',
-                        'Maosh': '💼',
-                        'Freelance': '💻',
-                        'Biznes': '📈',
-                        'Investitsiya': '🏦',
-                        'Sovg\'a': '🎁',
-                        'Boshqa': '📦',
-                        'Do\'st': '🤝',
-                        'Bank': '🏦',
-                        'Oila': '👨‍👩‍👧‍👦',
-                        'Hamkasb': '👥'
-                      }
-                      const emoji = categoryEmoji[cat] || '✨'
-                      
-                      return (
-                        <button
-                          key={cat}
-                          onClick={() => setEntry((e) => ({ ...e, category: cat }))}
-                          style={{
-                            flexShrink: 0,
-                            padding: '7px 12px',
-                            borderRadius: 10,
-                            border: `1.5px solid ${entry.category === cat ? cfg.color : '#E8E3F8'}`,
-                            background: entry.category === cat ? cfg.bg : 'transparent',
-                            color: entry.category === cat ? cfg.color : '#8B82C4',
-                            fontSize: 13,
-                            fontFamily: 'inherit',
-                            cursor: 'pointer',
-                            fontWeight: entry.category === cat ? 600 : 400,
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 6
-                          }}
-                        >
-                          <span>{emoji}</span>
-                          <span>{aiCategoryLabel(language, cat)}</span>
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-
-                {/* Account Selection */}
-                <div style={{ marginBottom: 12 }}>
-                  <label style={{ fontSize: 12, color: '#8B82C4', fontWeight: 500, display: 'block', marginBottom: 4 }}>
-                    {copy.account}
-                  </label>
-                  <select
-                    value={entry.cardId || 'cash'}
-                    onChange={(e) => setEntry((prev) => ({ ...prev, cardId: e.target.value }))}
-                    style={{
-                      width: '100%',
-                      padding: '14px 20px',
-                      borderRadius: 20,
-                      border: '1px solid rgba(124, 58, 237, 0.15)',
-                      background: 'linear-gradient(145deg, #FFFFFF, #F8F7FC)',
-                      boxShadow: 'inset 0 2px 6px rgba(124, 58, 237, 0.03), 0 4px 16px rgba(124, 58, 237, 0.06)',
-                      fontSize: 15,
-                      fontWeight: 600,
-                      color: '#4B456D',
-                      fontFamily: 'inherit',
-                      outline: 'none',
-                      appearance: 'none',
-                    }}
-                  >
-                    <option value="cash">{copy.cash}</option>
-                    {cards.map(c => (
-                      <option key={c.id} value={c.id}>{c.bank} ({c.number.slice(-4)})</option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Date Selection */}
-                <div style={{ marginBottom: 12 }}>
-                  <label style={{ fontSize: 12, color: '#8B82C4', fontWeight: 500, display: 'block', marginBottom: 4 }}>{copy.date}</label>
-                  <input
-                    type="datetime-local"
-                    value={(() => {
-                      const now = new Date();
-                      const pad = (n: number) => String(n).padStart(2, '0');
-                      const fallback = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
-                      if (!entry.date) return fallback;
-                      const str = String(entry.date).trim();
-                      if (str.includes('T') && str.length >= 16) return str.slice(0, 16);
-                      if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return `${str}T12:00`;
-                      const d = new Date(str);
-                      if (!isNaN(d.getTime())) {
-                        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-                      }
-                      return fallback;
-                    })()}
-                    onChange={(e) => setEntry((prev) => ({ ...prev, date: e.target.value }))}
-                    style={{
-                      width: '100%',
-                      padding: '14px 20px',
-                      borderRadius: 20,
-                      border: '1px solid rgba(124, 58, 237, 0.15)',
-                      background: 'linear-gradient(145deg, #FFFFFF, #F8F7FC)',
-                      boxShadow: 'inset 0 2px 6px rgba(124, 58, 237, 0.03), 0 4px 16px rgba(124, 58, 237, 0.06)',
-                      fontSize: 15,
-                      fontWeight: 600,
-                      color: '#4B456D',
-                      fontFamily: 'inherit',
-                      outline: 'none',
-                      transition: 'all 0.3s ease',
-                    }}
-                    onFocus={(e) => {
-                      e.target.style.boxShadow = 'inset 0 2px 6px rgba(124, 58, 237, 0.03), 0 0 0 3px rgba(124, 58, 237, 0.2)';
-                      e.target.style.border = '1px solid rgba(124, 58, 237, 0.4)';
-                    }}
-                    onBlur={(e) => {
-                      e.target.style.boxShadow = 'inset 0 2px 6px rgba(124, 58, 237, 0.03), 0 4px 16px rgba(124, 58, 237, 0.06)';
-                      e.target.style.border = '1px solid rgba(124, 58, 237, 0.15)';
-                    }}
-                  />
-                </div>
-
-                {/* Note */}
-                <div style={{ marginBottom: 18 }}>
-                  <label style={{ fontSize: 12, color: '#8B82C4', fontWeight: 500, display: 'block', marginBottom: 4 }}>{copy.note}</label>
-                  <input
-                    type="text"
-                    placeholder={copy.optional}
-                    value={entry.note}
-                    onChange={(e) => setEntry((prev) => ({ ...prev, note: e.target.value }))}
-                    style={{
-                      width: '100%',
-                      padding: '14px 20px',
-                      borderRadius: 20,
-                      border: '1px solid rgba(124, 58, 237, 0.15)',
-                      background: 'linear-gradient(145deg, #FFFFFF, #F8F7FC)',
-                      boxShadow: 'inset 0 2px 6px rgba(124, 58, 237, 0.03), 0 4px 16px rgba(124, 58, 237, 0.06)',
-                      fontSize: 15,
-                      fontWeight: 600,
-                      color: '#4B456D',
-                      fontFamily: 'inherit',
-                      outline: 'none',
-                      transition: 'all 0.3s ease',
-                    }}
-                    onFocus={(e) => {
-                      e.target.style.boxShadow = 'inset 0 2px 6px rgba(124, 58, 237, 0.03), 0 0 0 3px rgba(124, 58, 237, 0.2)';
-                      e.target.style.border = '1px solid rgba(124, 58, 237, 0.4)';
-                    }}
-                    onBlur={(e) => {
-                      e.target.style.boxShadow = 'inset 0 2px 6px rgba(124, 58, 237, 0.03), 0 4px 16px rgba(124, 58, 237, 0.06)';
-                      e.target.style.border = '1px solid rgba(124, 58, 237, 0.15)';
-                    }}
-                  />
-                </div>
-
-
-                {aiError && (
-                  <p style={{ fontSize: 13, color: '#DC2626', marginTop: -14, marginBottom: 16, textAlign: 'center' }}>{aiError}</p>
-                )}
-                  </motion.div>
-                </AnimatePresence>
-              </>
-            )}
+            {!saved && !isProcessing && step==='form' && <div className="ai-entry-form">
+              <div className="ai-type-grid">{(Object.keys(typeConfig) as EntryType[]).map(t=><button key={t} aria-pressed={selectedType===t} onClick={()=>{setSelectedType(t);setEntry(e=>({...e,type:t,category:categories[t][0]}))}} style={{background:selectedType===t?typeConfig[t].bg:'#F7F5FF',color:typeConfig[t].color,borderColor:selectedType===t?typeConfig[t].color:'transparent'}}>{copy.types[typeIndex(t)]}</button>)}</div>
+              <label>{copy.amount}<input className="ai-amount" inputMode="decimal" placeholder="0" value={formatMoneyInput(entry.amount)} onChange={e=>{if(/^[\d ]*(?:[.,]\d{0,2})?$/.test(e.target.value))setEntry(v=>({...v,amount:formatMoneyInput(e.target.value)}))}}/></label>
+              {['debt','lending'].includes(entry.type)&&<>
+                <label>Odam<select aria-label="Qarzdagi odam" value={entry.debtPersonId||''} onChange={e=>{const person=customTransactions.find(t=>t.debtPersonId===e.target.value);setEntry(v=>({...v,debtPersonId:e.target.value||undefined,debtWho:person?.debtWho||'',debtRelationship:person?.debtRelationship||''}))}}><option value="">Yangi odam</option>{Array.from(new Map(customTransactions.filter(t=>t.debtPersonId).map(t=>[t.debtPersonId!,t])).entries()).map(([id,t])=><option key={id} value={id}>{debtPersonLabel(t.debtWho,t.debtRelationship)}</option>)}</select></label>
+                <div className="ai-field-pair"><label>Ism<input aria-label="Qarzdagi odam ismi" maxLength={100} placeholder="Ali" value={entry.debtWho||''} onChange={e=>setEntry(v=>({...v,debtWho:e.target.value}))}/></label><label>Munosabat<select aria-label="Munosabat" value={entry.debtRelationship||''} onChange={e=>setEntry(v=>({...v,debtRelationship:e.target.value}))}><option value="">Tanlanmagan</option>{Object.entries(debtRelationships).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label></div>
+                <div className="ai-field-pair"><label>Qaytarish sanasi<input aria-label="Qaytarish sanasi" type="date" value={entry.debtDueDate||''} onChange={e=>setEntry(v=>({...v,debtDueDate:e.target.value||null,debtDateConfirmed:!!e.target.value}))}/></label><button className="ai-secondary" aria-pressed={entry.debtDateConfirmed&&!entry.debtDueDate} onClick={()=>setEntry(v=>({...v,debtDueDate:null,debtDateConfirmed:true}))} style={{alignSelf:'end',background:entry.debtDateConfirmed&&!entry.debtDueDate?'#DDD6FE':undefined}}>Hali kelishilmagan</button></div>
+              </>}
+              <div className="ai-field-pair"><label>{copy.category}<select value={entry.category} onChange={e=>setEntry(v=>({...v,category:e.target.value}))}>{!categories[selectedType].includes(entry.category)&&<option value={entry.category}>{aiCategoryLabel(language,entry.category)||'Boshqa'}</option>}{categories[selectedType].map(cat=><option key={cat} value={cat}>{aiCategoryLabel(language,cat)}</option>)}</select></label><label>{copy.account}<select value={entry.cardId||'cash'} onChange={e=>setEntry(v=>({...v,cardId:e.target.value}))}><option value="cash">{copy.cash}</option>{cards.map(c=><option key={c.id} value={c.id}>{c.bank} ({c.number.slice(-4)})</option>)}</select></label></div>
+              <div className="ai-field-pair"><label>{copy.date}<input type="datetime-local" value={entry.date ? (entry.date.includes("T")?entry.date.slice(0,16):entry.date+"T12:00") : new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16)} onChange={e=>setEntry(v=>({...v,date:e.target.value}))}/></label><label>{copy.note}<input value={entry.note} placeholder={copy.note} onChange={e=>setEntry(v=>({...v,note:e.target.value}))}/></label></div>
+              {aiError&&<p role="alert" style={{color:'#DC2626',fontSize:12}}>{aiError}</p>}
+            </div>}
 
             {step === 'removeSamples' && (
               <div style={{ padding: '10px 0', textAlign: 'center' }}>

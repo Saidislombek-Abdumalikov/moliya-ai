@@ -830,7 +830,6 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
         </div>
       </div>
 
-      <DebtsHub />
       {/* Balance card */}
       <div id="home_cards_section" style={{ padding: '0 20px 20px' }}>
         <div
@@ -880,127 +879,21 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
         </div>
       </div>
 
-      {/* Goal card (from onboarding) */}
-      {onboarding && (() => {
-        const isDirect = !onboarding?.monthlyIncome;
-        const spendLimit = isDirect 
-          ? (onboarding?.monthlyGoal || 7000000) 
-          : ((onboarding?.monthlyIncome || 10000000) - (onboarding?.monthlyGoal || 3000000));
-        const safeSpendLimit = Math.max(1, spendLimit);
-        const remainingLimit = spendLimit - totalExpense;
-        const limitPct = Math.min(100, Math.max(0, Math.round((totalExpense / safeSpendLimit) * 100)));
-        const isOverLimit = remainingLimit < 0;
-
-        return (
-          <div style={{ padding: '0 20px 20px' }}>
-            <div 
-              onClick={handleOpenLimitModal}
-              id="home_limit_section"
-              style={{
-                background: 'linear-gradient(135deg, #FAF9FD 0%, #F4F0FF 100%)',
-                borderRadius: 20,
-                padding: '18px 20px',
-                border: '1.5px solid #E6DFFF',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 12,
-                cursor: 'pointer',
-                transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
-                boxShadow: '0 4px 14px rgba(124, 58, 237, 0.04)',
-              }}
-              onMouseEnter={(e) => { 
-                e.currentTarget.style.transform = 'translateY(-2px)';
-                e.currentTarget.style.boxShadow = '0 6px 20px rgba(124, 58, 237, 0.08)';
-                e.currentTarget.style.borderColor = '#D8CFFF';
-              }}
-              onMouseLeave={(e) => { 
-                e.currentTarget.style.transform = 'translateY(0)';
-                e.currentTarget.style.boxShadow = '0 4px 14px rgba(124, 58, 237, 0.04)';
-                e.currentTarget.style.borderColor = '#E6DFFF';
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{
-                  width: 38, height: 38, borderRadius: 12, background: isOverLimit ? '#FEF2F2' : '#ECEAF6',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0,
-                  boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.02)'
-                }}>
-                  {isOverLimit ? '⚠️' : '🎯'}
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <p style={{ fontSize: 12, color: '#8B82C4', fontWeight: 600, letterSpacing: -0.1 }}>
-                      {t.goalLabel}
-                    </p>
-                    <span style={{ 
-                      fontSize: 11, 
-                      fontWeight: 700, 
-                      color: isOverLimit ? '#EF4444' : '#7C3AED',
-                      background: isOverLimit ? '#FEE2E2' : '#EFEFFA',
-                      padding: '2px 8px',
-                      borderRadius: 20
-                    }}>
-                      {limitPct}%
-                    </span>
-                  </div>
-                  <p style={{ fontSize: 16, fontWeight: 800, color: isOverLimit ? '#EF4444' : '#4C1D95', marginTop: 1 }}>
-                    {isOverLimit ? (
-                      lang === 'uz' ? `Limit oshib ketdi: ${fmtFull(Math.abs(remainingLimit))} ${t.currency}` :
-                      lang === 'uz_cyrl' ? `Лимит ошиб кетди: ${fmtFull(Math.abs(remainingLimit))} ${t.currency}` :
-                      lang === 'ru' ? `Лимит превышен: ${fmtFull(Math.abs(remainingLimit))} ${t.currency}` :
-                      `Limit exceeded: ${fmtFull(Math.abs(remainingLimit))} ${t.currency}`
-                    ) : (
-                      lang === 'uz' ? `${fmtFull(remainingLimit)} ${t.currency} qoldi` :
-                      lang === 'uz_cyrl' ? `${fmtFull(remainingLimit)} ${t.currency} қолди` :
-                      lang === 'ru' ? `Осталось: ${fmtFull(remainingLimit)} ${t.currency}` :
-                      `${fmtFull(remainingLimit)} ${t.currency} left`
-                    )}
-                  </p>
-                </div>
-                <div style={{
-                  width: 26, height: 26, borderRadius: 8, background: '#FFFFFF',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#7C3AED', fontSize: 12,
-                  boxShadow: '0 2px 6px rgba(0,0,0,0.04)', border: '1px solid #ECE9F8'
-                }}>
-                  ✏️
-                </div>
-              </div>
-
-              {/* Sleek Progress Bar */}
-              <div style={{ width: '100%' }}>
-                <div style={{ 
-                  height: 8, 
-                  borderRadius: 6, 
-                  background: '#EAE6F8', 
-                  overflow: 'hidden', 
-                  position: 'relative',
-                  boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.03)'
-                }}>
-                  <div style={{ 
-                    width: `${limitPct}%`, 
-                    height: '100%', 
-                    background: isOverLimit ? 'linear-gradient(90deg, #EF4444, #F87171)' : 'linear-gradient(90deg, #7C3AED, #9333EA)', 
-                    borderRadius: 6, 
-                    transition: 'width 0.6s cubic-bezier(0.4, 0, 0.2, 1)',
-                  }} />
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
-                  <p style={{ fontSize: 10.5, color: '#9B92D4', fontWeight: 500 }}>
-                    {lang === 'uz' ? 'Sarflandi' : lang === 'uz_cyrl' ? 'Сарфланди' : lang === 'ru' ? 'Потрачено' : 'Spent'}: <span style={{ fontWeight: 600, color: '#6B5FA8' }}>{fmtFull(totalExpense)} {t.currency}</span>
-                  </p>
-                  <p style={{ fontSize: 10.5, color: '#9B92D4', fontWeight: 500 }}>
-                    {isDirect ? (
-                      lang === 'uz' ? 'Jami limit' : lang === 'uz_cyrl' ? 'Жами лимит' : lang === 'ru' ? 'Общий лимит' : 'Total limit'
-                    ) : (
-                      lang === 'uz' ? 'Oylik maqsad' : lang === 'uz_cyrl' ? 'Ойлик мақсад' : lang === 'ru' ? 'Месячная цель' : 'Monthly goal'
-                    )}: <span style={{ fontWeight: 600, color: '#6B5FA8' }}>{fmtFull(spendLimit)} {t.currency}</span>
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      <div className="home-summary-pair">
+        <DebtsHub />
+        {(() => {
+          const spendLimit=Math.max(0,onboarding?.monthlyIncome ? onboarding.monthlyIncome-(onboarding.monthlyGoal||0) : onboarding?.monthlyGoal||7000000);
+          const remaining=spendLimit-totalExpense;
+          const pct=Math.min(100,Math.max(0,totalExpense/Math.max(1,spendLimit)*100));
+          return <motion.button id="home_limit_section" className="home-summary-card limit-summary" whileTap={{scale:0.98}} onClick={handleOpenLimitModal}>
+            <span className="summary-title">{lang==='en'?'Limits':lang==='ru'?'Лимиты':lang==='uz_cyrl'?'Лимитлар':'Limitlar'} <span>↗</span></span>
+            <span className="summary-caption">{remaining<0?'Limitdan oshdi':'Oylik qoldiq'}</span>
+            <strong className="summary-money" style={{color:remaining<0?'#BE123C':undefined}}>{fmtFull(Math.abs(remaining))} <small>{t.currency}</small></strong>
+            <span className="summary-progress"><span style={{width:pct+'%',background:remaining<0?'#E11D48':'#8B5CF6'}}/></span>
+            <span className="summary-caption">{Math.round(pct)}% · {fmtFull(spendLimit)} {t.currency}</span>
+          </motion.button>
+        })()}
+      </div>
 
       {/* Upcoming Transactions (Kutilayotgan xarajatlar) */}
       {upcomingTransactions.length > 0 && (

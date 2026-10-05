@@ -8,7 +8,7 @@ export function telegramInstallBlocked() {
     || /tgWebApp(?:Data|Version|Platform)=/.test(location.hash));
 }
 export function installCompleted() {
-  return window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone===true || localStorage.getItem('moliya_install_confirmed_v2')==='true';
+  return window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone===true;
 }
 export function markInstalled() {
   localStorage.setItem('moliya_install_confirmed_v2','true');pending=null;

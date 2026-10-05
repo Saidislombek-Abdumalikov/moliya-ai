@@ -1,6 +1,6 @@
-import { readSessionToken, saveSessionToken, clearSessionToken, authRequest, fetchWithTimeout, onceAsync, tourDone, tourKey } from './clientSession'
+import { readSessionToken, saveSessionToken, clearSessionToken, authRequest, fetchWithTimeout, onceAsync, reusableAuthRequest, shouldRenewTelegramSession, tourDone, tourKey } from './clientSession'
 import { telegramBotLink } from './telegramLinks'
-import { waitForTelegramSdk } from './telegramViewport'
+import { waitForTelegramSdk, telegramLaunchData } from './telegramViewport'
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react'
 import { supabase } from './supabase'
 import type { OnboardingResult } from './components/Onboarding'
@@ -33,6 +33,7 @@ export interface Transaction {
   time?: string
   title?: string
   debtWho?: string
+  debtRelationship?: string
   debtPersonId?: string
   debtDueDate?: string | null
   debtDateConfirmed?: boolean
@@ -252,7 +253,7 @@ export function isTelegramMiniApp(): boolean {
 
   // 5. URL explicitly carries Telegram WebApp data hash
   const hash = window.location.hash || ''
-  if (hash.includes('tgWebAppData=') || hash.includes('tgWebAppVersion=')) return true
+  if (hash.includes('tgWebAppData=') || hash.includes('tgWebAppVersion=') || new URLSearchParams(window.location.search).has('tgWebAppData')) return true
 
   // 6. initDataUnsafe has user AND platform is not unknown / plain browser
   if (tg?.initDataUnsafe?.user?.id && platform && platform !== 'unknown' && platform !== 'browser') {
@@ -416,17 +417,13 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       localStorage.removeItem(`user_onboarding_completed_${data.userId}`);
       localStorage.removeItem('user_onboarding_completed_v1');
     }
-    if (data.onboarding?.tour_completed === true) {
-      localStorage.setItem('user_tour_completed_v2', 'true')
-      localStorage.setItem(tourKey(data.userId), 'true');
-    }
     const acc = computeAccessState({ ...data, ...(data.onboarding || {}) })
     setAccessState(acc)
 
     if (data.onboarding) {
       const enhancedOnboarding = {
         ...data.onboarding,
-        tour_completed: tourDone(localStorage, data.userId, data.onboarding.tour_completed === true),
+        tour_completed: tourDone(localStorage, data.userId, data.onboarding.tour_completed === true,data.onboarding.account_created_at || '',isTelegramMiniApp()?'telegram':'web'),
         isPremium: acc.isPremium,
         isVip: acc.isVip,
         premiumExpiresAt: acc.premiumExpiresAt,
@@ -463,20 +460,20 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const url = new URL(window.location.href);
       const code = url.searchParams.get('code');
       const stored = readSessionToken();
-      const telegramLaunch = isTelegramMiniApp();
-      if (telegramLaunch && !(window as any).Telegram?.WebApp?.initData)
-        await waitForTelegramSdk(() => (window as any).Telegram?.WebApp);
-      const initData = (window as any).Telegram?.WebApp?.initData;
+      const telegramLaunch = isTelegramMiniApp() || !!telegramLaunchData(undefined,url.hash,url.search);
+      if (telegramLaunch && !telegramLaunchData((window as any).Telegram?.WebApp,url.hash,url.search))
+        await waitForTelegramSdk(() => (window as any).Telegram?.WebApp,12000);
+      const initData = telegramLaunchData((window as any).Telegram?.WebApp,url.hash,url.search);
       const request = stored ? authRequest(undefined,null,stored) : telegramLaunch
         ? (initData ? authRequest(initData, null, null) : null)
         : authRequest(undefined, code, null);
       if (!request) return null;
-      let response = await fetchWithTimeout('/api/auth/' + request.action, {
-        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(request.body)
-      });
+      let response = request.action==='exchange-code'
+        ? await fetchWithTimeout('/api/auth/exchange-code',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(request.body)})
+        : await reusableAuthRequest(request.action,request.body);
       let data = await response.json();
-      if (request.action === 'validate-session' && telegramLaunch && initData && response.status===401) {
-        response=await fetchWithTimeout('/api/auth/telegram',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({initData})});
+      if (telegramLaunch && shouldRenewTelegramSession(request.action,response.status,data,initData)) {
+        response=await reusableAuthRequest('telegram',{initData});
         data=await response.json();
       }
       if (!telegramLaunch && request.action === 'validate-session' && code && (response.status === 401 || data.valid === false)) {
@@ -558,7 +555,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
               await setSupabaseSession(data.access_token, data.refresh_token)
             }
 
-            const currentOnboarding = JSON.parse(localStorage.getItem('user_onboarding_v1') || '{}')
+            const currentOnboarding: Partial<OnboardingResult> = {} // Never merge another account's cached registration or tour.
             const savedLang = localStorage.getItem('user_selected_language_v1')
             const updatedOnboarding = {
               ...currentOnboarding,
@@ -828,8 +825,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
       localStorage.setItem('user_onboarding_completed_v1', 'true');
     }
-    if (updated.tour_completed === true) {
-      if (targetUserId) localStorage.setItem(tourKey(targetUserId), 'true');
+    if (newData.tour_completed === true) {
+      if (targetUserId) localStorage.setItem(tourKey(targetUserId,onboarding?.account_created_at || '',isTelegramMiniApp()?'telegram':'web'), 'true');
     }
     window.dispatchEvent(new Event('user_onboarding_updated'));
 
@@ -928,6 +925,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       category: tx.category || 'Boshqa',
       title: tx.title || tx.note || tx.category || '',
       debtWho: tx.debtWho,
+      debtRelationship:tx.debtRelationship ?? previous?.debtRelationship,
       debtPersonId:tx.debtPersonId ?? previous?.debtPersonId,
       debtDueDate:tx.debtDueDate===undefined?previous?.debtDueDate:tx.debtDueDate,
       debtDateConfirmed:tx.debtDateConfirmed ?? previous?.debtDateConfirmed,

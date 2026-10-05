@@ -18,9 +18,23 @@ export function clearSessionToken() {
 }
 
 // Tour dismissal is a presentation preference, never an authorization signal.
-export function tourKey(userId: string) { return `user_tour_completed_v3_${userId}`; }
-export function tourDone(storage: Pick<Storage, 'getItem'>, userId: string, serverDone: boolean) {
-  return serverDone || storage.getItem(tourKey(userId)) === 'true';
+export function tourKey(userId: string, generation = '', surface = 'web') {
+  return `user_tour_completed_v4_${userId}_${generation}_${surface}`;
+}
+export function tourDone(storage: Pick<Storage, 'getItem'>, userId: string, _serverDone: boolean, generation = '', surface = 'web') {
+  // A tour completed in Mini App must not suppress the first tour in a new browser.
+  return storage.getItem(tourKey(userId, generation, surface)) === 'true';
+}
+
+// Retry only reusable authentication operations; never replay a single-use web code.
+export async function reusableAuthRequest(action: string, body: unknown, pause = (ms:number)=>new Promise<void>(r=>setTimeout(r,ms))) {
+  for (let attempt=0;;attempt++) {
+    try {
+      const response=await fetchWithTimeout('/api/auth/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},10000);
+      if (attempt<2 && (response.status===409 || response.status>=500)) {await pause(400*(attempt+1));continue;}
+      return response;
+    } catch (error) {if(attempt>=2)throw error;await pause(400*(attempt+1));}
+  }
 }
 
 export function registrationReady(userId: string | null, onboarding: {
@@ -48,4 +62,8 @@ export async function fetchWithTimeout(input: RequestInfo | URL, init?: RequestI
 export function onceAsync<T>(operation: () => Promise<T>) {
   let pending: Promise<T> | undefined;
   return () => pending ??= operation();
+}
+
+export function shouldRenewTelegramSession(action:string,status:number,data:any,initData:string) {
+ return action==='validate-session' && !!initData && (status===401 || (status===200 && data?.valid===false));
 }

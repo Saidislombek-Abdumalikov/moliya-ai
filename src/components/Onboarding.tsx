@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { motion } from 'motion/react'
 import { useFinance, isValidPhoneNumber } from '../FinanceContext'
 import { telegramBotLink, telegramBotDeepLink } from '../telegramLinks'
@@ -19,6 +19,7 @@ export interface OnboardingResult {
   unlimitedAi?: boolean
   trialEndsAt?: string | null
   completed?: boolean
+  account_created_at?: string
   tour_completed?: boolean
   notifications?: { opt1: boolean; opt2: boolean; opt3: boolean; reminderFrequency?: 'daily' | 'weekly' | 'off'; reminderSlot?: 'morning' | 'afternoon' | 'evening' }
   registration_status?: string
@@ -164,6 +165,19 @@ export default function Onboarding() {
       setIsChecking(false)
     }
   }
+
+  // Returning from bot verification refreshes the existing screen without a reload.
+  const refreshRef = useRef(refreshUserData);
+  refreshRef.current = refreshUserData;
+  useEffect(() => {
+    let busy=false;
+    const check=async()=>{if(busy||document.visibilityState==='hidden')return;busy=true;try{await refreshRef.current();}catch{}finally{busy=false;}};
+    window.addEventListener('focus',check);
+    document.addEventListener('visibilitychange',check);
+    const timer=setInterval(check,4000);
+    void check();
+    return()=>{clearInterval(timer);window.removeEventListener('focus',check);document.removeEventListener('visibilitychange',check);};
+  }, []);
 
   // Determine title and description based on what requirement is missing
   let title = t.titleBoth

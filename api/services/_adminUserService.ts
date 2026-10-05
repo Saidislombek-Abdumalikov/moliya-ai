@@ -58,7 +58,7 @@ export async function adminWipeUserData(
       admin_id: adminId,
       details: { mode: result.mode, chatPurged: result.chatPurged }
     });
-    return { success: true, action: 'ACCOUNT_DELETED', scope: 'account', targetUserId, chatPurged: result.chatPurged, aiLogsDeleted };
+    return { success: true, action: 'ACCOUNT_DELETED', scope: 'account', targetUserId, chatPurged: result.chatPurged, telegramCleanup:result.telegramCleanup, aiLogsDeleted };
   }
 }
 

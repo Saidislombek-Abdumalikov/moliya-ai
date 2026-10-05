@@ -72,6 +72,7 @@ for (const file of [
   "07-session-financial-writes",
   "08-destructive-user-actions",
   "17-debts",
+  "19-debt-relationships",
 ]) {
   const sql = await readFile(
     new URL("../migrations/" + file + ".sql", import.meta.url),
@@ -186,12 +187,15 @@ assert.equal(
   ).success,
   false,
 )
+assert.equal((await action('edit',{dueDate:null,personName:'Ali',personId:'ali',relationship:'invalid'})).success,false);
 const edit = await action("edit", {
   dueDate: "2026-10-10",
   personName: "Ali",
   personId: "ali",
+  relationship: "friend",
 })
 assert.equal(edit.success, true)
+assert.equal(edit.transactions.find((t:any)=>t.id==='loan').debtRelationship,'friend')
 assert.equal(
   (await action("edit", { dueDate: null, personName: "Ali", personId: "ali" }))
     .statusCode,

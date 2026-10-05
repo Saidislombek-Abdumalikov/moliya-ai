@@ -35,6 +35,7 @@ export function publicOnboarding(user: any) {
     oferta_accepted: acceptedConsent(user), completed: eligibleUser(user),
     registration_status: eligibleUser(user) ? 'completed' : 'unverified',
     tour_completed: ob.tour_completed === true,
+    account_created_at: user.created_at || user.bot_verification?.phone_verified_at || '',
     monthlyGoal: ob.monthlyGoal, monthlyIncome: ob.monthlyIncome,
     notifications: ob.notifications, has_sample_data: ob.has_sample_data === true,
   };
