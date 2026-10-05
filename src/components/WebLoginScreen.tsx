@@ -2,10 +2,10 @@ import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import QRCode from 'qrcode';
 import { useFinance } from '../FinanceContext';
-import { telegramBotLink, telegramBotDeepLink } from '../telegramLinks';
+import { telegramBotLink } from '../telegramLinks';
 
 export default function WebLoginScreen() {
-  const { startTelegramLogin, resumeTelegramLogin, cancelTelegramLogin, userId } = useFinance();
+  const { startTelegramLogin, resumeTelegramLogin, cancelTelegramLogin, userId, authError } = useFinance();
   const stopPolling = useRef<(() => void) | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [currentRequestId, setCurrentRequestId] = useState<string | null>(() => {
@@ -112,7 +112,7 @@ export default function WebLoginScreen() {
   };
 
   const botDeepLink = currentRequestId
-    ? telegramBotDeepLink(`req_${currentRequestId}`)
+    ? telegramBotLink(`req_${currentRequestId}`)
     : telegramBotLink('open');
 
   if (userId) return null;
@@ -161,47 +161,10 @@ export default function WebLoginScreen() {
               Moliya AI
             </h1>
             <p className="text-sm text-[#766E9E] max-w-xs leading-relaxed mb-6">
-              Shaxsiy va oilaviy byudjetingizni sun'iy intellekt bilan aqlli va oson boshqaring.
+              Davom etish uchun Telegram orqali kiring.
             </p>
 
-            {/* Features Highlight Card */}
-            <div className="w-full bg-white rounded-2xl border border-[#ECE7F6] p-4 mb-6 shadow-sm text-left flex flex-col gap-3">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-xl bg-[#F4EFFC] text-[#7C3AED] flex items-center justify-center font-bold text-sm">
-                  ⚡️
-                </div>
-                <div className="flex-1">
-                  <p className="text-xs font-bold text-[#1A1538]">Tezkor AI yozuv</p>
-                  <p className="text-[11px] text-[#766E9E]">"400$ tushlik" yoki ovozli xabar — 1 soniyada</p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-xl bg-[#F4EFFC] text-[#7C3AED] flex items-center justify-center font-bold text-sm">
-                  💳
-                </div>
-                <div className="flex-1">
-                  <p className="text-xs font-bold text-[#1A1538]">Kartalar va Balans</p>
-                  <p className="text-[11px] text-[#766E9E]">Barcha xarajatlar va hisobotlar yagona joyda</p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-xl bg-[#F4EFFC] text-[#7C3AED] flex items-center justify-center font-bold text-sm">
-                  🔒
-                </div>
-                <div className="flex-1">
-                  <p className="text-xs font-bold text-[#1A1538]">100% Xavfsiz Sinxronizatsiya</p>
-                  <p className="text-[11px] text-[#766E9E]">Telegram hisobingiz bilan shifrlangan himoya</p>
-                </div>
-              </div>
-            </div>
-
-            {loginError && (
-              <div className="w-full mb-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium">
-                {loginError}
-              </div>
-            )}
+            {(loginError || authError) && <p role="alert" className="mb-4 text-sm text-rose-700">{loginError || authError}</p>}
 
             {/* Primary Action: Telegram Login */}
             <div className="w-full flex flex-col gap-3">
@@ -209,14 +172,12 @@ export default function WebLoginScreen() {
                 onClick={handleStartLogin}
                 className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-[#7C3AED] to-[#6D28D9] text-white font-bold text-base shadow-lg shadow-purple-500/25 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
               >
-                <span>Telegram orqali xavfsiz kirish</span>
+                <span>Telegram orqali kirish</span>
                 <span className="text-lg">🚀</span>
               </button>
             </div>
 
-            <p className="text-[11px] text-[#94A3B8] mt-6 max-w-xs leading-normal">
-              🔒 Ruxsatsiz yoki soxta hisob yaratish bloklangan. Ma'lumotlaringiz faqat rasmiy Telegram botimiz orqali himoyalanadi.
-            </p>
+
           </motion.div>
         ) : (
           // ── AUTHENTICATING / POLLING STATE ──────────────────────────
@@ -240,7 +201,7 @@ export default function WebLoginScreen() {
               Telegramda tasdiqlash kutilmoqda
             </h2>
             <p className="text-xs text-[#766E9E] max-w-xs leading-relaxed mb-6">
-              Telegram botimiz ochildi. Profilingizni ochish uchun botda <span className="font-semibold text-[#7C3AED]">"Boshlash" (Start)</span> tugmasini bosing.
+              Botda <span className="font-semibold text-[#7C3AED]">"Boshlash" (Start)</span> tugmasini bosing va shu oynaga qayting.
             </p>
 
             {/* QR Code for Desktop Users */}
@@ -257,6 +218,7 @@ export default function WebLoginScreen() {
               </div>
             )}
 
+            {loginError && <p role="alert" className="mb-3 text-sm text-rose-700">{loginError}</p>}
             {/* Action Buttons */}
             <div className="w-full flex flex-col gap-2.5 max-w-xs">
               <a
@@ -279,7 +241,7 @@ export default function WebLoginScreen() {
 
             <div className="mt-6 flex items-center gap-2 text-emerald-600 text-xs font-semibold bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-200/60 animate-pulse">
               <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              <span>Sinxronizatsiya faol</span>
+              <span>Tasdiqlash kutilmoqda</span>
             </div>
           </motion.div>
         )}

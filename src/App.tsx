@@ -20,7 +20,7 @@ const WebLoginScreen = lazy(() => import('./components/WebLoginScreen'))
 export type Screen = 'home' | 'calendar' | 'analytics' | 'profile'
 
 export default function App() {
-  const { onboarding, updateOnboarding, logout, isAuthReady, userId, authError } = useFinance()
+  const { onboarding, updateOnboarding, logout, isAuthReady, userId, authError, retryAuth } = useFinance()
 
   const [showTour, setShowTour] = useState(false);
   const dismissedTourFor = useRef<string | null>(null);
@@ -75,14 +75,19 @@ export default function App() {
         <p className="text-sm text-[#64748B] font-medium">Moliya AI yuklanmoqda...</p>
         {authWaitTimeout && (
           <button
-            onClick={() => window.location.reload()}
+            onClick={retryAuth}
             className="mt-4 px-4 py-2 rounded-xl bg-white border border-[#DDD6FE] text-[#7C3AED] text-xs font-bold shadow-sm active:scale-95 transition cursor-pointer"
           >
-            Qayta yuklash 🔄
+            Yana urinish
           </button>
         )}
       </div>
     );
+  }
+
+  // 3. Web App Authentication Gate: If outside Telegram and user is not authenticated, show WebLoginScreen
+  if (!isTelegramMiniApp() && !userId) {
+    return <Suspense fallback={<div className="min-h-dvh bg-[#FAF8FE]" />}><WebLoginScreen /></Suspense>;
   }
 
   // 2. Auth error screen (shown if account is restricted or registration needed)
@@ -96,8 +101,8 @@ export default function App() {
         <p className="text-[#64748B] text-sm max-w-xs leading-relaxed mb-6">
           {authError}
         </p>
-        <button onClick={() => window.location.reload()} className="mb-4 px-5 py-2 rounded-xl border border-purple-200 text-purple-700">
-          Qayta yuklash
+        <button onClick={retryAuth} className="mb-4 px-5 py-2 rounded-xl border border-purple-200 text-purple-700">
+          Yana urinish
         </button>
         <button
           onClick={() => {
@@ -116,11 +121,6 @@ export default function App() {
     );
   }
 
-  // 3. Web App Authentication Gate: If outside Telegram and user is not authenticated, show WebLoginScreen
-  if (!isTelegramMiniApp() && !userId) {
-    return <Suspense fallback={<div className="min-h-dvh bg-[#FAF8FE]" />}><WebLoginScreen /></Suspense>;
-  }
-
   // 4. Telegram Mini App Loading: If inside Telegram Mini App but user ID hasn't loaded yet
   if (isTelegramMiniApp() && !userId) {
     return (
@@ -132,13 +132,13 @@ export default function App() {
             </div>
             <h3 className="text-base font-bold text-[#1E1A3C] mb-1">Telegram hisobi yuklanmadi</h3>
             <p className="text-xs text-[#64748B] max-w-xs mb-5">
-              Aloqa sifatini tekshiring yoki sahifani qayta yuklang.
+              Ulanib bo‘lmadi. Yana urinib ko‘ring.
             </p>
             <button
-              onClick={() => window.location.reload()}
+              onClick={retryAuth}
               className="px-5 py-2.5 rounded-xl bg-[#7C3AED] text-white font-bold text-xs shadow-md active:scale-95 transition cursor-pointer"
             >
-              Qayta yuklash 🔄
+              Yana urinish
             </button>
           </div>
         ) : (

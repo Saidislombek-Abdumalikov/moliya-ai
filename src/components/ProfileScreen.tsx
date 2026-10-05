@@ -1,3 +1,4 @@
+import SwipeSheet from './SwipeSheet';
 import {installCompleted,telegramInstallBlocked} from '../installPrompt'
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
@@ -1374,7 +1375,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
       <AnimatePresence>
         {activeModal === 'edit' && (
           <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-            <motion.div
+            <SwipeSheet onDismiss={() => setActiveModal(null)}
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
@@ -1389,7 +1390,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
             >
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
                 <div style={{ width: 28 }} />
-                <div style={{ width: 40, height: 4, background: '#E8E3F8', borderRadius: 2, cursor: 'grab' }} />
+                <div />
                 <button
                   onClick={() => setActiveModal(null)}
                   style={{
@@ -1481,7 +1482,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                   {t.editModal.saveBtn}
                 </button>
               </div>
-            </motion.div>
+            </SwipeSheet>
           </div>
         )}
       </AnimatePresence>
@@ -1490,7 +1491,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
       <AnimatePresence>
         {activeModal === 'premium' && (
           <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-            <motion.div
+            <SwipeSheet onDismiss={() => setActiveModal(null)}
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
@@ -1505,7 +1506,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
             >
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                 <div style={{ width: 28 }} />
-                <div style={{ width: 40, height: 4, background: '#E8E3F8', borderRadius: 2, cursor: 'grab' }} />
+                <div />
                 <button
                   onClick={() => setActiveModal(null)}
                   style={{
@@ -1662,7 +1663,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
               >
                 {t.premiumModal.cancelBtn}
               </button>
-            </motion.div>
+            </SwipeSheet>
           </div>
         )}
       </AnimatePresence>
@@ -1675,7 +1676,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
               onClick={() => setSelectedPlan(null)}
               style={{ position: 'fixed', inset: 0, background: 'rgba(15,10,35,0.5)', backdropFilter: 'blur(3px)' }}
             />
-            <motion.div
+            <SwipeSheet onDismiss={() => setSelectedPlan(null)}
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
@@ -1766,7 +1767,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                   {(lang === 'uz' || lang === 'uz_cyrl') ? (lang === 'uz_cyrl' ? "Telegram: @moliya_admin га ёзиш" : "Telegram: @moliya_admin ga yozish") : "Telegram: Contact @moliya_admin"}
                 </span>
               </button>
-            </motion.div>
+            </SwipeSheet>
           </div>
         )}
       </AnimatePresence>
@@ -1830,7 +1831,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
       <AnimatePresence>
         {activeModal === 'notifications' && (
           <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-            <motion.div
+            <SwipeSheet onDismiss={() => setActiveModal(null)}
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
@@ -1844,7 +1845,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
             >
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                 <div style={{ width: 28 }} />
-                <div style={{ width: 40, height: 4, background: '#E8E3F8', borderRadius: 2, cursor: 'grab' }} />
+                <div />
                 <button
                   onClick={() => setActiveModal(null)}
                   style={{
@@ -1962,7 +1963,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
               >
                 {lang === 'uz' ? 'Tayyor' : lang === 'ru' ? 'Готово' : 'Done'}
               </button>
-            </motion.div>
+            </SwipeSheet>
           </div>
         )}
       </AnimatePresence>
@@ -1972,7 +1973,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
       <AnimatePresence>
         {activeModal === 'payments' && (
           <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-            <motion.div
+            <SwipeSheet onDismiss={() => setActiveModal(null)}
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
@@ -2186,7 +2187,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                   ))}
                 </div>
               )}
-            </motion.div>
+            </SwipeSheet>
           </div>
         )}
       </AnimatePresence>
@@ -2195,7 +2196,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
       <AnimatePresence>
         {activeModal === 'lang' && (
           <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-            <motion.div
+            <SwipeSheet onDismiss={() => setActiveModal(null)}
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
@@ -2209,7 +2210,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
             >
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                 <div style={{ width: 28 }} />
-                <div style={{ width: 40, height: 4, background: '#E8E3F8', borderRadius: 2, cursor: 'grab' }} />
+                <div />
                 <button
                   onClick={() => setActiveModal(null)}
                   style={{
@@ -2372,7 +2373,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                   )}
                 </button>
               </div>
-            </motion.div>
+            </SwipeSheet>
           </div>
         )}
       </AnimatePresence>
@@ -2381,7 +2382,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
       <AnimatePresence>
         {activeModal === 'export' && (
           <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-            <motion.div
+            <SwipeSheet onDismiss={() => setActiveModal(null)}
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
@@ -2395,7 +2396,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
             >
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                 <div style={{ width: 28 }} />
-                <div style={{ width: 40, height: 4, background: '#E8E3F8', borderRadius: 2, cursor: 'grab' }} />
+                <div />
                 <button
                   onClick={() => setActiveModal(null)}
                   style={{
@@ -2503,7 +2504,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                   </div>
                 </>
               )}
-            </motion.div>
+            </SwipeSheet>
           </div>
         )}
 
@@ -2515,7 +2516,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
               onClick={() => setActiveModal(null)}
               style={{ position: 'absolute', inset: 0, background: 'rgba(30, 26, 60, 0.5)', backdropFilter: 'blur(4px)' }} 
             />
-            <motion.div 
+            <SwipeSheet onDismiss={() => setActiveModal(null)} 
               initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }} transition={{ type: 'spring', damping: 25, stiffness: 200 }}
               style={{
                 position: 'relative',
@@ -2589,7 +2590,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                   🧹 {lang === 'uz' ? "Ma'lumotlarimni tozalash" : lang === 'uz_cyrl' ? "Маълумотларимни тозалаш" : lang === 'ru' ? "Очистить мои данные" : "Clear My Data"}
                 </button>
               </div>
-            </motion.div>
+            </SwipeSheet>
           </div>
         )}
 
@@ -2601,7 +2602,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
               onClick={() => setActiveModal(null)}
               style={{ position: 'absolute', inset: 0, background: 'rgba(30, 26, 60, 0.5)', backdropFilter: 'blur(4px)' }} 
             />
-            <motion.div 
+            <SwipeSheet onDismiss={() => setActiveModal(null)} 
               initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }} transition={{ type: 'spring', damping: 25, stiffness: 200 }}
               style={{
                 position: 'relative',
@@ -2785,7 +2786,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                   </div>
                 </div>
               )}
-            </motion.div>
+            </SwipeSheet>
           </div>
         )}
       </AnimatePresence>

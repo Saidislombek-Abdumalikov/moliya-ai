@@ -1,9 +1,11 @@
+import SwipeSheet from './SwipeSheet';
+import {prepareRecordingCue} from '../recordingCue';
 import {readMoneyInput,formatMoneyInput} from '../../shared/moneyInput';
 import {prepareReceiptImage} from '../receiptImage';
 import {recordedWav,blobDataUrl} from '../audioRecorder';
 import {transactionParts,TRANSACTION_CLARIFICATION} from '../../shared/amountEvidence';
 import { useState, useRef, useEffect } from 'react'
-import { motion, AnimatePresence } from 'motion/react'
+import { motion, AnimatePresence, useReducedMotion } from 'motion/react'
 import { useFinance, getClientAuthHeaders } from '../FinanceContext'
 import { aiButtonCopy, aiCategoryLabel } from './aiButtonCopy'
 
@@ -91,6 +93,8 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
   const [open, setOpen] = useState(false)
   const [step, setStep] = useState<'type' | 'form' | 'voice' | 'done' | 'removeSamples'>('type')
   const [selectedType, setSelectedType] = useState<EntryType>('expense')
+  const reducedMotion=useReducedMotion();
+  const [voiceStarting,setVoiceStarting]=useState(false);
   const [recording, setRecording] = useState(false)
   const [entry, setEntry] = useState<Entry>({ type: 'expense', amount: '', note: '', category: '' })
   const [saved, setSaved] = useState(false)
@@ -271,6 +275,8 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
   const startVoice = async () => {
     if(isStartingVoiceRef.current || recording || isProcessing)return
     isStartingVoiceRef.current=true
+    setVoiceStarting(true)
+    const cue=prepareRecordingCue()
     const generation=++voiceGeneration.current
     setAiError('')
     try{
@@ -324,6 +330,8 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
           if(generation===voiceGeneration.current){setIsProcessing(false);requestRef.current=null}
         }
       }
+      await cue.play()
+      if(generation!==voiceGeneration.current){stream.getTracks().forEach(t=>t.stop());return}
       rec.start(1000)
       setStep('voice');setRecording(true)
       timerRef.current=setTimeout(()=>{if(rec.state==='recording')rec.stop()},45000)
@@ -334,7 +342,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
       setAiError(error.name==='NotAllowedError'
         ? ({uz:'🎙 Mikrofon uchun ruxsat bering: brauzer yoki Telegram sozlamalarini tekshiring.',uz_cyrl:'🎙 Микрофонга рухсат беринг: браузер ёки Telegram созламаларини текширинг.',ru:'🎙 Разрешите доступ к микрофону в настройках браузера или Telegram.',en:'🎙 Allow microphone access in your browser or Telegram settings.'})[language]
         : ({uz:'🎙 Mikrofonni ochib bo‘lmadi. Ilovani yangilang va yana urinib ko‘ring.',uz_cyrl:'🎙 Микрофонни очиб бўлмади. Иловaни янгиланг ва яна уриниб кўринг.',ru:'🎙 Не удалось открыть микрофон. Обновите приложение и повторите.',en:'🎙 Could not open the microphone. Update the app and try again.'})[language])
-    }finally{if(generation===voiceGeneration.current)isStartingVoiceRef.current=false}
+    }finally{cue.close();isStartingVoiceRef.current=false;setVoiceStarting(false)}
   }
 
   const handleSave = async () => {
@@ -463,7 +471,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
               justifyContent: 'center',
             }}
           >
-            <motion.div
+            <SwipeSheet onDismiss={closeModal} locked={isProcessing || isSaving || recording || voiceStarting}
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
@@ -484,7 +492,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
               {/* Header Handle Bar with Close Button */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
                 <div style={{ width: 28 }} />
-                <div style={{ width: 40, height: 4, background: '#E8E3F8', borderRadius: 2, cursor: 'grab' }} />
+                <div />
                 <button
                   onClick={closeModal}
                   style={{
@@ -845,7 +853,12 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                 </div>
 
                 {/* Voice shortcut */}
-                <button
+                <motion.button
+                  disabled={voiceStarting}
+                  animate={reducedMotion || voiceStarting?{scale:1,opacity:1}:{scale:[1,1.025,1],opacity:[1,0.75,1]}}
+                  transition={{duration:1.8,repeat:reducedMotion || voiceStarting?0:Infinity}}
+                  whileTap={{scale:0.94}}
+                  aria-busy={voiceStarting}
                   onClick={() => { setSelectedType('expense'); startVoice() }}
                   style={{
                     width: '100%',
@@ -870,7 +883,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                     <line x1="9" y1="15" x2="9" y2="17" stroke="#7C3AED" strokeWidth="1.5" strokeLinecap="round" />
                   </svg>
                   {language === 'uz' ? 'Ovoz bilan kiriting' : language === 'uz_cyrl' ? 'Овоз билан киритинг' : language === 'ru' ? 'Голосовой ввод' : 'Voice input'}
-                </button>
+                </motion.button>
               </>
             )}
 
@@ -1260,7 +1273,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                 </div>
               </div>
             )}
-            </motion.div>
+            </SwipeSheet>
           </motion.div>
         )}
       </AnimatePresence>

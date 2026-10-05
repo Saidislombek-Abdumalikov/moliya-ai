@@ -1,5 +1,5 @@
 import { readSessionToken, saveSessionToken, clearSessionToken, authRequest, fetchWithTimeout, onceAsync, tourDone, tourKey } from './clientSession'
-import { telegramBotLink, telegramBotDeepLink } from './telegramLinks'
+import { telegramBotLink } from './telegramLinks'
 import { waitForTelegramSdk } from './telegramViewport'
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react'
 import { supabase } from './supabase'
@@ -170,6 +170,7 @@ interface FinanceContextType {
   loading: boolean
   isAuthReady: boolean
   authError: string | null
+  retryAuth: () => void
   isPremium: boolean
   isVip: boolean
   premiumExpiresAt: string | null
@@ -360,6 +361,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const [loading] = useState(false)
   const [isAuthReady,setIsAuthReady]=useState(false);
+  const [authAttempt,setAuthAttempt]=useState(0);
   const [authError, setAuthError] = useState<string | null>(null)
   const logoutPending = useRef(false)
 
@@ -445,6 +447,10 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   // Auth state: AUTH_INITIALIZING → AUTHENTICATED | UNAUTHENTICATED
   // ═══════════════════════════════════════════════════════════
   const bootstrapAuth = useRef<ReturnType<typeof onceAsync<{response: Response; data: any; code: string | null; stored: string | null} | null>> | null>(null);
+  const retryAuth=()=>{
+    bootstrapAuth.current=null;
+    setAuthError(null);setIsAuthReady(false);setAuthAttempt(v=>v+1);
+  };
   useEffect(() => {
     let active = true;
     if (!bootstrapAuth.current) bootstrapAuth.current = onceAsync(async () => {
@@ -455,15 +461,19 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       if (telegramLaunch && !(window as any).Telegram?.WebApp?.initData)
         await waitForTelegramSdk(() => (window as any).Telegram?.WebApp);
       const initData = (window as any).Telegram?.WebApp?.initData;
-      const request = telegramLaunch
+      const request = stored ? authRequest(undefined,null,stored) : telegramLaunch
         ? (initData ? authRequest(initData, null, null) : null)
-        : authRequest(undefined, code, stored);
+        : authRequest(undefined, code, null);
       if (!request) return null;
       let response = await fetchWithTimeout('/api/auth/' + request.action, {
         method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(request.body)
       });
       let data = await response.json();
-      if (request.action === 'validate-session' && code && (response.status === 401 || data.valid === false)) {
+      if (request.action === 'validate-session' && telegramLaunch && initData && response.status===401) {
+        response=await fetchWithTimeout('/api/auth/telegram',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({initData})});
+        data=await response.json();
+      }
+      if (!telegramLaunch && request.action === 'validate-session' && code && (response.status === 401 || data.valid === false)) {
         response = await fetchWithTimeout('/api/auth/exchange-code',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code})});
         data = await response.json();
       }
@@ -487,7 +497,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           if (response.status >= 500 || response.status === 429) throw Error('Server unavailable');
           if (response.status === 401 || response.status === 403 || data.valid === false) clearSessionToken();
           if (data.error === 'ACCOUNT_RESTRICTED') setAuthError('Hisobingiz cheklangan. Administrator bilan bog‘laning.');
-          else setAuthError('Kirish havolasi eskirgan yoki tasdiqlanmadi. Botdan ilovani qayta oching.');
+          else setAuthError(isTelegramMiniApp()?'Telegramda qayta tasdiqlang.':'Telegram orqali qayta kiring.');
           return;
         }
         persistAuthState({...data, sessionToken: data.sessionToken || stored});
@@ -496,13 +506,13 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           url.searchParams.delete('code');
           window.history.replaceState({}, '', url.pathname + url.search + url.hash);
         }
-      } catch {if (active) {clear();setAuthError('Ulanishni tekshirib, sahifani qayta yuklang.');}}
+      } catch {if (active) {clear();bootstrapAuth.current=null;setAuthError('Ulanib bo‘lmadi. Yana urinib ko‘ring.');}}
       finally {if (active) setIsAuthReady(true);}
     }
     void authenticate();
     return () => {active = false;};
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [authAttempt])
 
   // ═══════════════════════════════════════════════════════════
   // The backend session is authoritative. Supabase's legacy auth state must
@@ -631,7 +641,6 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const requestId = Array.from(crypto.getRandomValues(new Uint8Array(24)),b=>b.toString(16).padStart(2,'0')).join('');
 
     const botUrl = telegramBotLink(`req_${requestId}`);
-    const tgDeepLink = telegramBotDeepLink(`req_${requestId}`);
 
     // Multi-device and returning user recognition metadata
     const cachedUserId = localStorage.getItem('user_id_v1') || null;
@@ -641,38 +650,28 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       localStorage.setItem('moliya_client_device_id', clientDeviceId);
     }
 
-    // Register with backend first
-    const loginResponse=await fetch('/api/auth/create-login-request', {
+    // Reserve a tab inside the click gesture so awaiting the server cannot block it.
+    const mobile=/iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    const loginTab=mobile?null:window.open('about:blank','_blank');
+    if(loginTab)loginTab.opener=null;
+    let loginResponse:Response;
+    try { loginResponse=await fetchWithTimeout('/api/auth/create-login-request', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ requestId, cachedUserId, clientDeviceId }),
     });
-    if(!loginResponse.ok) throw new Error('Telegram orqali kirish vaqtincha ishlamayapti. Qayta urinib ko‘ring.');
+    } catch(error) {loginTab?.close();throw error;}
+    if(!loginResponse.ok) {loginTab?.close();throw new Error('Telegram orqali kirish vaqtincha ishlamayapti. Qayta urinib ko‘ring.');}
 
     // The request now exists on the server; save it before opening Telegram.
     localStorage.setItem('moliya_pending_request_id', requestId);
     localStorage.setItem('moliya_pending_request_time', String(Date.now()));
 
     try {
-      const isMobile = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-      if (isMobile) {
-        // On mobile, window.open() is blocked by popup blockers.
-        // window.location.href is the only reliable way to open Telegram.
-        // The requestId is saved in localStorage so polling resumes when user returns.
-        window.location.href = tgDeepLink;
-      } else {
-        // On desktop, open in new tab
-        const link = document.createElement('a');
-        link.href = botUrl;
-        link.target = '_blank';
-        link.rel = 'noopener noreferrer';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-      }
-    } catch {
-      window.location.href = botUrl;
-    }
+      if(mobile)window.location.href=botUrl;
+      else if(loginTab)loginTab.location.replace(botUrl);
+      // If popups are blocked, the login screen still offers a direct bot link.
+    } catch {loginTab?.close();}
 
     return {
       requestId,
@@ -744,7 +743,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         clearSessionToken();
         setAuthError(response.status===403
           ? 'Hisobga kirish cheklangan. Bot orqali holatni tekshiring.'
-          : 'Sessiya tugagan. Botdan ilovani qayta oching.');
+          : 'Telegram orqali qayta kiring.');
       }
       throw Error('Holatni tekshirib bo‘lmadi. Qayta urinib ko‘ring.');
     }
@@ -1068,6 +1067,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         loading,
         isAuthReady,
         authError,
+        retryAuth,
         isPremium: accessState.isPremium,
         isVip: accessState.isVip,
         premiumExpiresAt: accessState.premiumExpiresAt,

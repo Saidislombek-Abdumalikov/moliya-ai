@@ -1,3 +1,4 @@
+import SwipeSheet from './SwipeSheet';
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 
@@ -1196,7 +1197,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                 background: 'rgba(30, 26, 60, 0.45)', backdropFilter: 'blur(4px)'
               }}
             />
-            <motion.div
+            <SwipeSheet onDismiss={() => setShowPremium(false)}
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
@@ -1211,7 +1212,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
             >
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                 <div style={{ width: 28 }} />
-                <div style={{ width: 40, height: 4, background: '#E8E3F8', borderRadius: 2, cursor: 'grab' }} />
+                <div />
                 <button
                   onClick={() => setShowPremium(false)}
                   style={{
@@ -1284,7 +1285,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
               >
                 {t.premiumActiveBtn}
               </button>
-            </motion.div>
+            </SwipeSheet>
           </div>
         )}
       </AnimatePresence>
@@ -1303,7 +1304,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                 background: 'rgba(30, 26, 60, 0.45)', backdropFilter: 'blur(4px)'
               }}
             />
-            <motion.div
+            <SwipeSheet onDismiss={() => setShowNotifications(false)}
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
@@ -1318,7 +1319,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
             >
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                 <div style={{ width: 28 }} />
-                <div style={{ width: 40, height: 4, background: '#E8E3F8', borderRadius: 2, cursor: 'grab' }} />
+                <div />
                 <button
                   onClick={() => setShowNotifications(false)}
                   style={{
@@ -1512,7 +1513,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                   })}
                 </div>
               )}
-            </motion.div>
+            </SwipeSheet>
           </div>
         )}
       </AnimatePresence>
@@ -1531,7 +1532,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                 background: 'rgba(30, 26, 60, 0.45)', backdropFilter: 'blur(4px)'
               }}
             />
-            <motion.div
+            <SwipeSheet onDismiss={() => setShowLimitModal(false)}
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
@@ -1546,7 +1547,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
             >
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                 <div style={{ width: 28 }} />
-                <div style={{ width: 40, height: 4, background: '#E8E3F8', borderRadius: 2, cursor: 'grab' }} />
+                <div />
                 <button
                   onClick={() => setShowLimitModal(false)}
                   style={{
@@ -1845,7 +1846,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                   {lang === 'uz' ? 'Saqlash' : lang === 'uz_cyrl' ? 'Сақлаш' : lang === 'ru' ? 'Сохранить' : 'Save'}
                 </button>
               </div>
-            </motion.div>
+            </SwipeSheet>
           </div>
         )}
       </AnimatePresence>
@@ -1865,7 +1866,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                   backdropFilter: 'blur(4px)'
                 }}
               />
-              <motion.div
+              <SwipeSheet onDismiss={() => setShowWalletsModal(false)}
                 initial={{ y: '100%' }}
                 animate={{ y: 0 }}
                 exit={{ y: '100%' }}
@@ -1883,7 +1884,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
               >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                   <div style={{ width: 28 }} />
-                  <div style={{ width: 40, height: 4, background: '#E8E3F8', borderRadius: 2, cursor: 'grab' }} />
+                  <div />
                   <button
                     onClick={() => setShowWalletsModal(false)}
                     style={{
@@ -1941,7 +1942,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                 >
                   {lang === 'uz' ? '+ Karta qo\'shish' : lang === 'uz_cyrl' ? '+ Карта қўшиш' : lang === 'ru' ? '+ Добавить карту' : '+ Add Card'}
                 </button>
-              </motion.div>
+              </SwipeSheet>
             </div>
           )}
         </AnimatePresence>
@@ -1961,7 +1962,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                   backdropFilter: 'blur(4px)'
                 }}
               />
-              <motion.div
+              <SwipeSheet onDismiss={() => setShowAddCard(false)}
                 initial={{ y: '100%' }}
                 animate={{ y: 0 }}
                 exit={{ y: '100%' }}
@@ -1979,7 +1980,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
               >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
                   <div style={{ width: 28 }} />
-                  <div style={{ width: 40, height: 4, background: '#E8E3F8', borderRadius: 2, cursor: 'grab' }} />
+                  <div />
                   <button
                     onClick={() => setShowAddCard(false)}
                     style={{
@@ -2084,7 +2085,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                     {lang === 'uz' ? 'Saqlash' : lang === 'uz_cyrl' ? 'Сақлаш' : lang === 'ru' ? 'Сохранить' : 'Save'}
                   </button>
                 </form>
-              </motion.div>
+              </SwipeSheet>
             </div>
           )}
         </AnimatePresence>
@@ -2104,7 +2105,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                   backdropFilter: 'blur(4px)'
                 }}
               />
-              <motion.div
+              <SwipeSheet onDismiss={() => setSelectedTx(null)}
                 initial={{ y: '100%' }}
                 animate={{ y: 0 }}
                 exit={{ y: '100%' }}
@@ -2121,7 +2122,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
               >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                   <div style={{ width: 28 }} />
-                  <div style={{ width: 40, height: 4, background: '#E8E3F8', borderRadius: 2, cursor: 'grab' }} />
+                  <div />
                   <button
                     onClick={() => setSelectedTx(null)}
                     style={{
@@ -2207,7 +2208,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                     </button>
                   )}
                 </div>
-              </motion.div>
+              </SwipeSheet>
             </div>
           )}
         </AnimatePresence>
@@ -2371,7 +2372,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                   backdropFilter: 'blur(4px)'
                 }}
               />
-              <motion.div
+              <SwipeSheet onDismiss={() => setEditTx(null)}
                 initial={{ y: '100%' }}
                 animate={{ y: 0 }}
                 exit={{ y: '100%' }}
@@ -2391,7 +2392,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                 {/* Header Handle Bar with Close Button */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
                   <div style={{ width: 28 }} />
-                  <div style={{ width: 40, height: 4, background: '#E8E3F8', borderRadius: 2, cursor: 'grab' }} />
+                  <div />
                   <button
                     onClick={() => setEditTx(null)}
                     style={{
@@ -2526,7 +2527,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
                     {lang === 'uz' ? 'Saqlash' : lang === 'uz_cyrl' ? 'Сақлаш' : lang === 'ru' ? 'Сохранить' : 'Save'}
                   </button>
                 </div>
-              </motion.div>
+              </SwipeSheet>
             </div>
           )}
         </AnimatePresence>

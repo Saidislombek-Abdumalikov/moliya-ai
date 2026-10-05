@@ -1,3 +1,4 @@
+import SwipeSheet from './SwipeSheet';
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -492,7 +493,7 @@ export default function PrivacyPolicyModal({
           justifyContent: 'center'
         }}
       >
-        <motion.div
+        <SwipeSheet onDismiss={onClose}
           key="privacy_modal_card"
           initial={{ y: '100%' }}
           animate={{ y: 0 }}
@@ -715,7 +716,7 @@ export default function PrivacyPolicyModal({
               ✅ {data.closeBtn}
             </button>
           </div>
-        </motion.div>
+        </SwipeSheet>
       </motion.div>
       )}
     </AnimatePresence>
