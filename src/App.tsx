@@ -10,7 +10,7 @@ import InstallPromptModal from './components/InstallPromptModal'
 import OfflineStatusBanner from './components/OfflineStatusBanner'
 import { configureTelegramViewport, keepTelegramSwipesDisabled, waitForTelegramSdk } from './telegramViewport'
 
-const CalendarScreen = lazy(() => import('./components/CalendarScreen'))
+const TransactionsScreen = lazy(() => import('./components/TransactionsScreen'))
 const AnalyticsScreen = lazy(() => import('./components/AnalyticsScreen'))
 const ProfileScreen = lazy(() => import('./components/ProfileScreen'))
 const AppTour = lazy(() => import('./components/AppTour'))
@@ -188,8 +188,8 @@ export default function App() {
             onboarding?.language === 'ru' ? 'Загрузка…' :
             onboarding?.language === 'en' ? 'Loading…' : 'Yuklanmoqda…'
           }</div>}>
-            {activeScreen === 'home' && <HomeScreen onboarding={onboarding} onUpdateOnboarding={updateOnboarding} />}
-            {activeScreen === 'calendar' && <CalendarScreen onboarding={onboarding} />}
+            {activeScreen === 'home' && <HomeScreen onOpenTransactions={() => setActiveScreen('calendar')} onboarding={onboarding} onUpdateOnboarding={updateOnboarding} />}
+            {activeScreen === 'calendar' && <TransactionsScreen onboarding={onboarding} onUpdateOnboarding={updateOnboarding} />}
             {activeScreen === 'analytics' && <AnalyticsScreen onboarding={onboarding} onUpdateOnboarding={updateOnboarding} />}
             {activeScreen === 'profile' && (
               <ProfileScreen

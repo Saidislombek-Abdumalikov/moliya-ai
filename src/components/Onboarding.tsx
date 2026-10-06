@@ -4,6 +4,7 @@ import { useFinance, isValidPhoneNumber } from '../FinanceContext'
 import { telegramBotLink, telegramBotDeepLink } from '../telegramLinks'
 
 export interface OnboardingResult {
+  planned_payments?: import('../../shared/plannedPayments').PlannedPayment[]
   language: 'uz' | 'uz_cyrl' | 'ru' | 'en'
   monthlyGoal: number
   firstExpense: { amount: number; category: string; date?: string } | null
@@ -45,7 +46,7 @@ const translations = {
     phoneLabel: "Shaxsiy telefon raqami",
     done: "Tasdiqlangan",
     pending: "Kutilmoqda (Botda)",
-    benefitTitle: "1 Kunlik Cheksiz VIP Premium!",
+    benefitTitle: "7 Kunlik Cheksiz VIP Premium!",
     benefitSub: "Botda tasdiqlash yakunlangach, barcha AI imkoniyatlari darhol ishga tushadi.",
     continueBtn: "Telegram botda davom etish ✈️",
     checkBtn: "Holatni tekshirish 🔄",
@@ -66,7 +67,7 @@ const translations = {
     phoneLabel: "Шахсий телефон рақами",
     done: "Тасдиқланган",
     pending: "Кутилмоқда (Ботда)",
-    benefitTitle: "1 Кунлик Чексиз VIP Premium!",
+    benefitTitle: "7 Кунлик Чексиз VIP Premium!",
     benefitSub: "Ботда тасдиқлаш якунлангач, барча AI имкониятлари дарҳол ишга тушади.",
     continueBtn: "Telegram ботда давом этиш ✈️",
     checkBtn: "Ҳолатни текшириш 🔄",
@@ -87,7 +88,7 @@ const translations = {
     phoneLabel: "Номер телефона",
     done: "Подтверждено",
     pending: "Ожидается (в боте)",
-    benefitTitle: "1 День Безлимитного VIP Premium!",
+    benefitTitle: "7 Дней Безлимитного VIP Premium!",
     benefitSub: "После завершения в боте вам сразу откроются все функции искусственного интеллекта.",
     continueBtn: "Продолжить в Telegram боте ✈️",
     checkBtn: "Проверить статус 🔄",
@@ -108,7 +109,7 @@ const translations = {
     phoneLabel: "Verified Phone Number",
     done: "Verified",
     pending: "Pending (in Bot)",
-    benefitTitle: "1-Day Unlimited VIP Premium!",
+    benefitTitle: "7-Day Unlimited VIP Premium!",
     benefitSub: "Once verified in the bot, all AI financial capabilities unlock immediately.",
     continueBtn: "Continue in Telegram Bot ✈️",
     checkBtn: "Check Status 🔄",

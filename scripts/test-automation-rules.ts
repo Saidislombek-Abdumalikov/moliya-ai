@@ -35,7 +35,7 @@ await checkAndRecordAiUsage('moliya_user_tg_456','text','','mini_app');
 assert.equal(claims,2);assert.equal(notices,1);
 
 const sunday=new Date('2026-09-27T15:00:00.000Z'); // 20:00 Tashkent
-const trial={...verified,trial_ends_at:new Date(sunday.getTime()+3600_000).toISOString()};
+const trial={...verified,created_at:new Date(sunday.getTime()-7*86400_000+3600_000).toISOString(),trial_ends_at:new Date(sunday.getTime()+3600_000).toISOString()};
 assert.equal(dueAutomationUsers([trial,{...trial,bot_verification:null}],'trial_expiry',sunday).length,1);
 assert.equal(dueAutomationUsers([{...trial,is_premium:true}],'trial_expiry',sunday).length,0);
 assert.equal(dueAutomationUsers([{...trial,is_premium:true,premium_expires_at:trial.trial_ends_at}],'trial_expiry',sunday).length,1);

@@ -1,3 +1,4 @@
+import UpcomingPayments from './UpcomingPayments';
 import DebtsHub from './DebtsHub';
 import SwipeSheet from './SwipeSheet';
 import { useState, useEffect, useRef } from 'react'
@@ -18,6 +19,8 @@ import NotificationToast from './NotificationToast'
 import { financialTotals } from '../../shared/financialTotals'
 
 interface Props {
+  historyOnly?: boolean
+  onOpenTransactions?: () => void
   onboarding?: OnboardingResult | null
   onUpdateOnboarding?: (newData: Partial<OnboardingResult>) => void
 }
@@ -362,7 +365,7 @@ function formatNotificationTime(dateStr?: string, lang: string = 'uz') {
   return `${d.getDate()}.${String(d.getMonth() + 1).padStart(2, '0')} ${hours}:${minutes}`;
 }
 
-export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
+export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly = false, onOpenTransactions }: Props) {
   const { onboarding: contextOnboarding, customTransactions, cards, saveCards, deleteCard, deleteTransaction, addTransaction, deletedTxIds, hasSampleData, isPremium, isVip, premiumExpiresAt, unlimitedAi, userId } = useFinance()
   const currentOnboarding = onboarding || contextOnboarding
   const initialLang = currentOnboarding?.language || 'uz'
@@ -686,7 +689,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
     return `${now.getDate()}-${months[now.getMonth()]}`;
   }
 
-  const sortedPastTransactions = [...pastTransactions].sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())
+  const sortedPastTransactions = [...(historyOnly ? transactions : pastTransactions)].sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())
   
   const filteredPastTransactions = sortedPastTransactions.filter(tx => {
     const txNote = (tx as any).note || (tx as any).name || ''
@@ -695,8 +698,8 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
     return matchesSearch && matchesCategory
   })
 
-  const pastGroupsArray = Object.entries(filteredPastTransactions.reduce((acc, tx) => {
-    const key = getGroupDate(tx)
+  const pastGroupsArray = Object.entries((historyOnly ? filteredPastTransactions : filteredPastTransactions.slice(0, 5)).reduce((acc, tx) => {
+    const key = getGroupDate(tx) + (historyOnly && tx.date ? ' · ' + new Date(tx.date).getFullYear() : '')
     if (!acc[key]) acc[key] = []
     acc[key].push(tx)
     return acc
@@ -730,6 +733,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
           handleOpenNotifications(targetId)
         }}
       />
+      {!historyOnly && <>
       <div style={{ height: 54 }} />
 
       {/* Header */}
@@ -896,6 +900,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
       </div>
 
       {/* Upcoming Transactions (Kutilayotgan xarajatlar) */}
+      <UpcomingPayments />
       {upcomingTransactions.length > 0 && (
         <div style={{ padding: '0 20px 20px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
@@ -959,12 +964,13 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding }: Props) {
         </div>
       )}
 
+      </>}
       {/* Transactions */}
       <div id="home_tx_section" style={{ padding: '0 20px 24px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-          <h3 style={{ fontSize: 16, fontWeight: 700, color: '#1E1A3C' }}>{t.recentTransactions}</h3>
+          <h3 style={{ fontSize: 16, fontWeight: 700, color: '#1E1A3C' }}>{historyOnly ? (lang === 'en' ? 'Transaction history' : lang === 'ru' ? 'История операций' : lang === 'uz_cyrl' ? 'Транзакциялар тарихи' : 'Tranzaksiyalar tarixi') : t.recentTransactions}</h3>
           <button 
-            onClick={() => setShowSearchFilter(!showSearchFilter)}
+            onClick={() => historyOnly ? setShowSearchFilter(!showSearchFilter) : onOpenTransactions?.()}
             style={{
               background: 'none', border: 'none', fontSize: 13, color: '#7C3AED',
               fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit'

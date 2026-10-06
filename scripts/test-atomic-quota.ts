@@ -11,13 +11,14 @@ const db=new PGlite();
 await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
  CREATE TABLE public.users(id text PRIMARY KEY,telegram_id text,phone text,onboarding jsonb DEFAULT '{}',device_info jsonb DEFAULT '{}',bot_verification jsonb DEFAULT '{}',
  is_blocked boolean,is_restricted boolean,is_deleted boolean,account_status text,ai_blocked boolean,unlimited_ai boolean,is_premium boolean,is_vip boolean,is_trial boolean,
- premium_expires_at timestamptz,trial_ends_at timestamptz,ai_limit integer,ai_query_count integer DEFAULT 0,last_ai_query_at timestamptz,updated_at timestamptz);`);
+ created_at timestamptz,premium_expires_at timestamptz,trial_ends_at timestamptz,ai_limit integer,ai_query_count integer DEFAULT 0,last_ai_query_at timestamptz,updated_at timestamptz);`);
 const migration=await readFile(new URL('../migrations/02-atomic-ai-quota.sql',import.meta.url),'utf8');
 await db.exec(migration);
 await db.exec(migration); // repeat application is safe; does not reset counters
 const configurable=await readFile(new URL('../migrations/11-configurable-ai-quota.sql',import.meta.url),'utf8');
 await db.exec(configurable);
 await db.exec(configurable);
+await db.exec(await readFile(new URL('../migrations/20-registration-week-trial.sql',import.meta.url),'utf8'));
 const id='moliya_user_tg_123';
 const now=new Date().toISOString();
 const base:any={id,telegram_id:'123',phone:'+998901234567',onboarding:{},device_info:{},bot_verification:{telegram_id:'123',phone:'+998901234567',phone_source:'telegram_own_contact',phone_verified_at:now,consent_source:'telegram_button',consent_version:'1.0',consent_accepted_at:now},ai_query_count:0,ai_limit:null};
@@ -72,7 +73,7 @@ await test('wrong contact identity denied',async()=>{await seed({bot_verificatio
 await test('identity tombstone denies access',async()=>{await db.query("INSERT INTO users(id,onboarding) VALUES ('restricted_tg_123','{}')");assert.equal((await reserve()).allowed,false)});
 await test('missing account denied',async()=>assert.equal((await reserve(true,'moliya_user_tg_999')).allowed,false));
 const future='2099-01-01T00:00:00Z',past='2000-01-01T00:00:00Z';
-for(const [name,patch] of Object.entries({free:{},custom:{ai_limit:3},zero:{ai_limit:0},minusOne:{ai_limit:-1},unlimited:{unlimited_ai:true},vip:{is_premium:true,premium_expires_at:future},lifetime:{is_premium:true},expired:{is_premium:true,premium_expires_at:past},trial:{trial_ends_at:future},disabledTrial:{is_trial:false,trial_ends_at:future},expiredVipNoTrial:{is_premium:true,premium_expires_at:past,trial_ends_at:future},legacyPrivilege:{onboarding:{unlimited_ai:true,is_premium:true,trial_ends_at:future}}})){
+for(const [name,patch] of Object.entries({registeredToday:{created_at:new Date().toISOString()},registeredSixDays:{created_at:new Date(Date.now()-6*86400000).toISOString(),is_premium:true,premium_expires_at:new Date(Date.now()-5*86400000).toISOString()},expiredWeek:{created_at:new Date(Date.now()-8*86400000).toISOString()},futureRegistration:{created_at:'2099-01-01T00:00:00Z'},blockedTrial:{created_at:new Date().toISOString(),ai_blocked:true},free:{},custom:{ai_limit:3},zero:{ai_limit:0},minusOne:{ai_limit:-1},unlimited:{unlimited_ai:true},vip:{is_premium:true,premium_expires_at:future},lifetime:{is_premium:true},expired:{is_premium:true,premium_expires_at:past},trial:{trial_ends_at:future},disabledTrial:{is_trial:false,trial_ends_at:future},expiredVipNoTrial:{is_premium:true,premium_expires_at:past,trial_ends_at:future},legacyPrivilege:{onboarding:{unlimited_ai:true,is_premium:true,trial_ends_at:future}}})){
  await test('SQL/TypeScript entitlement parity: '+name,async()=>{const u=await seed(patch);const access=effectiveAccess(u),actual=await reserve(false);assert.equal(actual.limit,access.aiLimit);assert.equal(actual.isPremium,access.isPremium);assert.equal(actual.isTrial,access.level==='TRIAL')});
 }
 await test('unlimited still records exact usage',async()=>{await seed({unlimited_ai:true});const r=await Promise.all(Array.from({length:30},()=>reserve()));assert.equal(r.filter(x=>x.allowed).length,30);assert.equal((await reserve(false)).usedCount,30)});

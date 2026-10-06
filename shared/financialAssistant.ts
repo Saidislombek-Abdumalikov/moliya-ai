@@ -13,12 +13,14 @@ export function isFinancialQuestion(text: string): boolean {
     || /[?？]$/.test(q) && /xarajat|daromad|qarz|pul|sarf|hisob|харажат|даромад|қарз|пул|income|expense|debt|money|расход|доход|долг/iu.test(q);
 }
 
-export function financialInsight(records: readonly DatedRecord[], lang: Language = 'uz', now = new Date(), scope: 'month' | 'today' | 'all' = 'month'): string {
-  const month = tashkentDay(now).slice(0, 7);
+export function financialInsight(records: readonly DatedRecord[], lang: Language = 'uz', now = new Date(), scope: 'month' | 'today' | 'all' | 'week' = 'month'): string {
+  const day = tashkentDay(now);
+  const weekStart = new Date(Date.parse(day + 'T00:00:00Z') - 6 * 86400000).toISOString().slice(0,10);
+  const month = day.slice(0, 7);
   const txs = scope === 'all' ? records : records.filter(tx =>
-    scope === 'today' ? transactionDay(tx.date) === tashkentDay(now) : transactionDay(tx.date).slice(0, 7) === month);
+    scope === 'week' ? transactionDay(tx.date) >= weekStart && transactionDay(tx.date) <= day : scope === 'today' ? transactionDay(tx.date) === tashkentDay(now) : transactionDay(tx.date).slice(0, 7) === month);
   const totals = financialTotals(txs);
-  const period = scope === 'today'
+  const period = scope === 'week' ? {uz:'Oxirgi 7 kunda',uz_cyrl:'Охирги 7 кунда',ru:'За последние 7 дней',en:'In the last 7 days'}[lang] : scope === 'today'
     ? { uz: 'Bugun', uz_cyrl: 'Бугун', ru: 'Сегодня', en: 'Today' }[lang]
     : scope === 'all'
     ? { uz: 'Qaydlarda', uz_cyrl: 'Қайдларда', ru: 'Во всех записях', en: 'Across all records' }[lang]

@@ -83,7 +83,7 @@ export const PRIVACY_POLICY_DATA = {
         icon: "💎",
         num: "3",
         title: "Xizmat turlari va Premium sinov",
-        content: "Moliya AI yangi ro'yxatdan o'tgan barcha foydalanuvchilarga 1 kunlik CHEKSIZ VIP PREMIUM sinov muddatini sovg'a tariqasida taqdim etadi. Sinov muddati tugagach, foydalanuvchi bepul tarifda cheklangan miqdorda yoki oylik Premium Pro obunasini rasmiylashtirib cheksiz AI imkoniyatlaridan foydalanishda davom etishi mumkin."
+        content: "Moliya AI yangi ro'yxatdan o'tgan barcha foydalanuvchilarga 7 kunlik CHEKSIZ VIP PREMIUM sinov muddatini sovg'a tariqasida taqdim etadi. Sinov muddati tugagach, foydalanuvchi bepul tarifda cheklangan miqdorda yoki oylik Premium Pro obunasini rasmiylashtirib cheksiz AI imkoniyatlaridan foydalanishda davom etishi mumkin."
       },
       {
         icon: "⚖️",
@@ -177,8 +177,8 @@ export const PRIVACY_POLICY_DATA = {
       {
         icon: "💎",
         num: "3",
-        title: "1 кунлик Premium синов",
-        content: "Янги фойдаланувчиларга 1 кунлик чексиз VIP Premium синов муддати берилади."
+        title: "7 кунлик Premium синов",
+        content: "Янги фойдаланувчиларга 7 кунлик чексиз VIP Premium синов муддати берилади."
       },
       {
         icon: "📞",
@@ -260,8 +260,8 @@ export const PRIVACY_POLICY_DATA = {
       {
         icon: "💎",
         num: "3",
-        title: "1 день бесплатного Premium",
-        content: "Каждый новый пользователь получает 1 день безлимитного доступа ко всем возможностям VIP Premium в подарок."
+        title: "7 дней бесплатного Premium",
+        content: "Каждый новый пользователь получает 7 дней безлимитного доступа ко всем возможностям VIP Premium в подарок."
       },
       {
         icon: "📞",
@@ -343,8 +343,8 @@ export const PRIVACY_POLICY_DATA = {
       {
         icon: "💎",
         num: "3",
-        title: "1-Day Unlimited Premium Trial",
-        content: "All newly verified users receive a complimentary 24-hour unlimited VIP Premium trial."
+        title: "7-Day Unlimited Premium Trial",
+        content: "All newly verified users receive a complimentary 7-day unlimited VIP Premium trial."
       },
       {
         icon: "📞",

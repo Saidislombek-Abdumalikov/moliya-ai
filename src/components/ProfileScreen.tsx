@@ -594,23 +594,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
     }
   }
 
-  // Handle Premium subscription toggle
-  const handleTogglePremium = async () => {
-    if (onUpdateOnboarding) {
-      try {
-        await onUpdateOnboarding({
-          isPremium: !isPremium
-        } as any)
-        setToastMessage(!isPremium ? t.premiumModal.successMsg : (lang === 'uz' ? 'Premium status o\'chirildi' : lang === 'uz_cyrl' ? 'Premium статус ўчирилди' : 'Premium status off'))
-        setActiveModal(null)
-      } catch (err) {
-        console.error('[ProfileScreen] Error updating premium:', err)
-        alert("Failed to update status.")
-      }
-    } else {
-      setActiveModal(null)
-    }
-  }
+
 
   // Handle new card submission
   const handleAddCardSubmit = async (e: React.FormEvent) => {
@@ -1550,28 +1534,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                 <p style={{ fontSize: 12.5, fontWeight: 600, color: '#5B21B6' }}>{t.premiumModal.feature4}</p>
               </div>
 
-              {/* Instant 1-day free trial button */}
-              <div style={{ marginBottom: 16 }}>
-                <button
-                  onClick={() => {
-                    handleTogglePremium()
-                    setToastMessage((lang === 'uz' || lang === 'uz_cyrl') ? (lang === 'uz_cyrl' ? "1 кунлик бепул синов фаоллаштирилди! 🎉" : "1 kunlik bepul sinov faollashtirildi! 🎉") : "1-day free trial activated! 🎉")
-                  }}
-                  style={{
-                    width: '100%', padding: '13px 16px', borderRadius: 16,
-                    border: '1.5px solid #10B981', background: '#ECFDF5',
-                    color: '#047857', fontSize: 13.5, fontWeight: 700,
-                    cursor: 'pointer', fontFamily: 'inherit',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                    boxShadow: '0 2px 8px rgba(16, 185, 129, 0.15)'
-                  }}
-                >
-                  <span>🎁</span>
-                  <span>
-                    {(lang === 'uz' || lang === 'uz_cyrl') ? (lang === 'uz_cyrl' ? "1 кунлик текин синов (Дарҳол фаол)" : "1 kunlik tekin sinov (Darhol faol)") : "1-Day Free Trial (Instant)"}
-                  </span>
-                </button>
-              </div>
+              <p style={{fontSize:13,padding:'12px 0',color:'#047857'}}>{lang === 'en' ? '7 days free from your registration date. Activated automatically.' : lang === 'ru' ? '7 дней бесплатно с даты регистрации. Активируется автоматически.' : lang === 'uz_cyrl' ? 'Рўйхатдан ўтган санадан 7 кун бепул. Автоматик фаоллашади.' : 'Ro‘yxatdan o‘tgan sanadan 7 kun bepul. Avtomatik faollashadi.'}</p>
 
               {/* Subscriptions title */}
               <p style={{ fontSize: 12, fontWeight: 700, color: '#8B82C4', textTransform: 'uppercase', marginBottom: 10, letterSpacing: 0.5 }}>

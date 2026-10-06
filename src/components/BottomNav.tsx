@@ -10,25 +10,25 @@ interface Props {
 const translations = {
   uz: {
     home: 'Asosiy',
-    calendar: 'Taqvim',
+    calendar: 'Tranzaksiyalar',
     analytics: 'Tahlil',
     profile: 'Profil',
   },
   uz_cyrl: {
     home: 'Асосий',
-    calendar: 'Тақвим',
+    calendar: 'Транзакциялар',
     analytics: 'Таҳлил',
     profile: 'Профиль',
   },
   ru: {
     home: 'Главная',
-    calendar: 'Календарь',
+    calendar: 'Операции',
     analytics: 'Анализ',
     profile: 'Профиль',
   },
   en: {
     home: 'Home',
-    calendar: 'Calendar',
+    calendar: 'Transactions',
     analytics: 'Analytics',
     profile: 'Profile',
   },

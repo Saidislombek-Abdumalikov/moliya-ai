@@ -55,8 +55,8 @@ const tourSteps: Record<string, StepConfig[]> = {
     {
       targetId: 'nav_tab_calendar',
       targetScreen: 'calendar',
-      title: "📅 5. Taqvim Bo'limi",
-      desc: "Taqvim sahifasida har bir kunlik xarajatlarni oylar bo'yicha siljitib, moliyaviy tarixingizni to'liq ko'rishingiz mumkin!",
+      title: "📅 5. Tranzaksiyalar",
+      desc: "Tranzaksiyalarda taqvim va to‘liq tarix orqali har bir kunlik xarajatlarni oylar bo'yicha siljitib, moliyaviy tarixingizni to'liq ko'rishingiz mumkin!",
       buttonText: "Keyingisi →",
       tooltipPosition: 'top'
     },
@@ -113,7 +113,7 @@ const tourSteps: Record<string, StepConfig[]> = {
     {
       targetId: 'nav_tab_calendar',
       targetScreen: 'calendar',
-      title: '📅 5. Тақвим Бўлими',
+      title: '📅 5. Транзакциялар',
       desc: "Тақвим саҳифасида ҳар бир кунлик харажатларни ойлар бўйича силжитиб, молиявий тарихингизни тўлиқ кўришингиз мумкин!",
       buttonText: "Кейингиси →",
       tooltipPosition: 'top'
@@ -171,7 +171,7 @@ const tourSteps: Record<string, StepConfig[]> = {
     {
       targetId: 'nav_tab_calendar',
       targetScreen: 'calendar',
-      title: '📅 5. Раздел Календаря',
+      title: '📅 5. Операции',
       desc: "Просматривайте расходы по дням и свайпайте месяцы в интерактивном календаре!",
       buttonText: "Далее →",
       tooltipPosition: 'top'
@@ -229,7 +229,7 @@ const tourSteps: Record<string, StepConfig[]> = {
     {
       targetId: 'nav_tab_calendar',
       targetScreen: 'calendar',
-      title: '📅 5. Calendar Section',
+      title: '📅 5. Transactions',
       desc: "Swipe through calendar months to analyze daily spending history!",
       buttonText: "Next →",
       tooltipPosition: 'top'

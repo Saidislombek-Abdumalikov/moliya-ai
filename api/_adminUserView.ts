@@ -1,3 +1,4 @@
+import {effectiveTrialEnd} from '../shared/registrationTrial.js';
 import {effectiveAccess} from './_accessHelper.js';
 import {accountDenied,eligibleUser,verifiedPhone,acceptedConsent,publicOnboarding} from './_userPolicy.js';
 import {financialTotals} from '../shared/financialTotals.js';
@@ -18,7 +19,7 @@ export function adminUserView(u:any,restricted=false,defaultAiQuota=20){
  const todaySummary=financialTotals(transactions.filter((tx:any)=>String(tx?.date||'').slice(0,10)===today));
  return {
   id:u.id,name:u.name,phone:u.phone,telegram:u.telegram,telegramId:String(u.telegram_id),
-  isPremium:access.isPremium,premiumExpiresAt:u.premium_expires_at,trialEndsAt:u.trial_ends_at,
+  isPremium:access.isPremium,premiumExpiresAt:u.premium_expires_at,trialEndsAt:effectiveTrialEnd(u),
   isBlocked:denied,isRestricted:restricted || Boolean(u.is_restricted || u.onboarding?.is_restricted || u.device_info?.restricted),isDeleted:deleted,
   unlimitedAi:Boolean(u.unlimited_ai),aiBlocked:Boolean(u.ai_blocked || u.onboarding?.ai_blocked),
   language:u.language,aiLimit:access.aiLimit,aiQueryCount:u.ai_query_count||0,lastAiQueryAt:u.last_ai_query_at,

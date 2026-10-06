@@ -35,6 +35,7 @@ export default function NotificationToast({
           exit={{ y: -60, opacity: 0, scale: 0.96 }}
           transition={{ type: 'spring', damping: 26, stiffness: 340 }}
           drag="y"
+          whileDrag={{cursor:'grabbing'}}
           dragConstraints={{ top: 0, bottom: 0 }}
           onDragEnd={(_: any, info: any) => {
             if (info.offset.y < -20) onClose();
@@ -42,6 +43,7 @@ export default function NotificationToast({
           onClick={onClick}
           style={{
             pointerEvents: 'auto',
+            cursor:'grab',userSelect:'none',WebkitUserSelect:'none',
             width: '100%',
             maxWidth: 380,
             background: 'rgba(255, 255, 255, 0.97)',
@@ -54,8 +56,6 @@ export default function NotificationToast({
             display: 'flex',
             alignItems: 'center',
             gap: 10,
-            cursor: 'pointer',
-            userSelect: 'text',
           }}
         >
           {/* App icon */}

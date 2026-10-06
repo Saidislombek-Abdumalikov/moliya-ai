@@ -179,7 +179,7 @@ export default function AnalyticsScreen({ onboarding }: Props) {
   const lang = (initialLang in translations) ? initialLang : 'uz'
   const t = translations[lang as keyof typeof translations]
 
-  const [period, setPeriod] = useState<'daily' | 'weekly' | 'monthly' | 'all'>('monthly')
+  const [period, setPeriod] = useState<'daily' | 'weekly' | 'monthly' | 'all'>('weekly')
 
   const firstExpense = onboarding?.firstExpense
   // Advice uses saved records only; sample/demo transactions never become personal facts.
@@ -218,7 +218,7 @@ export default function AnalyticsScreen({ onboarding }: Props) {
 
   const periodWordDict = {
     daily: { uz: 'bugun', uz_cyrl: 'бугун', ru: 'сегодня', en: 'today' },
-    weekly: { uz: 'shu hafta', uz_cyrl: 'шу ҳафта', ru: 'эта неделя', en: 'this week' },
+    weekly: { uz: 'oxirgi 7 kun', uz_cyrl: 'охирги 7 кун', ru: 'последние 7 дней', en: 'last 7 days' },
     monthly: { uz: 'shu oy', uz_cyrl: 'шу ой', ru: 'этот месяц', en: 'this month' },
     all: { uz: 'jami', uz_cyrl: 'жами', ru: 'всего', en: 'total' },
   }
@@ -231,7 +231,7 @@ export default function AnalyticsScreen({ onboarding }: Props) {
     rangeEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
     totalLimit = Math.round(monthlyLimitBase / 30)
   } else if (period === 'weekly') {
-    const dow = (now.getDay() + 6) % 7 // Monday = 0
+    const dow = 6 // Rolling seven calendar days, including today
     rangeStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dow)
     rangeEnd = new Date(rangeStart.getFullYear(), rangeStart.getMonth(), rangeStart.getDate() + 6, 23, 59, 59, 999)
     totalLimit = Math.round(monthlyLimitBase / 4)
@@ -289,7 +289,7 @@ export default function AnalyticsScreen({ onboarding }: Props) {
       pushBucket(
         new Date(d.getFullYear(), d.getMonth(), d.getDate()),
         new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999),
-        labels[i]
+        labels[(d.getDay() + 6) % 7]
       )
     }
   } else if (period === 'monthly') {
@@ -338,6 +338,25 @@ export default function AnalyticsScreen({ onboarding }: Props) {
         <p style={{ fontSize: 13, color: '#8B82C4' }}>{`${monthAbbrev[lang][now.getMonth()]} ${now.getFullYear()}`}</p>
       </div>
 
+      {/* AI insight */}
+      <div style={{ padding: '0 20px 32px' }}>
+        <div style={{
+          background: '#F5F4FA', borderRadius: 18, padding: '18px',
+          border: '1.5px solid #E4E2F0',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <div style={{
+              width: 28, height: 28, borderRadius: 8, background: '#DDD9F6',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14,
+            }}>💡</div>
+            <span style={{ fontSize: 13, fontWeight: 600, color: '#5B21B6' }}>{t.aiInsightTitle}</span>
+          </div>
+          <p style={{ fontSize: 13, color: '#5B21B6', lineHeight: 1.65, opacity: 0.85 }}>
+            {financialInsight(realRecords, lang as 'uz' | 'uz_cyrl' | 'ru' | 'en', new Date(), 'week')}
+          </p>
+
+        </div>
+      </div>
       {/* Period Selection Controls */}
       <div style={{ padding: '0 20px 20px' }}>
         <div style={{
@@ -482,6 +501,7 @@ export default function AnalyticsScreen({ onboarding }: Props) {
         </div>
       )}
 
+      <details style={{marginBottom:20}}><summary style={{padding:'12px 20px',cursor:'pointer',fontWeight:600}}>{lang==='en'?'Detailed analysis':lang==='ru'?'Подробный анализ':lang==='uz_cyrl'?'Батафсил таҳлил':'Batafsil tahlil'}</summary>
       {/* Categories */}
       <div style={{ padding: '0 20px 24px' }}>
         <h3 style={{ fontSize: 16, fontWeight: 700, color: '#1E1A3C', marginBottom: 14 }}>{t.structureTitle}</h3>
@@ -514,25 +534,8 @@ export default function AnalyticsScreen({ onboarding }: Props) {
         </div>
       </div>
 
-      {/* AI insight */}
-      <div style={{ padding: '0 20px 32px' }}>
-        <div style={{
-          background: '#F5F4FA', borderRadius: 18, padding: '18px',
-          border: '1.5px solid #E4E2F0',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-            <div style={{
-              width: 28, height: 28, borderRadius: 8, background: '#DDD9F6',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14,
-            }}>💡</div>
-            <span style={{ fontSize: 13, fontWeight: 600, color: '#5B21B6' }}>{t.aiInsightTitle}</span>
-          </div>
-          <p style={{ fontSize: 13, color: '#5B21B6', lineHeight: 1.65, opacity: 0.85 }}>
-            {financialInsight(realRecords, lang as 'uz' | 'uz_cyrl' | 'ru' | 'en')}
-          </p>
 
-        </div>
-      </div>
+      </details>
     </div>
   )
 }

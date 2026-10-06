@@ -1,3 +1,4 @@
+import {registrationTrialEnd} from '../shared/registrationTrial.js';
 import {debtPrincipalText,withDebtDetails,debtDueFromText,validDay,reminderPromise} from '../shared/debts.js';
 import {mutateFinancialData} from './services/_financialDataService.js';
 import {parseReceiptImage} from './_receiptParser.js';
@@ -424,7 +425,7 @@ async function resolveCanonicalUser(fromUser: any) {
   if(existing) return {user:existing,userId,isBlocked:accountDenied(existing),isRegistered:eligibleUser(existing),isNew:false,hasPhone:verifiedPhone(existing),hasAcceptedOferta:acceptedConsent(existing)};
 
   // 3. User was deleted or is first-time visitor -> Create clean active user record with trial
-  const trialEnd = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+  const trialEnd = new Date(Date.now() + 7 * 86400000).toISOString();
   const newOnboarding = {
     completed: false,
     tour_completed: false,
@@ -446,8 +447,8 @@ async function resolveCanonicalUser(fromUser: any) {
     telegram_id: tgId,
     phone: null,
     language: 'uz',
-    is_premium: true,
-    premium_expires_at: trialEnd,
+    is_premium: false,
+    premium_expires_at: null,
     ai_limit: null,
     ai_query_count: 0,
     platform: 'telegram',
@@ -478,12 +479,11 @@ async function resolveCanonicalUser(fromUser: any) {
   return { user: created, userId, isBlocked: false, isRegistered: false, isNew: true, hasPhone: false, hasAcceptedOferta: false };
 }
 
-// ── Complete Phone Registration & Grant 1-Day Trial ─────────
+// ── Complete Phone Registration & Grant 7-Day Trial ─────────
 export async function completePhoneRegistration(fromUser: any, phoneNumber: string) {
   const tgId = String(fromUser.id);
   const userId = `moliya_user_tg_${tgId}`;
   const now = new Date();
-  const trialEndsAt = new Date(now.getTime() + 24 * 3600 * 1000).toISOString();
   const fullName = [fromUser.first_name, fromUser.last_name].filter(Boolean).join(' ') || 'Foydalanuvchi';
   const username = fromUser.username ? `@${fromUser.username}` : null;
 
@@ -505,8 +505,8 @@ export async function completePhoneRegistration(fromUser: any, phoneNumber: stri
     telegramId: tgId,
     registration_status: 'completed',
     oferta_accepted: true,
-    trial_started_at: existingOb.trial_started_at || now.toISOString(),
-    trial_ends_at: existingOb.trial_ends_at || trialEndsAt,
+    trial_started_at: existingUser.created_at || null,
+    trial_ends_at: registrationTrialEnd(existingUser),
     privacy_consent: existingOb.privacy_consent
   };
 
@@ -524,11 +524,7 @@ export async function completePhoneRegistration(fromUser: any, phoneNumber: stri
 
   // Only grant fresh trial for FIRST-TIME registration (not re-registration)
   if (isFirstRegistration) {
-    updatePayload.is_premium = true;
-    updatePayload.premium_expires_at = trialEndsAt;
-    updatePayload.ai_limit = null;
-    updatePayload.ai_query_count = 0;
-    updatePayload.created_at = now.toISOString();
+    // Original creation time and any admin-granted paid access remain unchanged.
   }
 
   const { error: saveErr } = await updateProfileSnapshot(userId, existingUser, updatePayload);
@@ -1338,7 +1334,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const phoneReqText =
               `🎉 <b>Til tanlandi!</b>\n\n` +
               `Endi botdan to'liq foydalanish va hisobingizni faollashtirish uchun telefon raqamingizni tasdiqlang.\n\n` +
-              `<blockquote>💎 <b>1 kunlik CHEKSIZ VIP PREMIUM:</b>\n` +
+              `<blockquote>💎 <b>7 kunlik CHEKSIZ VIP PREMIUM:</b>\n` +
               `Raqamingiz tasdiqlangach, sizga darhol bepul sinov muddati taqdim etiladi!</blockquote>\n\n` +
               `👇 <i>Pastdagi tugmani bosing va telefon raqamingizni yuboring:</i>`;
 
@@ -1426,7 +1422,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const phoneReqText =
             `🎉 <b>Roziligingiz qabul qilindi!</b>\n\n` +
             `Endi botdan to'liq foydalanish va hisobingizni faollashtirish uchun telefon raqamingizni tasdiqlang.\n\n` +
-            `<blockquote>💎 <b>1 kunlik CHEKSIZ VIP PREMIUM:</b>\n` +
+            `<blockquote>💎 <b>7 kunlik CHEKSIZ VIP PREMIUM:</b>\n` +
             `Raqamingiz tasdiqlangach, sizga darhol bepul sinov muddati taqdim etiladi!</blockquote>\n\n` +
             `👇 <i>Pastdagi tugmani bosing va telefon raqamingizni yuboring:</i>`;
 
@@ -1521,7 +1517,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           await answerCallbackQuery(cb.id, "⚠️ Botdan foydalanish uchun telefon raqamingizni tasdiqlang!");
           const phoneReqText =
             `⚠️ <b>Botdan to'liq foydalanish uchun telefon raqamingizni tasdiqlang:</b>\n\n` +
-            `<blockquote>💎 <b>1 kunlik CHEKSIZ VIP PREMIUM:</b>\n` +
+            `<blockquote>💎 <b>7 kunlik CHEKSIZ VIP PREMIUM:</b>\n` +
             `Raqamingiz tasdiqlangach, sizga darhol bepul sinov muddati taqdim etiladi!</blockquote>\n\n` +
             `👇 <i>Pastdagi tugmani bosing va telefon raqamingizni yuboring:</i>`;
 
@@ -1821,7 +1817,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ status: 'ok' });
       }
 
-      // Complete registration & grant 1-day trial
+      // Complete registration & activate registration trial
       await completePhoneRegistration(fromUser, phone);
 
       const successMsg =

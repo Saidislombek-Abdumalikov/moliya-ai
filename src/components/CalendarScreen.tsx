@@ -5,6 +5,7 @@ import { useFinance, baseTransactions } from '../FinanceContext'
 import { financialKind } from '../../shared/financialTotals'
 
 interface Props {
+  embedded?: boolean
   onboarding?: OnboardingResult | null
 }
 
@@ -163,7 +164,7 @@ const monthNames: Record<string, string[]> = {
   en: ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
 }
 
-export default function CalendarScreen({ onboarding }: Props) {
+export default function CalendarScreen({ onboarding, embedded = false }: Props) {
   const { onboarding: contextOnboarding, customTransactions, setDateRange, hasSampleData } = useFinance()
   const currentOnboarding = onboarding || contextOnboarding
   const initialLang = currentOnboarding?.language || 'uz'
@@ -339,7 +340,7 @@ export default function CalendarScreen({ onboarding }: Props) {
 
   return (
     <div style={{ position: 'relative' }} id="calendar-screen-container">
-      <div style={{ height: 54 }} />
+      {!embedded && <div style={{ height: 54 }} />}
 
       {/* Header (No p tag, h2 in middle) */}
       <div style={{ padding: '8px 20px 16px', display: 'flex', justifyContent: 'center', alignItems: 'center' }} id="calendar-title-header">

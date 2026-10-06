@@ -1,3 +1,4 @@
+import { effectiveTrialEnd } from '../shared/registrationTrial';
 import { readSessionToken, saveSessionToken, clearSessionToken, authRequest, fetchWithTimeout, onceAsync, reusableAuthRequest, shouldRenewTelegramSession, tourDone, tourKey } from './clientSession'
 import { telegramBotLink } from './telegramLinks'
 import { waitForTelegramSdk, telegramLaunchData } from './telegramViewport'
@@ -112,7 +113,7 @@ export function computeAccessState(raw: any): UserAccessState {
   }
 
   // 3. VIP / Premium
-  const rawIsPremium = Boolean(raw.is_premium ?? raw.isPremium ?? raw.onboarding?.isPremium ?? raw.onboarding?.isVip)
+  const rawIsPremium = raw.accessLevel !== 'TRIAL' && Boolean(raw.is_premium ?? raw.isPremium ?? raw.onboarding?.isPremium ?? raw.onboarding?.isVip)
   const expiresAt = raw.premium_expires_at || raw.premiumExpiresAt || raw.onboarding?.premium_expires_at || raw.onboarding?.premiumExpiresAt || null
 
   if (rawIsPremium) {
@@ -130,29 +131,16 @@ export function computeAccessState(raw: any): UserAccessState {
       return {
         isPremium: true,
         isVip: true,
-        premiumExpiresAt: expiresAt,
+        premiumExpiresAt: new Date(Math.max(expiresMs, Date.parse(effectiveTrialEnd(raw) || '') || 0)).toISOString(),
         unlimitedAi: false,
         isTrial: false,
       }
     }
   }
 
-  // 4. Free Trial (strictly based on trial end date and only if not explicitly marked as not-trial)
-  const isExplicitlyNotTrial = raw.is_trial === false || raw.onboarding?.is_trial === false
-  if (!isExplicitlyNotTrial && !rawIsPremium) {
-    const trialEnd = raw.trial_ends_at || raw.trialEndsAt || raw.onboarding?.trial_ends_at || raw.onboarding?.trialEndsAt
-    if (trialEnd) {
-      const trialMs = new Date(trialEnd).getTime()
-      if (trialMs > Date.now()) {
-        return {
-          isPremium: true,
-          isVip: false,
-          premiumExpiresAt: trialEnd,
-          unlimitedAi: false,
-          isTrial: true,
-        }
-      }
-    }
+  const trialEnd = effectiveTrialEnd(raw);
+  if (trialEnd && Date.parse(trialEnd) > Date.now()) {
+    return {isPremium:true,isVip:false,premiumExpiresAt:trialEnd,unlimitedAi:false,isTrial:true};
   }
 
   return {
@@ -831,11 +819,17 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     window.dispatchEvent(new Event('user_onboarding_updated'));
 
     const savePreferences = () => fetchWithTimeout('/api/auth/sync-data',
-      {method:'POST',headers:getClientAuthHeaders(),body:JSON.stringify({onboarding:updated})});
-    let response = await savePreferences();
+      {method:'POST',headers:getClientAuthHeaders(),body:JSON.stringify({onboarding:newData,...(newData.planned_payments ? {expectedPlannedPayments:onboarding?.planned_payments || []} : {})})});
+    let response: Response;
+    try { response = await savePreferences(); }
+    catch (error) {
+      setOnboarding(onboarding);
+      localStorage.setItem('user_onboarding_v1', JSON.stringify(onboarding));
+      throw error;
+    }
     // Bot and app may edit the same profile at the same instant. The backend
     // reads a fresh snapshot on each request, so one retry resolves that race.
-    if (response.status === 409) response = await savePreferences();
+    if (response.status === 409 && !newData.planned_payments) response = await savePreferences();
     if(!response.ok) {
       setOnboarding(onboarding);
       localStorage.setItem('user_onboarding_v1',JSON.stringify(onboarding));

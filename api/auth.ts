@@ -1,3 +1,6 @@
+import { effectiveAccess } from './_accessHelper.js';
+import { cleanPlannedPayments } from '../shared/plannedPayments.js';
+import { effectiveTrialEnd } from '../shared/registrationTrial.js';
 import {userNotifications} from './services/_notificationService.js';
 import { updateProfileSnapshot } from './services/_profileWriteService.js';
 import { activeSessionToken } from './_sessionChoice.js';
@@ -308,29 +311,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const { effectiveAccess } = await import('./_accessHelper.js');
       const access = effectiveAccess(userDoc, await loadDefaultAiQuota());
 
-      // Only grant a new 1-day trial if ALL of these are true:
-      //   1. User has verified their phone in Telegram Bot
-      //   2. User has no premium_expires_at AND no trial_ends_at
-      //   3. User is NOT already VIP or Unlimited (admin-granted)
-      //   4. User was JUST created (within the last 60 seconds) OR has never had any access set
-      const hasAnyExpiry = userDoc?.premium_expires_at || userDoc?.trial_ends_at || userDoc?.onboarding?.trial_ends_at;
-      const isAdminGranted = Boolean(userDoc?.unlimited_ai) || (userDoc?.is_premium && !hasAnyExpiry);
-      const isNewlyCreated = userDoc?.created_at && (Date.now() - new Date(userDoc.created_at).getTime()) < 60000;
-
-      let isPremium = hasPhone ? access.isPremium : false;
-
-      if (hasPhone && !hasAnyExpiry && !isAdminGranted && isNewlyCreated) {
-        // Genuinely verified new user — grant 1-day trial
-        const trialEnd = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
-        isPremium = true;
-        const {data:trialUser}=await updateProfileSnapshot(userId,userDoc,{
-          is_premium: true,
-          premium_expires_at: trialEnd,
-          ai_limit: null,
-          updated_at: new Date().toISOString()
-        });
-        userDoc=trialUser;
-      }
+      const isPremium = hasPhone ? access.isPremium : false;
 
       const now = new Date();
       const expiresAt = new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString();
@@ -382,10 +363,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         cards: isRegisteredInDb ? (userDoc?.cards || []) : [],
         transactions: isRegisteredInDb ? (userDoc?.transactions || []) : [],
         isPremium,
+        premiumExpiresAt: userDoc?.premium_expires_at || null,
+        unlimitedAi: userDoc?.unlimited_ai || false,
         accessLevel: isRegisteredInDb ? access.level : 'unverified',
         accessLabel: isRegisteredInDb ? access.label : 'Tasdiqlanmagan',
         canUseAi: isRegisteredInDb ? access.canUseAi : false,
-        trialEndsAt: isRegisteredInDb ? (userDoc?.trial_ends_at || userDoc?.premium_expires_at) : null,
+        trialEndsAt: isRegisteredInDb ? effectiveTrialEnd(userDoc) : null,
         aiLimit: isRegisteredInDb ? access.aiLimit : 0
       });
     } catch (error: any) {
@@ -491,7 +474,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         onboarding: publicOnboarding(userDoc),
         cards: isRegisteredInDb ? (userDoc?.cards || []) : [],
         transactions: isRegisteredInDb ? (userDoc?.transactions || []) : [],
-        isPremium: userDoc?.is_premium || false
+        isPremium: effectiveAccess(userDoc).isPremium,
+        accessLevel: effectiveAccess(userDoc).level,
+        premiumExpiresAt: userDoc?.premium_expires_at || null,
+        trialEndsAt: effectiveTrialEnd(userDoc),
+        unlimitedAi: userDoc?.unlimited_ai || false
       });
     } catch (error: any) {
       safeError('[EXCHANGE-CODE] Error:', error);
@@ -572,6 +559,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
           return res.status(200).json({
             status: 'VERIFIED',
+            isPremium: effectiveAccess(userDoc).isPremium,
+            accessLevel: effectiveAccess(userDoc).level,
+            premiumExpiresAt: userDoc?.premium_expires_at || null,
+        trialEndsAt: effectiveTrialEnd(userDoc),
+            unlimitedAi: userDoc?.unlimited_ai || false,
             userId,
             sessionToken,
             access_token: authSession?.access_token || null,
@@ -686,7 +678,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           onboarding: publicOnboarding(userDoc),
           cards: isRegisteredInDb ? (userDoc.cards || []) : [],
           transactions: isRegisteredInDb ? (userDoc.transactions || []) : [],
-          isPremium: userDoc.is_premium || false
+          isPremium: effectiveAccess(userDoc).isPremium,
+          accessLevel: effectiveAccess(userDoc).level,
+          premiumExpiresAt: userDoc.premium_expires_at || null,
+          trialEndsAt: effectiveTrialEnd(userDoc),
+          unlimitedAi: userDoc.unlimited_ai || false
         });
       }
 
@@ -925,7 +921,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const allowed=eligibleUser(u);
         const {effectiveAccess}=await import('./_accessHelper.js');
         const access=effectiveAccess(u,await loadDefaultAiQuota());
-        const safeUser={id:u.id,name:u.name,language:u.language,telegram_id:u.telegram_id,
+        const safeUser={created_at:u.created_at,id:u.id,name:u.name,language:u.language,telegram_id:u.telegram_id,
           phone:verifiedPhone(u)?u.phone:'',onboarding:publicOnboarding(u),
           isVerified:allowed,is_premium:allowed && u.is_premium,premium_expires_at:u.premium_expires_at,
           canUseAi:allowed && access.canUseAi,unlimited_ai:allowed && u.unlimited_ai,
@@ -975,6 +971,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (req.body?.onboarding && typeof req.body.onboarding === 'object') {
           const existingOb = auth.userDoc?.onboarding || {};
           const incomingOb = safePreferences(req.body.onboarding);
+          if ('planned_payments' in incomingOb && JSON.stringify(cleanPlannedPayments(existingOb.planned_payments)) !== JSON.stringify(cleanPlannedPayments(req.body.expectedPlannedPayments))) {
+            return res.status(409).json({error:'PLANS_CHANGED'});
+          }
           updatePayload.onboarding = {...existingOb,...incomingOb};
           if(incomingOb.name) updatePayload.name=incomingOb.name;
           if(incomingOb.language) updatePayload.language=incomingOb.language;

@@ -14,7 +14,8 @@
     "start": "node server-build/server.cjs",
     "test:release-fixes": "node --import tsx scripts/test-release-fixes.ts && node --import tsx scripts/test-new-user-onboarding.ts && node --import tsx scripts/test-client-ai-boundary.ts && node --import tsx scripts/test-legal-consent.ts",
     "test:ai": "node --import tsx scripts/test-ai-runtime.ts && node --import tsx scripts/test-client-ai-boundary.ts && node --import tsx scripts/test-amount-evidence.ts && node --import tsx scripts/test-transaction-directions.ts && node --import tsx scripts/test-ai-media.ts",
-    "test:debts": "node --import tsx scripts/test-debts.ts && node --import tsx scripts/test-debt-delivery.ts"
+    "test:debts": "node --import tsx scripts/test-debts.ts && node --import tsx scripts/test-debt-delivery.ts",
+    "test:weekly": "node --import tsx scripts/test-weekly-plans.ts && node --import tsx scripts/test-atomic-quota.ts && node --import tsx scripts/test-automation-rules.ts"
   },
   "dependencies": {
     "@google/genai": "^2.12.0",

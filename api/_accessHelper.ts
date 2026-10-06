@@ -1,3 +1,4 @@
+import { effectiveTrialEnd } from '../shared/registrationTrial.js';
 /**
  * _accessHelper.ts — Single source of truth for user access/entitlement logic.
  * 
@@ -130,28 +131,13 @@ export function effectiveAccess(user: any, defaultAiQuota = FALLBACK_FREE_AI_QUO
         isPremium: true,
       };
     }
-    // VIP has expired — do NOT fall through to trial!
+    // An expired legacy one-day trial may still be inside its seven-day window.
   }
 
-  // ── 5. Trial (within 24h of registration, only if trial is active) ──
-  const isExplicitlyNotTrial = user.is_trial === false || user.onboarding?.is_trial === false;
-  if (!isExplicitlyNotTrial && !isPremiumFlag) {
-    const trialEnd =
-      user.trial_ends_at;
-
-    if (trialEnd) {
-      const trialEndMs = new Date(trialEnd).getTime();
-      if (trialEndMs > Date.now()) {
-        return {
-          level: 'TRIAL',
-          label: ACCESS_LABELS.TRIAL,
-          canUseApp: true,
-          canUseAi: true,
-          aiLimit: null,
-          isPremium: true,  // Trial gets unlimited during trial period
-        };
-      }
-    }
+  // Every account gets seven days from its original registration timestamp.
+  const trialEnd = effectiveTrialEnd(user);
+  if (trialEnd && Date.parse(trialEnd) > Date.now()) {
+    return {level:'TRIAL',label:ACCESS_LABELS.TRIAL,canUseApp:true,canUseAi:true,aiLimit:null,isPremium:true};
   }
 
   // ── 6. Check for admin-set custom ai_limit ──────────────────

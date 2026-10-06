@@ -1,3 +1,4 @@
+import {cleanPlannedPayments} from '../shared/plannedPayments.js';
 // Security evidence is written only by verified Telegram webhook handlers.
 // Legacy onboarding JSON was client-writable and is never identity evidence.
 export function accountDenied(user: any): boolean {
@@ -36,6 +37,7 @@ export function publicOnboarding(user: any) {
     registration_status: eligibleUser(user) ? 'completed' : 'unverified',
     tour_completed: ob.tour_completed === true,
     account_created_at: user.created_at || user.bot_verification?.phone_verified_at || '',
+    planned_payments: cleanPlannedPayments(ob.planned_payments),
     monthlyGoal: ob.monthlyGoal, monthlyIncome: ob.monthlyIncome,
     notifications: ob.notifications, has_sample_data: ob.has_sample_data === true,
   };
@@ -44,6 +46,7 @@ export function publicOnboarding(user: any) {
 export function safePreferences(input: any): Record<string, any> {
   const out: Record<string, any> = {};
   if (!input || typeof input !== 'object' || Array.isArray(input)) return out;
+  if (Array.isArray(input.planned_payments)) out.planned_payments = cleanPlannedPayments(input.planned_payments);
   if (typeof input.name === 'string') out.name = input.name.trim().slice(0, 100);
   if (['uz', 'uz_cyrl', 'ru', 'en'].includes(input.language)) out.language = input.language;
   for (const key of ['monthlyGoal', 'monthlyIncome', 'baseBalance']) {

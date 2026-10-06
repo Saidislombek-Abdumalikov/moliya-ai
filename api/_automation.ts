@@ -1,3 +1,4 @@
+import {effectiveTrialEnd} from '../shared/registrationTrial.js';
 import { supabase } from './_supabaseClient.js';
 import { eligibleUser } from './_userPolicy.js';
 import { tashkentDay } from '../shared/reminderPolicy.js';
@@ -99,13 +100,12 @@ export function dueAutomationUsers(users:any[],ruleId:'trial_expiry'|'weekly_dig
   return users.flatMap(user=>{
     if(!eligibleUser(user) || (ruleId==='weekly_digest' && user.onboarding?.notifications?.opt2===false))return [];
     if(ruleId==='trial_expiry'){
-      if(user.unlimited_ai || user.is_vip || user.onboarding?.is_vip || user.is_trial===false || user.onboarding?.is_trial===false)return [];
-      const trialEnd=user.trial_ends_at || user.onboarding?.trial_ends_at;
+      if(user.unlimited_ai || user.is_vip || user.onboarding?.is_vip)return [];
+      const trialEnd=effectiveTrialEnd(user,now.getTime());
       const end=Date.parse(trialEnd || '');
       if(!Number.isFinite(end) || end<=now.getTime() || end>now.getTime()+15*3600_000)return [];
-      // The bot's 24-hour trial uses is_premium=true with the same expiry.
-      // A later paid/admin VIP expiry must never receive a trial warning.
-      if(user.is_premium && Date.parse(user.premium_expires_at || '')!==end)return [];
+      // Paid/lifetime VIP that outlasts the trial receives no trial warning.
+      if(user.is_premium && (!user.premium_expires_at || Date.parse(user.premium_expires_at)>end))return [];
       return [{user,occurrence:new Date(end).toISOString()}];
     }
     const end=new Date(now.getTime()-7*86400_000);
