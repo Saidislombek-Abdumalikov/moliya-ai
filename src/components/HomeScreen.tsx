@@ -365,7 +365,7 @@ function formatNotificationTime(dateStr?: string, lang: string = 'uz') {
   return `${d.getDate()}.${String(d.getMonth() + 1).padStart(2, '0')} ${hours}:${minutes}`;
 }
 
-export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly = false, onOpenTransactions }: Props) {
+export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly = false }: Props) {
   const { onboarding: contextOnboarding, customTransactions, cards, saveCards, deleteCard, deleteTransaction, addTransaction, deletedTxIds, hasSampleData, isPremium, isVip, premiumExpiresAt, unlimitedAi, userId } = useFinance()
   const currentOnboarding = onboarding || contextOnboarding
   const initialLang = currentOnboarding?.language || 'uz'
@@ -698,8 +698,8 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
     return matchesSearch && matchesCategory
   })
 
-  const pastGroupsArray = Object.entries((historyOnly ? filteredPastTransactions : filteredPastTransactions.slice(0, 5)).reduce((acc, tx) => {
-    const key = getGroupDate(tx) + (historyOnly && tx.date ? ' · ' + new Date(tx.date).getFullYear() : '')
+  const pastGroupsArray = Object.entries(filteredPastTransactions.reduce((acc, tx) => {
+    const key = getGroupDate(tx) + (tx.date ? ' · ' + new Date(tx.date).getFullYear() : '')
     if (!acc[key]) acc[key] = []
     acc[key].push(tx)
     return acc
@@ -890,8 +890,8 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
           const remaining=spendLimit-totalExpense;
           const pct=Math.min(100,Math.max(0,totalExpense/Math.max(1,spendLimit)*100));
           return <motion.button id="home_limit_section" className="home-summary-card limit-summary" whileTap={{scale:0.98}} onClick={handleOpenLimitModal}>
-            <span className="summary-title">{lang==='en'?'Limits':lang==='ru'?'Лимиты':lang==='uz_cyrl'?'Лимитлар':'Limitlar'} <span>↗</span></span>
-            <span className="summary-caption">{remaining<0?'Limitdan oshdi':'Oylik qoldiq'}</span>
+            <span className="summary-title"><span>🎯 {t.goalLabel}</span><span>{Math.round(pct)}%</span></span>
+            <span className="summary-caption">{remaining<0?'Limitdan oshdi':'Qoldiq'}</span>
             <strong className="summary-money" style={{color:remaining<0?'#BE123C':undefined}}>{fmtFull(Math.abs(remaining))} <small>{t.currency}</small></strong>
             <span className="summary-progress"><span style={{width:pct+'%',background:remaining<0?'#E11D48':'#8B5CF6'}}/></span>
             <span className="summary-caption">{Math.round(pct)}% · {fmtFull(spendLimit)} {t.currency}</span>
@@ -970,7 +970,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
           <h3 style={{ fontSize: 16, fontWeight: 700, color: '#1E1A3C' }}>{historyOnly ? (lang === 'en' ? 'Transaction history' : lang === 'ru' ? 'История операций' : lang === 'uz_cyrl' ? 'Транзакциялар тарихи' : 'Tranzaksiyalar tarixi') : t.recentTransactions}</h3>
           <button 
-            onClick={() => historyOnly ? setShowSearchFilter(!showSearchFilter) : onOpenTransactions?.()}
+            onClick={() => setShowSearchFilter(!showSearchFilter)}
             style={{
               background: 'none', border: 'none', fontSize: 13, color: '#7C3AED',
               fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit'

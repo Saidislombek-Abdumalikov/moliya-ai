@@ -955,6 +955,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
         if(req.body?.transactions!==undefined || req.body?.cards!==undefined) return res.status(400).json({error:'FINANCIAL_ACTION_REQUIRED'});
 
+        if(typeof req.body?.clearAssistantDraft==='string'){
+          const pending=auth.userDoc.onboarding?.assistant_pending;
+          if(pending?.id===req.body.clearAssistantDraft){await updateProfileSnapshot(targetUserId,auth.userDoc,{onboarding:{...auth.userDoc.onboarding,assistant_pending:null}});}
+          return res.status(200).json({success:true});
+        }
         // 3. has_sample_data (stored safely in onboarding jsonb)
         if (req.body?.has_sample_data !== undefined) {
           const currOb = updatePayload.onboarding || auth.userDoc?.onboarding || {};

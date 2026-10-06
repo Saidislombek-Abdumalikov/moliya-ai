@@ -73,6 +73,7 @@ for (const file of [
   "08-destructive-user-actions",
   "17-debts",
   "19-debt-relationships",
+  "21-repayment-details",
 ]) {
   const sql = await readFile(
     new URL("../migrations/" + file + ".sql", import.meta.url),
@@ -217,6 +218,13 @@ for (const role of ["anon", "authenticated"]) {
   await assert.rejects(action("pay", {}), /permission denied/)
   await db.exec("RESET ROLE")
 }
+await db.query('UPDATE users SET transactions=$1,cards=$2',[JSON.stringify([loan]),JSON.stringify([{id:'card-test'}])]);
+const dated=await action('pay',{paymentId:'pay_dated_payment_123',amount:100,date:'2026-09-30',cardId:'card-test'});
+assert.equal(dated.success,true);
+const datedPayment=dated.transactions.find((t:any)=>t.id==='pay_dated_payment_123');
+assert.equal(datedPayment.date,'2026-09-30');assert.equal(datedPayment.day,30);assert.equal(datedPayment.month,9);assert.equal(datedPayment.cardId,'card-test');
+assert.equal((await action('pay',{paymentId:'pay_invalid_card_123',amount:100,cardId:'foreign-card'})).success,false);
+assert.equal((await action('pay',{paymentId:'pay_invalid_date_123',amount:100,date:'2026-02-30'})).success,false);
 await db.exec("UPDATE users SET is_blocked=true")
 assert.equal((await action("pay", {})).success, false)
 await db.close()

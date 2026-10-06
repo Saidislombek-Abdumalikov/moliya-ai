@@ -103,6 +103,7 @@ export default function UpcomingPayments() {
     [pay, setPay] = useState<PlannedPayment | null>(null),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("")
+  const [editId, setEditId] = useState<string | null>(null)
   const [title, setTitle] = useState(""),
     [amount, setAmount] = useState(""),
     [date, setDate] = useState(tashkentDay(new Date())),
@@ -124,14 +125,15 @@ export default function UpcomingPayments() {
       setBusy(false)
     }
   }
+  if (!plans.length && !open && !pay) return null
   return (
     <section
       style={{
         margin: "0 20px 24px",
         padding: 16,
         borderRadius: 20,
-        background: "#F0FDFA",
-        border: "1px solid #CCFBF1",
+        background: "linear-gradient(135deg,#FAF9FD,#F4F0FF)",
+        border: "1.5px solid #E6DFFF",
       }}
     >
       <div
@@ -142,11 +144,16 @@ export default function UpcomingPayments() {
           gap: 8,
         }}
       >
-        <h3 style={{ fontSize: 15, color: "#134E4A" }}>{words[0]}</h3>
+        <h3 style={{ fontSize: 15, color: "#1E1A3C" }}>{words[0]}</h3>
         <button
           className="planned-button"
           onClick={() => {
             setError("")
+            setEditId(null)
+            setTitle("")
+            setAmount("")
+            setDate(tashkentDay(new Date()))
+            setRepeat("none")
             setOpen(true)
           }}
         >
@@ -165,7 +172,7 @@ export default function UpcomingPayments() {
           style={{
             paddingTop: 12,
             marginTop: 10,
-            borderTop: "1px solid #CCFBF1",
+            borderTop: "1px solid #E6DFFF",
           }}
         >
           <div
@@ -205,6 +212,27 @@ export default function UpcomingPayments() {
               }}
             >
               {words[9]}
+            </button>
+            <button
+              className="planned-button"
+              disabled={busy}
+              onClick={() => {
+                setError("")
+                setEditId(p.id)
+                setTitle(p.title)
+                setAmount(String(p.amount))
+                setDate(p.dueDate)
+                setRepeat(p.repeat)
+                setOpen(true)
+              }}
+            >
+              {lang === "en"
+                ? "Edit"
+                : lang === "ru"
+                  ? "Изменить"
+                  : lang === "uz_cyrl"
+                    ? "Таҳрирлаш"
+                    : "Tahrirlash"}
             </button>
             <button
               disabled={busy}
@@ -298,16 +326,20 @@ export default function UpcomingPayments() {
                   run(async () => {
                     const p = cleanPlannedPayments([
                       {
-                        id: crypto.randomUUID(),
+                        id: editId || crypto.randomUUID(),
                         title,
                         amount: Number(amount),
                         dueDate: date,
                         repeat,
                       },
                     ])[0]
-                    if (!p || plans.length >= 100)
+                    if (!p || (!editId && plans.length >= 100))
                       throw new Error("INVALID_PLAN")
-                    await save([...plans, p])
+                    await save(
+                      editId
+                        ? plans.map((x) => (x.id === editId ? p : x))
+                        : [...plans, p],
+                    )
                     setOpen(false)
                     setTitle("")
                     setAmount("")

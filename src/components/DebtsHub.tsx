@@ -185,10 +185,10 @@ export default function DebtsHub() {
   return (
     <>
       <motion.button className="home-summary-card debt-summary" whileTap={{scale:0.98}} onClick={()=>setOpen(true)}>
-        <span className="summary-title">Qarzlar <span>↗</span></span>
+        <span className="summary-title">Qarz / Haqqim <span>↗</span></span>
         {(['debt','lending'] as const).map(kind=><span key={kind} className="debt-summary-line">
-          <span className="summary-caption">{kind==='debt'?'Qarzlarim':'Haqdorligim'}</span>
-          <strong className="summary-money" style={{color:kind==='debt'?'#B45309':'#0F766E'}}>{money(debts.filter(t=>t.type===kind).reduce((sum,t)=>sum+debtRemaining(t,all),0))} <small>so‘m</small></strong>
+          <span className="summary-caption">{kind==='debt'?'Qarzlarim':'Haqqim'}</span>
+          <strong className="summary-money" style={{color:kind==='debt'?'#7C3AED':'#4C1D95'}}>{money(debts.filter(t=>t.type===kind).reduce((sum,t)=>sum+debtRemaining(t,all),0))} <small>so‘m</small></strong>
         </span>)}
       </motion.button>
       <AnimatePresence>

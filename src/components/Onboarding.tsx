@@ -4,6 +4,10 @@ import { useFinance, isValidPhoneNumber } from '../FinanceContext'
 import { telegramBotLink, telegramBotDeepLink } from '../telegramLinks'
 
 export interface OnboardingResult {
+  assistant_draft?: {id:string;reply:import('../../shared/assistant').AssistantReply}|null
+  voice_auto_send?: boolean
+  remember_categories?: boolean
+  category_preferences?: import('../../shared/assistant').CategoryPreference[]
   planned_payments?: import('../../shared/plannedPayments').PlannedPayment[]
   language: 'uz' | 'uz_cyrl' | 'ru' | 'en'
   monthlyGoal: number

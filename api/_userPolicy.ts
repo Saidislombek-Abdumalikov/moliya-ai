@@ -1,3 +1,4 @@
+import {normalizeAssistantReply,cleanCategoryPreferences} from '../shared/assistant.js';
 import {cleanPlannedPayments} from '../shared/plannedPayments.js';
 // Security evidence is written only by verified Telegram webhook handlers.
 // Legacy onboarding JSON was client-writable and is never identity evidence.
@@ -28,13 +29,20 @@ export function eligibleUser(user: any): boolean {
 }
 
 export function publicOnboarding(user: any) {
+  let assistant_draft: any = null;
+  try{const pending=user?.onboarding?.assistant_pending;if(eligibleUser(user)&&pending?.expires>Date.now()&&/^[a-f0-9]{32}$/.test(pending.id))assistant_draft={id:pending.id,reply:normalizeAssistantReply(pending.reply)};}catch{}
+
   const ob = user?.onboarding || {};
   return {
+    assistant_draft,
     name: user?.name || ob.name || '', language: user?.language || ob.language || 'uz',
     telegramId: String(user?.telegram_id || ''), telegram: user?.telegram || '',
     phone: verifiedPhone(user) ? user.phone : '',
     oferta_accepted: acceptedConsent(user), completed: eligibleUser(user),
     registration_status: eligibleUser(user) ? 'completed' : 'unverified',
+    remember_categories: ob.remember_categories === true,
+    category_preferences: cleanCategoryPreferences(ob.category_preferences),
+    voice_auto_send: ob.voice_auto_send === true,
     tour_completed: ob.tour_completed === true,
     account_created_at: user.created_at || user.bot_verification?.phone_verified_at || '',
     planned_payments: cleanPlannedPayments(ob.planned_payments),
@@ -46,13 +54,14 @@ export function publicOnboarding(user: any) {
 export function safePreferences(input: any): Record<string, any> {
   const out: Record<string, any> = {};
   if (!input || typeof input !== 'object' || Array.isArray(input)) return out;
+  if (Array.isArray(input.category_preferences)) out.category_preferences=cleanCategoryPreferences(input.category_preferences);
   if (Array.isArray(input.planned_payments)) out.planned_payments = cleanPlannedPayments(input.planned_payments);
   if (typeof input.name === 'string') out.name = input.name.trim().slice(0, 100);
   if (['uz', 'uz_cyrl', 'ru', 'en'].includes(input.language)) out.language = input.language;
   for (const key of ['monthlyGoal', 'monthlyIncome', 'baseBalance']) {
     if (typeof input[key] === 'number' && Number.isFinite(input[key]) && input[key] >= 0 && input[key] <= 1e15) out[key] = input[key];
   }
-  for (const key of ['tour_completed', 'has_sample_data']) if (typeof input[key] === 'boolean') out[key] = input[key];
+  for (const key of ['tour_completed', 'has_sample_data', 'voice_auto_send', 'remember_categories']) if (typeof input[key] === 'boolean') out[key] = input[key];
   if (input.notifications && typeof input.notifications === 'object') {
     out.notifications = Object.fromEntries(['opt1', 'opt2', 'opt3'].map(k => [k, input.notifications[k] === true]));
     if (['daily', 'weekly', 'off'].includes(input.notifications.reminderFrequency))

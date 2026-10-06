@@ -1074,6 +1074,14 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
         )}
       </motion.div>
 
+      <section style={{margin:'0 20px 20px',padding:16,borderRadius:20,border:'1.5px solid #E4E1F4',background:'#FAF9FD'}}>
+        <h3 style={{fontSize:14,fontWeight:600,color:'#1E1A3C',marginBottom:12}}>{lang==='en'?'Settings':lang==='ru'?'Настройки':lang==='uz_cyrl'?'Созламалар':'Sozlamalar'}</h3>
+        <label style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,fontSize:13,color:'#766E9E'}}>
+          {lang==='en'?'Send audio after 1 second of silence':lang==='ru'?'Отправлять после 1 секунды тишины':lang==='uz_cyrl'?'1 сония сукутдан кейин овозни юбориш':'1 soniya sukutdan keyin ovozni yuborish'}
+          <input type="checkbox" role="switch" checked={onboarding?.voice_auto_send===true} onChange={async e=>{try{await onUpdateOnboarding?.({voice_auto_send:e.target.checked})}catch{setToastMessage('Sozlama saqlanmadi.')}}} style={{accentColor:'#7C3AED',width:20,height:20,flexShrink:0}}/>
+        </label>
+        <label style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,fontSize:13,color:'#766E9E',marginTop:16}}>Tasdiqlangan kategoriya tuzatishlarini eslab qolish<input type="checkbox" checked={onboarding?.remember_categories===true} onChange={async e=>{try{await onUpdateOnboarding?.({remember_categories:e.target.checked})}catch{setToastMessage('Sozlama saqlanmadi.')}}} style={{accentColor:'#7C3AED',width:20,height:20}}/></label>
+      </section>
       {/* Menu Sections list */}
       <motion.div
         initial={{ opacity: 0, y: 12 }}

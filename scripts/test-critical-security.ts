@@ -86,7 +86,8 @@ await test('first own-contact registration starts tour once',async()=>{
  user.phone=null;user.onboarding={...user.onboarding,tour_completed:true};
  await completePhoneRegistration({id:123},base.phone);
  assert.equal(writes[0].onboarding.tour_completed,false);
- assert.equal(writes[0].is_premium,true);
+ assert.equal(writes[0].is_premium,undefined,'Registration must not overwrite paid/admin premium');
+ assert.equal(writes[0].created_at,undefined,'Reverification never restarts the seven-day window');
 });
 
 await test('logout removes every stored session token',async()=>{user.device_info={sessionToken:token,session_token:token,sessionExpiresAt:'2099-01-01'};const r=await call(auth,'logout','POST');assert.equal(r.statusCode,200);assert.equal(writes[0].onboarding.session_token,undefined);assert.ok(Number.isFinite(Date.parse(writes[0].device_info.session_revoked_at)));assert.equal(writes[0].device_info.session_token,undefined);assert.equal(writes[0].device_info.sessionToken,undefined)});

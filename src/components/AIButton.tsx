@@ -1,3 +1,5 @@
+import AssistantReview from './AssistantReview';
+import {normalizeAssistantReply,type AssistantReply} from '../../shared/assistant';
 import {debtRelationships,debtPersonLabel} from '../../shared/debtPeople';
 import {debtPrincipalText,validDay,reminderPromise} from '../../shared/debts';
 import {prepareSilenceMonitor} from '../voiceSilence';
@@ -98,14 +100,20 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
   const serviceMessage = ({uz:'AI xizmatidan javob kelmadi. Birozdan so‘ng qayta urinib ko‘ring.',uz_cyrl:'AI хизматидан жавоб келмади. Бироздан сўнг қайта уриниб кўринг.',ru:'Сервис ИИ не ответил. Попробуйте немного позже.',en:'The AI service did not respond. Please try again shortly.'})[language];
   const restrictedMessage = ({uz:'Hisobga kirish cheklangan. Botdagi tasdiqlarni tekshiring.',uz_cyrl:'Ҳисобга кириш чекланган. Ботдаги тасдиқларни текширинг.',ru:'Доступ ограничен. Проверьте подтверждения в боте.',en:'Access restricted. Check your verification in the bot.'})[language];
   const typeIndex = (type: EntryType) => (Object.keys(typeConfig) as EntryType[]).indexOf(type)
-  const { addTransaction, hasSampleData, setHasSampleData, cards, userId,customTransactions } = useFinance()
+  const { addTransaction, hasSampleData, setHasSampleData, cards, userId,customTransactions,onboarding } = useFinance()
   const [open, setOpen] = useState(false)
-  const [step, setStep] = useState<'type' | 'form' | 'voice' | 'done' | 'removeSamples'>('type')
+  const [step, setStep] = useState<'type' | 'form' | 'voice' | 'done' | 'removeSamples' | 'assistant'>('type')
+  const [assistantReply,setAssistantReply]=useState<AssistantReply|null>(null);
+  const [assistantHistory,setAssistantHistory]=useState<Array<{role:string;content:string}>>([]);
+  const [assistantDraftId,setAssistantDraftId]=useState<string|undefined>();
+  const openedDraft=useRef('');
+  const [reviewKey,setReviewKey]=useState(0);
   const [selectedType, setSelectedType] = useState<EntryType>('expense')
   const reducedMotion=useReducedMotion();
   const [voiceStarting,setVoiceStarting]=useState(false);
-  const [autoSend,setAutoSend]=useState(()=>{try{return localStorage.getItem('moliya_voice_auto_send')==='true';}catch{return false;}});
+  const autoSend=onboarding?.voice_auto_send === true;
   const autoSendRef=useRef(autoSend);
+  useEffect(()=>{autoSendRef.current=autoSend},[autoSend]);
   const silenceMonitor=useRef<ReturnType<typeof prepareSilenceMonitor>|null>(null);
   const [autoAvailable,setAutoAvailable]=useState(true);
   const [recording, setRecording] = useState(false)
@@ -210,10 +218,22 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
     streamRef.current?.getTracks().forEach(track=>track.stop())
   }, [])
 
+  useEffect(()=>{
+    const draft=onboarding?.assistant_draft;
+    const wanted=new URLSearchParams(location.search).get('assistant');
+    if(!draft||draft.id!==wanted||openedDraft.current===draft.id)return;
+    openedDraft.current=draft.id;setAssistantDraftId(draft.id);setAssistantReply(draft.reply);setReviewKey(k=>k+1);setAssistantHistory([{role:'assistant',content:JSON.stringify(draft.reply)}]);setSaved(false);setStep('assistant');setOpen(true);
+  },[onboarding?.assistant_draft?.id]);
+  const finishAssistant=()=>{
+    if(assistantDraftId)void fetch('/api/auth/sync-data',{method:'POST',headers:getClientAuthHeaders(),body:JSON.stringify({clearAssistantDraft:assistantDraftId})});
+    setSaved(true);setStep('done');
+  };
+
   if (!visible) return null
 
   const openModal = () => {
     voiceTypeOverride.current=null;setSelectedType('expense');
+    setAssistantDraftId(undefined);setAssistantReply(null);setAssistantHistory([]);
     setStep('type')
     const localISOTime = (new Date(Date.now() - new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 16)
     setEntry({ type: 'expense', amount: '', note: '', category: '', date: localISOTime, cardId: 'cash' })
@@ -224,6 +244,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
   }
 
   const closeModal = () => {
+    if(isSaving)return;
     stopVoice()
     setOpen(false)
     setRecording(false)
@@ -236,40 +257,27 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
     setStep('form')
   }
 
-  const handleAiTextSubmit = async () => {
-    if (!aiText.trim()) return
-
-    setIsProcessing(true)
-    setAiError('')
-    try {
-      const parsed = await parseAIText(aiText, cards, userId || undefined)
-      setSelectedType(parsed.type)
-      const localISOTime = (new Date(Date.now() - new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 16)
-      setEntry(prev => ({
-        ...prev,
-        type: parsed.type,
-        amount: parsed.amount,
-        note: parsed.note,
-        category: parsed.category,
-        title: parsed.title,
-        debtWho: parsed.debtWho,
-        debtDueDate:parsed.debtDueDate,
-        debtDateConfirmed:parsed.debtDateConfirmed,
-        debtPersonId:undefined,
-        date: parsed.date || localISOTime,
-        cardId: parsed.cardId || prev.cardId || 'cash',
-      }))
-      setStep('form')
-    } catch (e: any) {
-      console.error(e)
-      setEntry(prev=>({...prev,amount:''}));
-      const errTxt = e?.message || '';
-      setAiError(errTxt === 'SESSION_REQUIRED' ? sessionMessage : errTxt === 'ACCOUNT_RESTRICTED' ? restrictedMessage : ['AI_SERVICE_UNAVAILABLE','AI_NOT_CONFIGURED'].includes(errTxt) || e?.name === 'AbortError' ? serviceMessage : errTxt === TRANSACTION_CLARIFICATION ? copy.clarify : errTxt === 'AI_RATE_LIMIT' ? copy.throttle : errTxt === 'AI_QUOTA' ? copy.quota : copy.parseFailed);
-      setStep('form');
-    } finally {
-      setIsProcessing(false)
-    }
-  }
+  const requestAssistant=async(text:string)=>{
+    if(!text.trim()||isProcessing)return;
+    setIsProcessing(true);setAiError('');
+    const generation=voiceGeneration.current;
+    const controller=new AbortController();requestRef.current=controller;
+    const timeout=setTimeout(()=>controller.abort(),45000);
+    try{
+      const response=await fetch('/api/parse-expense',{method:'POST',headers:getClientAuthHeaders(),signal:controller.signal,body:JSON.stringify({mode:'assistant',text,userId,history:assistantHistory})});
+      if(response.status===401)throw Error('SESSION_REQUIRED');
+      if(response.status===403)throw Error('ACCOUNT_RESTRICTED');
+      if(response.status===429)throw Error(await ai429Code(response));
+      if(!response.ok)throw Error('AI_SERVICE_UNAVAILABLE');
+      const reply=normalizeAssistantReply(await response.json());
+      if(generation!==voiceGeneration.current)return;
+      setAssistantReply(reply);setReviewKey(k=>k+1);
+      setAssistantHistory(h=>[...h,{role:'user',content:text},{role:'assistant',content:JSON.stringify(reply)}].slice(-8));
+      setStep('assistant');
+    }catch(e:any){if(generation!==voiceGeneration.current)return;setAiError(e.message==='SESSION_REQUIRED'?sessionMessage:e.message==='ACCOUNT_RESTRICTED'?restrictedMessage:e.message==='AI_QUOTA'?copy.quota:e.message==='AI_RATE_LIMIT'?copy.throttle:serviceMessage);}
+    finally{clearTimeout(timeout);if(generation===voiceGeneration.current)setIsProcessing(false);}
+  };
+  const handleAiTextSubmit=()=>requestAssistant(aiText);
 
   const stopVoice = () => {
     silenceMonitor.current?.stop();silenceMonitor.current=null;
@@ -333,7 +341,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
           const dataUrl=await blobDataUrl(wav)
           const response=await fetch('/api/parse-expense',{
             method:'POST',headers:getClientAuthHeaders(),signal:controller.signal,
-            body:JSON.stringify({base64Audio:dataUrl.split(',')[1],userId})
+            body:JSON.stringify({mode:'assistant',base64Audio:dataUrl.split(',')[1],userId,history:assistantHistory})
           })
           if(generation!==voiceGeneration.current)return
           if(response.status===401)throw new Error('SESSION_REQUIRED')
@@ -341,13 +349,11 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
           if(response.status===429)throw new Error(await ai429Code(response))
           if(response.status>=500)throw new Error('AI_SERVICE_UNAVAILABLE')
           if(!response.ok)throw new Error('AUDIO_UNCLEAR')
-          const parsed=await response.json()
-          if(!['expense','income','debt','lending'].includes(parsed.type) || !Number.isFinite(Number(parsed.amount)) || Number(parsed.amount)<=0)throw new Error('AUDIO_UNCLEAR')
-          const resolvedType=voiceTypeOverride.current || parsed.type;
-          setSelectedType(resolvedType)
-          setAiText(parsed.transcription || '')
-          setEntry(prev=>({...prev,type:resolvedType,amount:String(parsed.amount),category:resolvedType===parsed.type?parsed.category:categories[resolvedType as EntryType][0] || 'Boshqa',note:parsed.transcription || parsed.note || '',title:parsed.title,debtWho:parsed.debtWho,debtDueDate:parsed.debtDueDate,debtDateConfirmed:parsed.debtDateConfirmed,debtPersonId:undefined,date:parsed.date,cardId:prev.cardId || 'cash'}))
-          setStep('form')
+          const reply=normalizeAssistantReply(await response.json());
+          if(voiceTypeOverride.current&&reply.actions.length===1&&['expense','income','debt','lending'].includes(reply.actions[0].kind))reply.actions[0].kind=voiceTypeOverride.current;
+          setAssistantReply(reply);setReviewKey(k=>k+1);setAiText(reply.transcription);
+          setAssistantHistory(h=>[...h,{role:'user',content:reply.transcription},{role:'assistant',content:JSON.stringify(reply)}].slice(-8));
+          setStep('assistant');
         }catch(error:any){
           if(generation!==voiceGeneration.current)return
           setEntry(prev=>({...prev,amount:''}))
@@ -374,25 +380,6 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
         : ({uz:'🎙 Mikrofonni ochib bo‘lmadi. Ilovani yangilang va yana urinib ko‘ring.',uz_cyrl:'🎙 Микрофонни очиб бўлмади. Иловaни янгиланг ва яна уриниб кўринг.',ru:'🎙 Не удалось открыть микрофон. Обновите приложение и повторите.',en:'🎙 Could not open the microphone. Update the app and try again.'})[language])
     }finally{cue.close();if(generation===voiceGeneration.current){isStartingVoiceRef.current=false;setVoiceStarting(false)}}
   }
-
-  const voiceModeSwitch=(
-    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,padding:'8px 2px',marginBottom:8}}>
-      <span style={{fontSize:12,color:'#766E9E'}}>{({uz:'1 soniya jimlikda yuborish',uz_cyrl:'1 сония жимликда юбориш',ru:'Отправлять после 1 с тишины',en:'Send after 1s of silence'})[language]}</span>
-      <motion.button type="button" role="switch" aria-checked={autoSend}
-        aria-label={({uz:'Avtomatik yuborish',uz_cyrl:'Автоматик юбориш',ru:'Автоотправка',en:'Auto-send'})[language]}
-        disabled={voiceStarting || isProcessing || isSaving}
-        onClick={()=>{
-          const enabled=!autoSend;autoSendRef.current=enabled;setAutoSend(enabled);
-          try{localStorage.setItem('moliya_voice_auto_send',String(enabled));}catch{}
-          if(enabled && !recording)void startVoice();
-        }} whileTap={{scale:0.94}}
-        style={{width:48,height:44,padding:0,border:0,background:'transparent',cursor:'pointer',flexShrink:0}}>
-        <span style={{display:'flex',alignItems:'center',height:26,padding:3,borderRadius:16,background:autoSend?'#7C3AED':'#DDD6FE'}}>
-          <motion.span animate={{x:autoSend?22:0}} transition={{duration:reducedMotion?0:0.18}} style={{width:20,height:20,borderRadius:'50%',background:'#fff'}} />
-        </span>
-      </motion.button>
-    </div>
-  );
 
   const handleSave = async () => {
     if(isSaving)return;
@@ -473,8 +460,8 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
       <motion.button
         id="ai_floating_button"
         aria-label="AI"
-        animate={reducedMotion || open?{scale:1}:{scale:[1,1.06,1]}}
-        transition={{duration:2.8,repeat:reducedMotion || open?0:Infinity,ease:'easeInOut'}}
+        animate={{scale:1}}
+        transition={{duration:0.15}}
         onClick={openModal}
         drag
         dragConstraints={{ top: -75, bottom: 75, left: -75, right: 75 }}
@@ -588,7 +575,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
             >
               {/* Header Handle Bar with Close Button */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-                <button aria-label="Orqaga" onClick={()=>{if(!recording&&!isProcessing)setStep('type')}} style={{border:0,background:'#F5F4FA',borderRadius:10,width:32,height:32}}>←</button>
+                <button aria-label="Orqaga" onClick={()=>{if(!recording&&!isProcessing&&!isSaving)setStep('type')}} style={{border:0,background:'#F5F4FA',borderRadius:10,width:32,height:32}}>←</button>
                 <div />
                 <button
                   onClick={closeModal}
@@ -950,12 +937,11 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                   )}
                 </div>
 
-                {voiceModeSwitch}
                 {/* Voice shortcut */}
                 <motion.button
                   disabled={voiceStarting}
-                  animate={reducedMotion || voiceStarting?{scale:1,opacity:1}:{scale:[1,1.025,1],opacity:[1,0.75,1]}}
-                  transition={{duration:1.8,repeat:reducedMotion || voiceStarting?0:Infinity}}
+                  animate={{scale:1,opacity:1}}
+                  transition={{duration:0.15}}
                   whileTap={{scale:0.94}}
                   aria-busy={voiceStarting}
                   onClick={() => { setSelectedType('expense'); startVoice() }}
@@ -1025,7 +1011,6 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                 </p>
                 <p style={{ fontSize: 13, color: '#8B82C4', marginBottom: 32 }}>{language === 'uz' ? 'Gapiring, eshityapman...' : language === 'uz_cyrl' ? 'Гапиринг, эшитяпман...' : language === 'ru' ? 'Говорите, я слушаю...' : 'Speak, I am listening...'}</p>
 
-                {voiceModeSwitch}
                 {autoSend && !autoAvailable && <p role="status" style={{fontSize:12,color:'#766E9E'}}>{({uz:'Avtomatik to‘xtash ishlamadi. Tugmani bosing.',uz_cyrl:'Автоматик тўхташ ишламади. Тугмани босинг.',ru:'Автостоп недоступен. Нажмите кнопку.',en:'Auto-stop unavailable. Use the stop button.'})[language]}</p>}
                 {/* Smooth Mic animation */}
                 <div style={{ position: 'relative', width: 96, height: 96, margin: '0 auto 24px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1040,7 +1025,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                     />
                   )}
                   <motion.div
-                    animate={recording ? { scale: [1, 1.06, 1] } : {}}
+                    animate={recording && !reducedMotion ? { scale: [1, 1.06, 1] } : {}}
                     transition={{ repeat: Infinity, duration: 1.2, ease: "easeInOut" }}
                     style={{
                       width: 96, height: 96, borderRadius: '50%',
@@ -1062,7 +1047,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                   {[16, 24, 18, 26, 14].map((h, i) => (
                     <motion.div
                       key={i}
-                      animate={recording ? { height: [10, h, 10] } : { height: 10 }}
+                      animate={recording && !reducedMotion ? { height: [10, h, 10] } : { height: 10 }}
                       transition={{ repeat: Infinity, duration: 0.8, delay: i * 0.12, ease: "easeInOut" }}
                       style={{
                         width: 4,
@@ -1087,6 +1072,10 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
               </div>
             )}
 
+            {!saved&&!isProcessing&&step==='assistant'&&assistantReply&&<>
+              <AssistantReview key={reviewKey} draftId={assistantDraftId} reply={assistantReply} onAsk={(text,actions)=>requestAssistant(text+'\nFormadagi joriy ma’lumotlar: '+JSON.stringify(actions))} onBusy={setIsSaving} onDone={finishAssistant}/>
+              {aiError&&<p role="alert" style={{color:'#DC2626'}}>{aiError}</p>}
+            </>}
             {/* Step: form */}
             {!saved && !isProcessing && step === 'form' && (
               <>

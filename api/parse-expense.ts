@@ -1,3 +1,4 @@
+import {parseAssistant} from './_assistantParser.js';
 import {debtPrincipalText,withDebtDetails} from '../shared/debts.js';
 import {audioMime,parseFinancialAudio} from './_audioParser.js';
 import {generateBounded,tryNextModel} from './_aiCall.js';
@@ -33,6 +34,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const { text, userId, base64Audio } = req.body || {};
+    if (req.body?.mode === 'assistant') {
+      const caller=await requireEligibleCaller(req,res);if(!caller)return;
+      if(userId && userId!==caller.userId)return res.status(403).json({error:'USER_MISMATCH'});
+      let audio:Buffer|undefined;
+      if(base64Audio!==undefined){
+        if(typeof base64Audio!=='string'||base64Audio.length>3*1024*1024||!/^[A-Za-z0-9+/]+={0,2}$/.test(base64Audio))return res.status(400).json({error:'INVALID_AUDIO'});
+        audio=Buffer.from(base64Audio,'base64');if(!audioMime(audio))return res.status(400).json({error:'INVALID_AUDIO'});
+      }else if(typeof text!=='string'||!text.trim()||text.length>4000)return res.status(400).json({error:'INVALID_TEXT'});
+      const quota=await checkAndRecordAiUsage(caller.userId,audio?'voice':'text',audio?'Audio':text,'mini_app');
+      if(!quota.allowed)return res.status(quota.statusCode||429).json({error:quota.code,message:quota.message});
+      try{return res.status(200).json(await parseAssistant({text,audio,history:req.body.history},caller.userDoc));}
+      catch{return res.status(503).json({error:'AI_PARSING_UNAVAILABLE'});}
+    }
     if (base64Audio !== undefined) {
       const caller=await requireEligibleCaller(req,res);
       if(!caller)return;
