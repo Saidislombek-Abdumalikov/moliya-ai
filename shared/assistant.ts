@@ -44,8 +44,14 @@ export function cleanCategoryPreferences(value: unknown): CategoryPreference[] {
     )
 }
 export function normalizeAssistantReply(raw: any): AssistantReply {
-  if (!raw || !Array.isArray(raw.actions) || raw.actions.length > 10)
+  if (!raw || !Array.isArray(raw.actions))
     throw Error("INVALID_AI_RESPONSE")
+  if (raw.actions.length > 1) return {
+    actions: [],
+    message: 'Iltimos, bir safarda faqat bitta tranzaksiya yuboring.',
+    question: '',
+    transcription: String(raw.transcription || '').slice(0, 4000),
+  }
   const actions = raw.actions.map((x: any): AssistantAction => {
     if (
       ![

@@ -314,7 +314,7 @@ export default function DebtsHub() {
                     else close()
                   }}
                 >
-                  ←
+                  Ro‘yxat
                 </button>
                 <strong>
                   {tx

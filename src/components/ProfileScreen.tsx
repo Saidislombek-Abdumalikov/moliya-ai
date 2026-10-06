@@ -1078,7 +1078,12 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
         <h3 style={{fontSize:14,fontWeight:600,color:'#1E1A3C',marginBottom:12}}>{lang==='en'?'Settings':lang==='ru'?'Настройки':lang==='uz_cyrl'?'Созламалар':'Sozlamalar'}</h3>
         <label style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,fontSize:13,color:'#766E9E'}}>
           {lang==='en'?'Send audio after 1 second of silence':lang==='ru'?'Отправлять после 1 секунды тишины':lang==='uz_cyrl'?'1 сония сукутдан кейин овозни юбориш':'1 soniya sukutdan keyin ovozni yuborish'}
-          <input type="checkbox" role="switch" checked={onboarding?.voice_auto_send===true} onChange={async e=>{try{await onUpdateOnboarding?.({voice_auto_send:e.target.checked})}catch{setToastMessage('Sozlama saqlanmadi.')}}} style={{accentColor:'#7C3AED',width:20,height:20,flexShrink:0}}/>
+          <span className="voice-auto-switch" style={{position:'relative',display:'inline-flex',flexShrink:0,width:52,height:30}}>
+            <input type="checkbox" role="switch" aria-label="1 soniyadan keyin avtomatik yuborish" checked={onboarding?.voice_auto_send===true} onChange={async e=>{try{await onUpdateOnboarding?.({voice_auto_send:e.target.checked})}catch{setToastMessage('Sozlama saqlanmadi.')}}} style={{position:'absolute',inset:0,width:'100%',height:'100%',margin:0,opacity:0,zIndex:1,cursor:'pointer'}}/>
+            <span aria-hidden="true" style={{width:52,height:30,borderRadius:30,background:onboarding?.voice_auto_send?'#7C3AED':'#DCD7EA',boxShadow:'inset 0 1px 3px #00000012',transition:'background 180ms'}}>
+              <span style={{display:'block',width:24,height:24,margin:3,borderRadius:'50%',background:'#fff',boxShadow:'0 2px 5px #00000020',transform:onboarding?.voice_auto_send?'translateX(22px)':'translateX(0)',transition:'transform 180ms'}}/>
+            </span>
+          </span>
         </label>
         <label style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,fontSize:13,color:'#766E9E',marginTop:16}}>Tasdiqlangan kategoriya tuzatishlarini eslab qolish<input type="checkbox" checked={onboarding?.remember_categories===true} onChange={async e=>{try{await onUpdateOnboarding?.({remember_categories:e.target.checked})}catch{setToastMessage('Sozlama saqlanmadi.')}}} style={{accentColor:'#7C3AED',width:20,height:20}}/></label>
       </section>

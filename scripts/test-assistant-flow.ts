@@ -206,7 +206,8 @@ const multi = await call({
   text: "Alidan 100 ming oldim, taksiga 20 ming berdim",
 })
 assert.equal(multi.statusCode, 200)
-assert.equal(multi.body.actions.length, 2)
+assert.equal(multi.body.actions.length, 0)
+assert.match(multi.body.message, /faqat bitta/)
 assert.equal(writes, 0)
 assert.equal(providerCalls, 1)
 assert.equal(quotaCalls, 1)
@@ -317,6 +318,16 @@ assert.equal(
     .phrase,
   "wifi",
 )
+// Multi-action audio and bot requests never expose a confirmation for any item.
+modelReply={actions:[base,{...base,kind:'income',title:'Maosh'}],message:'',question:''};
+const audioMulti=await call({mode:'assistant',base64Audio:wav.toString('base64')});
+assert.equal(audioMulti.body.actions.length,0);
+assert.match(audioMulti.body.message,/faqat bitta/);
+const botMulti=await botAssistant(uid,123,17,{text:'taksi 20 ming va maosh 1 million'},'https://example.test');
+assert.match(botMulti.text,/faqat bitta/);
+assert.doesNotMatch(JSON.stringify(botMulti.keyboard)||'',/txok_|asok_/);
+assert.equal(user.transactions.length,0);
+assert.equal(user.onboarding.planned_payments,undefined);
 // Bot plan staging does not write transactions. Confirmation and replay remain scoped.
 modelReply = {
   actions: [
@@ -355,5 +366,5 @@ await assert.rejects(
   /ACCOUNT_NOT_ELIGIBLE/,
 )
 console.log(
-  "Assistant contract passed: flexible/multi-action requests, missing amounts/dates, original currency, history, authenticated audio, shared quota, no parser writes, preference isolation, bot plan confirmation and replay. Gemini/Telegram were mocked; no live calls.",
+  "Assistant contract passed: flexible/single-action requests and multi-action rejection, missing amounts/dates, original currency, history, authenticated audio, shared quota, no parser writes, preference isolation, bot plan confirmation and replay. Gemini/Telegram were mocked; no live calls.",
 )

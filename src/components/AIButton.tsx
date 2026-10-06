@@ -1,5 +1,5 @@
 import AssistantReview from './AssistantReview';
-import {normalizeAssistantReply,type AssistantReply} from '../../shared/assistant';
+import {normalizeAssistantReply,cleanCategoryPreferences,type AssistantReply} from '../../shared/assistant';
 import {debtRelationships,debtPersonLabel} from '../../shared/debtPeople';
 import {debtPrincipalText,validDay,reminderPromise} from '../../shared/debts';
 import {prepareSilenceMonitor} from '../voiceSilence';
@@ -100,13 +100,14 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
   const serviceMessage = ({uz:'AI xizmatidan javob kelmadi. Birozdan so‘ng qayta urinib ko‘ring.',uz_cyrl:'AI хизматидан жавоб келмади. Бироздан сўнг қайта уриниб кўринг.',ru:'Сервис ИИ не ответил. Попробуйте немного позже.',en:'The AI service did not respond. Please try again shortly.'})[language];
   const restrictedMessage = ({uz:'Hisobga kirish cheklangan. Botdagi tasdiqlarni tekshiring.',uz_cyrl:'Ҳисобга кириш чекланган. Ботдаги тасдиқларни текширинг.',ru:'Доступ ограничен. Проверьте подтверждения в боте.',en:'Access restricted. Check your verification in the bot.'})[language];
   const typeIndex = (type: EntryType) => (Object.keys(typeConfig) as EntryType[]).indexOf(type)
-  const { addTransaction, hasSampleData, setHasSampleData, cards, userId,customTransactions,onboarding } = useFinance()
+  const { addTransaction, hasSampleData, setHasSampleData, cards, userId,customTransactions,onboarding,updateOnboarding } = useFinance()
   const [open, setOpen] = useState(false)
   const [step, setStep] = useState<'type' | 'form' | 'voice' | 'done' | 'removeSamples' | 'assistant'>('type')
   const [assistantReply,setAssistantReply]=useState<AssistantReply|null>(null);
   const [assistantHistory,setAssistantHistory]=useState<Array<{role:string;content:string}>>([]);
   const [assistantDraftId,setAssistantDraftId]=useState<string|undefined>();
   const openedDraft=useRef('');
+  const saveId=useRef<string>('');
   const [reviewKey,setReviewKey]=useState(0);
   const [selectedType, setSelectedType] = useState<EntryType>('expense')
   const reducedMotion=useReducedMotion();
@@ -218,11 +219,23 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
     streamRef.current?.getTracks().forEach(track=>track.stop())
   }, [])
 
+  const showAssistant = (reply: AssistantReply) => {
+    setAssistantReply(reply);setReviewKey(k=>k+1);
+    const a=reply.actions[0];
+    if(!a){setAiError(reply.question||reply.message);setStep('type');return;}
+    if(a.currency==='UZS' && ['expense','income','debt','lending'].includes(a.kind)){
+      const type=a.kind as EntryType;
+      setSelectedType(type);
+      setEntry({type,amount:a.amount===null?'':String(a.amount),category:a.category,title:a.title,note:a.title,date:a.date? a.date+'T12:00':'',cardId:'cash',debtWho:a.person,debtDueDate:a.dueDate,debtDateConfirmed:!!a.dueDate||a.dueUnknown});
+      setAiError(reply.question);setStep('form');
+    }else setStep('assistant');
+  };
+
   useEffect(()=>{
     const draft=onboarding?.assistant_draft;
     const wanted=new URLSearchParams(location.search).get('assistant');
     if(!draft||draft.id!==wanted||openedDraft.current===draft.id)return;
-    openedDraft.current=draft.id;setAssistantDraftId(draft.id);setAssistantReply(draft.reply);setReviewKey(k=>k+1);setAssistantHistory([{role:'assistant',content:JSON.stringify(draft.reply)}]);setSaved(false);setStep('assistant');setOpen(true);
+    openedDraft.current=draft.id;setAssistantDraftId(draft.id);showAssistant(normalizeAssistantReply(draft.reply));setAssistantHistory([{role:'assistant',content:JSON.stringify(draft.reply)}]);setSaved(false);setOpen(true);
   },[onboarding?.assistant_draft?.id]);
   const finishAssistant=()=>{
     if(assistantDraftId)void fetch('/api/auth/sync-data',{method:'POST',headers:getClientAuthHeaders(),body:JSON.stringify({clearAssistantDraft:assistantDraftId})});
@@ -232,7 +245,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
   if (!visible) return null
 
   const openModal = () => {
-    voiceTypeOverride.current=null;setSelectedType('expense');
+    saveId.current='ai_'+crypto.randomUUID();voiceTypeOverride.current=null;setSelectedType('expense');
     setAssistantDraftId(undefined);setAssistantReply(null);setAssistantHistory([]);
     setStep('type')
     const localISOTime = (new Date(Date.now() - new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 16)
@@ -252,6 +265,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
   }
 
   const selectType = (t: EntryType) => {
+    setAssistantReply(null);setAiError('');
     setSelectedType(t)
     setEntry((e) => ({ ...e, type: t, category: categories[t][0] }))
     setStep('form')
@@ -271,9 +285,8 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
       if(!response.ok)throw Error('AI_SERVICE_UNAVAILABLE');
       const reply=normalizeAssistantReply(await response.json());
       if(generation!==voiceGeneration.current)return;
-      setAssistantReply(reply);setReviewKey(k=>k+1);
+      showAssistant(reply);
       setAssistantHistory(h=>[...h,{role:'user',content:text},{role:'assistant',content:JSON.stringify(reply)}].slice(-8));
-      setStep('assistant');
     }catch(e:any){if(generation!==voiceGeneration.current)return;setAiError(e.message==='SESSION_REQUIRED'?sessionMessage:e.message==='ACCOUNT_RESTRICTED'?restrictedMessage:e.message==='AI_QUOTA'?copy.quota:e.message==='AI_RATE_LIMIT'?copy.throttle:serviceMessage);}
     finally{clearTimeout(timeout);if(generation===voiceGeneration.current)setIsProcessing(false);}
   };
@@ -351,9 +364,8 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
           if(!response.ok)throw new Error('AUDIO_UNCLEAR')
           const reply=normalizeAssistantReply(await response.json());
           if(voiceTypeOverride.current&&reply.actions.length===1&&['expense','income','debt','lending'].includes(reply.actions[0].kind))reply.actions[0].kind=voiceTypeOverride.current;
-          setAssistantReply(reply);setReviewKey(k=>k+1);setAiText(reply.transcription);
+          showAssistant(reply);setAiText(reply.transcription);
           setAssistantHistory(h=>[...h,{role:'user',content:reply.transcription},{role:'assistant',content:JSON.stringify(reply)}].slice(-8));
-          setStep('assistant');
         }catch(error:any){
           if(generation!==voiceGeneration.current)return
           setEntry(prev=>({...prev,amount:''}))
@@ -393,13 +405,15 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
       }
     }
 
+    if(assistantReply?.actions.length && !validDay(String(entry.date||'').slice(0,10))){setAiError('Sanani kiriting.');return;}
     let numAmount = readMoneyInput(entry.amount)
     if(numAmount===null){setAiError(copy.clarify);return}
     if(['debt','lending'].includes(entry.type)){
       if(!entry.debtWho?.trim()){setAiError('Kim bilan qarz? Ismni kiriting.');return;}
       if(!entry.debtDateConfirmed || (entry.debtDueDate && !validDay(entry.debtDueDate))){setAiError('Qaytarish sanasini tanlang yoki “Hali kelishilmagan”ni bosing.');return;}
     }
-    const now = Date.now()
+    if(!saveId.current)saveId.current='ai_'+crypto.randomUUID();
+    const now = assistantDraftId ? 'assistant_'+assistantDraftId+'_0' : saveId.current
 
     if (entry.type === 'expense' || entry.type === 'lending') {
       numAmount = -Math.abs(numAmount)
@@ -424,13 +438,19 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
     setAiError('')
     try {
       // 1. Authoritative backend/Supabase persistence must complete BEFORE success
-      await addTransaction(customTx)
+      if(!customTransactions.some(t=>String(t.id)===String(customTx.id)))await addTransaction(customTx)
 
+      const original=assistantReply?.actions[0];
+      if(original && onboarding?.remember_categories && original.category!==entry.category && entry.category.trim()){
+        const phrase=original.title.trim().toLowerCase();
+        if(phrase)try{await updateOnboarding({category_preferences:cleanCategoryPreferences([...(onboarding.category_preferences||[]).filter(p=>p.phrase!==phrase),{phrase,category:entry.category}])});}catch{/* The confirmed transaction must not be retried for a preference failure. */}
+      }
       if (hasSampleData) {
         await setHasSampleData(false)
       }
 
       // 2. Database confirmed success: show celebratory card and auto-dismiss
+      if(assistantDraftId)void fetch('/api/auth/sync-data',{method:'POST',headers:getClientAuthHeaders(),body:JSON.stringify({clearAssistantDraft:assistantDraftId})});
       setSaved(true)
       setTimeout(() => {
         closeModal()
@@ -519,43 +539,6 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
             }}
           >
             <SwipeSheet className="ai-restored-sheet" onDismiss={closeModal} locked={isProcessing || isSaving || recording || voiceStarting}
-              scrollBody
-              footer={!saved && !isProcessing && step==='form' ? (
-                <div style={{ display: 'flex', gap: 10, paddingTop: 0, paddingBottom: 2 }}>
-                  <button
-                    disabled={voiceStarting || isSaving}
-                    onClick={startVoice}
-                    style={{
-                      width: 48, height: 48, borderRadius: 14, flexShrink: 0,
-                      border: '1.5px solid #E8E3F8', background: '#F7F5FF',
-                      cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    }}
-                  >
-                    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                      <rect x="6" y="1" width="6" height="10" rx="3" fill="#7C3AED" fillOpacity="0.8" />
-                      <path d="M3 9C3 12.3 5.7 15 9 15C12.3 15 15 12.3 15 9" stroke="#7C3AED" strokeWidth="1.5" strokeLinecap="round" />
-                      <line x1="9" y1="15" x2="9" y2="17" stroke="#7C3AED" strokeWidth="1.5" strokeLinecap="round" />
-                    </svg>
-                  </button>
-                  <button
-                    onClick={handleSave}
-                    id="ai_save_transaction"
-                    disabled={readMoneyInput(entry.amount)===null || isSaving}
-                    style={{
-                      flex: 1, padding: '14px',
-                      borderRadius: 14, border: 'none',
-                      background: (readMoneyInput(entry.amount)===null || isSaving) ? '#EDE9FE' : '#7C3AED',
-                      color: (readMoneyInput(entry.amount)===null || isSaving) ? '#8B82C4' : '#fff',
-                      fontSize: 15, fontWeight: 600, fontFamily: 'inherit',
-                      cursor: (readMoneyInput(entry.amount)===null || isSaving) ? 'default' : 'pointer',
-                      boxShadow: (readMoneyInput(entry.amount)!==null && !isSaving) ? '0 4px 16px rgba(124, 58, 237, 0.3)' : 'none',
-                    }}
-                  >
-                    {isSaving
-                      ? (language === 'uz' ? 'Saqlanmoqda...' : language === 'uz_cyrl' ? 'Сақланмоқда...' : language === 'ru' ? 'Сохранение...' : 'Saving...')
-                      : (language === 'uz' ? 'Saqlash' : language === 'uz_cyrl' ? 'Сақлаш' : language === 'ru' ? 'Сохранить' : 'Save')}
-                  </button>
-                </div>) : undefined}
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
@@ -568,14 +551,14 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                 overflowY: 'auto',
                 background: '#FFFFFF',
                 borderRadius: '28px 28px 0 0',
-                padding: '14px 20px max(12px, env(safe-area-inset-bottom, 0px))',
+                padding: '16px 20px calc(48px + env(safe-area-inset-bottom, 24px))',
                 boxShadow: '0 -10px 40px rgba(0,0,0,0.15)',
                 position: 'relative',
               }}
             >
               {/* Header Handle Bar with Close Button */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-                <button aria-label="Orqaga" onClick={()=>{if(!recording&&!isProcessing&&!isSaving)setStep('type')}} style={{border:0,background:'#F5F4FA',borderRadius:10,width:32,height:32}}>←</button>
+                <div style={{ width: 28 }} />
                 <div />
                 <button
                   onClick={closeModal}
@@ -972,37 +955,6 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
               </>
             )}
 
-            {!saved && step === 'voice' && <>
-                {/* Type switcher */}
-                <div style={{ display: 'flex', gap: 6, marginBottom: 18, overflowX: 'auto' }}>
-                  {(Object.keys(typeConfig) as EntryType[]).map((t) => {
-                    const c = typeConfig[t]
-                    const active = selectedType === t
-                    return (
-                      <button
-                        key={t}
-                        onClick={() => { voiceTypeOverride.current=t; setSelectedType(t) }}
-                        style={{
-                          flexShrink: 0,
-                          padding: '7px 14px',
-                          borderRadius: 20,
-                          border: `1.5px solid ${active ? c.color : '#E8E3F8'}`,
-                          background: active ? c.bg : 'transparent',
-                          color: active ? c.color : '#8B82C4',
-                          fontSize: 13,
-                          fontWeight: active ? 600 : 400,
-                          fontFamily: 'inherit',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        {copy.types[typeIndex(t)]}
-                      </button>
-                    )
-                  })}
-                </div>
-
-            </>}
-
             {/* Step: voice recording */}
             {!saved && !isProcessing && step === 'voice' && (
               <div style={{ textAlign: 'center', padding: '10px 0 20px' }}>
@@ -1080,7 +1032,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
             {!saved && !isProcessing && step === 'form' && (
               <>
                 {/* Type switcher */}
-                <div style={{ display: 'flex', gap: 6, marginBottom: 18, overflowX: 'auto' }}>
+                <div style={{ display: 'flex', gap: 6, marginBottom: 20, overflowX: 'auto' }}>
                   {(Object.keys(typeConfig) as EntryType[]).map((t) => {
                     const c = typeConfig[t]
                     const active = selectedType === t
@@ -1116,8 +1068,8 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                     transition={{ duration: 0.15 }}
                   >
                     {/* Amount */}
-                    <div style={{ marginBottom: 12 }}>
-                      <label style={{ fontSize: 12, color: '#8B82C4', fontWeight: 500, display: 'block', marginBottom: 4 }}>{copy.amount}</label>
+                    <div style={{ marginBottom: 14 }}>
+                      <label style={{ fontSize: 12, color: '#8B82C4', fontWeight: 500, display: 'block', marginBottom: 6 }}>{copy.amount}</label>
                   <input
                     type="text"
                     inputMode="decimal"
@@ -1159,8 +1111,8 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
               </div>}
 
                 {/* Category */}
-                <div style={{ marginBottom: 12 }}>
-                  <label style={{ fontSize: 12, color: '#8B82C4', fontWeight: 500, display: 'block', marginBottom: 4 }}>{copy.category}</label>
+                <div style={{ marginBottom: 14 }}>
+                  <label style={{ fontSize: 12, color: '#8B82C4', fontWeight: 500, display: 'block', marginBottom: 6 }}>{copy.category}</label>
                   <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 4 }}>
                     {categories[selectedType].map((cat) => {
                       // Xaritalangan emojilar
@@ -1214,7 +1166,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                 </div>
 
                 {/* Account Selection */}
-                <div style={{ marginBottom: 12 }}>
+                <div style={{ marginBottom: 14 }}>
                   <label style={{ fontSize: 12, color: '#8B82C4', fontWeight: 500, display: 'block', marginBottom: 4 }}>
                     {copy.account}
                   </label>
@@ -1223,7 +1175,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                     onChange={(e) => setEntry((prev) => ({ ...prev, cardId: e.target.value }))}
                     style={{
                       width: '100%',
-                      padding: '14px 20px',
+                      padding: '16px 20px',
                       borderRadius: 20,
                       border: '1px solid rgba(124, 58, 237, 0.15)',
                       background: 'linear-gradient(145deg, #FFFFFF, #F8F7FC)',
@@ -1244,8 +1196,8 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                 </div>
 
                 {/* Date Selection */}
-                <div style={{ marginBottom: 12 }}>
-                  <label style={{ fontSize: 12, color: '#8B82C4', fontWeight: 500, display: 'block', marginBottom: 4 }}>{copy.date}</label>
+                <div style={{ marginBottom: 14 }}>
+                  <label style={{ fontSize: 12, color: '#8B82C4', fontWeight: 500, display: 'block', marginBottom: 6 }}>{copy.date}</label>
                   <input
                     type="datetime-local"
                     value={(() => {
@@ -1265,7 +1217,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                     onChange={(e) => setEntry((prev) => ({ ...prev, date: e.target.value }))}
                     style={{
                       width: '100%',
-                      padding: '14px 20px',
+                      padding: '16px 20px',
                       borderRadius: 20,
                       border: '1px solid rgba(124, 58, 237, 0.15)',
                       background: 'linear-gradient(145deg, #FFFFFF, #F8F7FC)',
@@ -1289,8 +1241,8 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                 </div>
 
                 {/* Note */}
-                <div style={{ marginBottom: 18 }}>
-                  <label style={{ fontSize: 12, color: '#8B82C4', fontWeight: 500, display: 'block', marginBottom: 4 }}>{copy.note}</label>
+                <div style={{ marginBottom: 20 }}>
+                  <label style={{ fontSize: 12, color: '#8B82C4', fontWeight: 500, display: 'block', marginBottom: 6 }}>{copy.note}</label>
                   <input
                     type="text"
                     placeholder={copy.optional}
@@ -1298,7 +1250,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                     onChange={(e) => setEntry((prev) => ({ ...prev, note: e.target.value }))}
                     style={{
                       width: '100%',
-                      padding: '14px 20px',
+                      padding: '16px 20px',
                       borderRadius: 20,
                       border: '1px solid rgba(124, 58, 237, 0.15)',
                       background: 'linear-gradient(145deg, #FFFFFF, #F8F7FC)',
@@ -1322,6 +1274,41 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                 </div>
 
 
+<div style={{ display: 'flex', gap: 10, paddingTop: 8, paddingBottom: 24 }}>
+                  <button
+                    disabled={voiceStarting || isSaving}
+                    onClick={startVoice}
+                    style={{
+                      width: 48, height: 48, borderRadius: 14, flexShrink: 0,
+                      border: '1.5px solid #E8E3F8', background: '#F7F5FF',
+                      cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                      <rect x="6" y="1" width="6" height="10" rx="3" fill="#7C3AED" fillOpacity="0.8" />
+                      <path d="M3 9C3 12.3 5.7 15 9 15C12.3 15 15 12.3 15 9" stroke="#7C3AED" strokeWidth="1.5" strokeLinecap="round" />
+                      <line x1="9" y1="15" x2="9" y2="17" stroke="#7C3AED" strokeWidth="1.5" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={handleSave}
+                    id="ai_save_transaction"
+                    disabled={readMoneyInput(entry.amount)===null || isSaving}
+                    style={{
+                      flex: 1, padding: '14px',
+                      borderRadius: 14, border: 'none',
+                      background: (readMoneyInput(entry.amount)===null || isSaving) ? '#EDE9FE' : '#7C3AED',
+                      color: (readMoneyInput(entry.amount)===null || isSaving) ? '#8B82C4' : '#fff',
+                      fontSize: 15, fontWeight: 600, fontFamily: 'inherit',
+                      cursor: (readMoneyInput(entry.amount)===null || isSaving) ? 'default' : 'pointer',
+                      boxShadow: (readMoneyInput(entry.amount)!==null && !isSaving) ? '0 4px 16px rgba(124, 58, 237, 0.3)' : 'none',
+                    }}
+                  >
+                    {isSaving
+                      ? (language === 'uz' ? 'Saqlanmoqda...' : language === 'uz_cyrl' ? 'Сақланмоқда...' : language === 'ru' ? 'Сохранение...' : 'Saving...')
+                      : (language === 'uz' ? 'Saqlash' : language === 'uz_cyrl' ? 'Сақлаш' : language === 'ru' ? 'Сохранить' : 'Save')}
+                  </button>
+                </div>
                 {aiError && (
                   <p style={{ fontSize: 13, color: '#DC2626', marginTop: -14, marginBottom: 16, textAlign: 'center' }}>{aiError}</p>
                 )}

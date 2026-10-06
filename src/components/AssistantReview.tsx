@@ -198,31 +198,16 @@ export default function AssistantReview({
           key={ids.current[i]}
           disabled={busy || done.includes(i)}
           style={{
-            border: "1px solid #E8E3F8",
+            border: 0,
             borderRadius: 20,
-            padding: 16,
+            padding: 0,
             marginBottom: 16,
             minWidth: 0,
           }}
         >
           <legend style={{ fontSize: 13, color: "#7C3AED" }}>
-            {i + 1}. {labels[a.kind]} {done.includes(i) ? "✓ Saqlandi" : ""}
+            {labels[a.kind]} {done.includes(i) ? "✓ Saqlandi" : ""}
           </legend>
-          <label>
-            Amal
-            <select
-              value={a.kind}
-              onChange={(e) =>
-                patch(i, { kind: e.target.value as AssistantAction["kind"] })
-              }
-            >
-              {Object.entries(labels).map(([k, v]) => (
-                <option key={k} value={k}>
-                  {v}
-                </option>
-              ))}
-            </select>
-          </label>
           <label>
             Nomi / izoh
             <input
@@ -399,7 +384,7 @@ export default function AssistantReview({
           )}
         </fieldset>
       ))}
-      {!done.length && (
+      {!done.length && !!reply.question && (
         <form
           onSubmit={(e) => {
             e.preventDefault()
