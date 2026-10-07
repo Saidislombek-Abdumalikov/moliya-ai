@@ -1,8 +1,10 @@
+import { AnimatePresence, motion } from 'motion/react'
 import { useState, useRef } from "react"
 import { useFinance } from "../FinanceContext"
 import SwipeSheet from "./SwipeSheet"
 import {
   cleanPlannedPayments,
+  editedPaymentAnchor,
   nextPayment,
   type PlannedPayment,
 } from "../../shared/plannedPayments"
@@ -183,7 +185,7 @@ export default function UpcomingPayments() {
             }}
           >
             <strong style={{ fontSize: 13, overflowWrap: "anywhere" }}>
-              {p.title}
+              {p.repeat==='monthly'?'🔁':p.repeat==='weekly'?'📅':'🧾'} {p.title}
             </strong>
             <span style={{ fontSize: 13, whiteSpace: "nowrap" }}>
               {p.amount.toLocaleString("en-US").replace(/,/g, " ")} so‘m
@@ -246,53 +248,15 @@ export default function UpcomingPayments() {
           </div>
         </div>
       ))}
-      {(open || pay) && (
-        <div className="planned-overlay">
+      <AnimatePresence>{(open || pay) && (
+        <motion.div className="finance-popup-overlay" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} onClick={()=>{if(!busy){setOpen(false);setPay(null)}}}>
           <SwipeSheet
-            locked={busy}
-            onDismiss={() => {
-              setOpen(false)
-              setPay(null)
-            }}
-            style={{
-              background: "white",
-              borderRadius: 24,
-              padding: 20,
-              width: "100%",
-              maxWidth: 430,
-              maxHeight: "85dvh",
-            }}
-            scrollBody
-          >
-            {pay ? (
-              <>
-                <h3>{words[10]}</h3>
-                <p style={{ margin: "14px 0" }}>
-                  {pay.title} — {pay.amount.toLocaleString()} so‘m
-                </p>
-                <select
-                  aria-label={lang === "en" ? "Account" : "Hisob"}
-                  value={cardId}
-                  onChange={(e) => setCardId(e.target.value)}
-                >
-                  <option value="cash">
-                    {lang === "en"
-                      ? "Cash"
-                      : lang === "ru"
-                        ? "Наличные"
-                        : lang === "uz_cyrl"
-                          ? "Нақд"
-                          : "Naqd"}
-                  </option>
-                  {cards.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.bank} · {c.number.slice(-4)}
-                    </option>
-                  ))}
-                </select>
-                <button
+            className="ai-restored-sheet ai-debt-fields"
+            initial={{y:'100%'}} animate={{y:0}} exit={{y:'100%'}} transition={{type:'spring',damping:26,stiffness:220}}
+            onClick={e=>e.stopPropagation()}
+            footer={pay ? (                <button
                   disabled={busy}
-                  className="planned-button"
+                  className="finance-popup-primary"
                   onClick={() =>
                     run(async () => {
                       const id = `planned_${pay.id}_${pay.dueDate}`
@@ -317,10 +281,54 @@ export default function UpcomingPayments() {
                   }
                 >
                   {words[11]}
-                </button>
+                </button>) : <button disabled={busy} className="finance-popup-primary" type="submit" form="planned-payment-form">{words[8]}</button>}
+            locked={busy}
+            onDismiss={() => {
+              setOpen(false)
+              setPay(null)
+            }}
+            style={{
+              background: "white",
+              borderRadius: "28px 28px 0 0",
+              padding: "16px 20px max(12px, env(safe-area-inset-bottom))",
+              width: "100%",
+              maxWidth: "var(--app-max-width,440px)",
+              maxHeight: "92dvh",
+              boxShadow:"0 -10px 40px #00000026",
+            }}
+            scrollBody
+          >
+            <div className="finance-popup-heading"><h3>{pay?'✅':'🗓️'} {pay?words[10]:words[0]}</h3><button className="finance-popup-close" disabled={busy} aria-label={words[12]} onClick={()=>{setOpen(false);setPay(null)}}>✕</button></div>
+            {pay ? (
+              <>
+
+                <p style={{ margin: "14px 0" }}>
+                  {pay.title} — {pay.amount.toLocaleString()} so‘m
+                </p>
+                <select
+                  aria-label={lang === "en" ? "Account" : "Hisob"}
+                  value={cardId}
+                  onChange={(e) => setCardId(e.target.value)}
+                >
+                  <option value="cash">
+                    {lang === "en"
+                      ? "Cash"
+                      : lang === "ru"
+                        ? "Наличные"
+                        : lang === "uz_cyrl"
+                          ? "Нақд"
+                          : "Naqd"}
+                  </option>
+                  {cards.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.bank} · {c.number.slice(-4)}
+                    </option>
+                  ))}
+                </select>
+
               </>
             ) : (
-              <form
+              <form id="planned-payment-form"
                 onSubmit={(e) => {
                   e.preventDefault()
                   run(async () => {
@@ -331,6 +339,7 @@ export default function UpcomingPayments() {
                         amount: Number(amount),
                         dueDate: date,
                         repeat,
+                        anchorDay: editedPaymentAnchor(plans.find(p=>p.id===editId),date,repeat),
                       },
                     ])[0]
                     if (!p || (!editId && plans.length >= 100))
@@ -346,7 +355,7 @@ export default function UpcomingPayments() {
                   })
                 }}
               >
-                <h3>{words[0]}</h3>
+
                 <label>
                   {words[2]}
                   <input
@@ -369,6 +378,7 @@ export default function UpcomingPayments() {
                     onChange={(e) => setAmount(e.target.value)}
                   />
                 </label>
+                <div className="finance-fields-row">
                 <label>
                   {words[4]}
                   <input
@@ -378,7 +388,7 @@ export default function UpcomingPayments() {
                     onChange={(e) => setDate(e.target.value)}
                   />
                 </label>
-                <select
+                <label>{words[repeat==='none'?5:repeat==='weekly'?6:7]}<select
                   aria-label={words[5]}
                   value={repeat}
                   onChange={(e) =>
@@ -391,29 +401,16 @@ export default function UpcomingPayments() {
                     </option>
                   ))}
                 </select>
-                <button
-                  disabled={busy}
-                  className="planned-button"
-                  type="submit"
-                >
-                  {words[8]}
-                </button>
+                </label></div>
+
+
               </form>
             )}
             {error && <p role="alert">{error}</p>}
-            <button
-              disabled={busy}
-              className="planned-button"
-              onClick={() => {
-                setOpen(false)
-                setPay(null)
-              }}
-            >
-              {words[12]}
-            </button>
+
           </SwipeSheet>
-        </div>
-      )}
+        </motion.div>
+      )}</AnimatePresence>
     </section>
   )
 }

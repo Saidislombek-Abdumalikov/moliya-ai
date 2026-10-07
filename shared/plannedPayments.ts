@@ -63,3 +63,9 @@ export function nextPayment(p: PlannedPayment): PlannedPayment | null {
   }
   return { ...p, dueDate: d.toISOString().slice(0, 10) }
 }
+
+// Preserve a monthly anchor after February/short-month clamping when editing other fields.
+export function editedPaymentAnchor(previous: PlannedPayment | undefined, dueDate: string, repeat: PlannedPayment['repeat']): number | undefined {
+  return previous?.repeat === 'monthly' && repeat === 'monthly' && previous.dueDate === dueDate
+    ? previous.anchorDay : undefined;
+}

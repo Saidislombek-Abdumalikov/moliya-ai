@@ -1,3 +1,4 @@
+import ProfileSettings from './ProfileSettings';
 import SwipeSheet from './SwipeSheet';
 import {installCompleted,telegramInstallBlocked} from '../installPrompt'
 import { useState, useEffect } from 'react'
@@ -503,7 +504,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
 
   // Modal States
   const [activeModal, setActiveModal] = useState<
-    'edit' | 'premium' | 'notifications' | 'security' | 'payments' | 'lang' | 'export' | 'help' | 'clearConfirm' | 'clearDataOnly' | 'logout_confirm' | 'privacy_policy' | null
+    'settings' | 'edit' | 'premium' | 'notifications' | 'security' | 'payments' | 'lang' | 'export' | 'help' | 'clearConfirm' | 'clearDataOnly' | 'logout_confirm' | 'privacy_policy' | null
   >(null)
 
   // Transient Toast state
@@ -1074,19 +1075,6 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
         )}
       </motion.div>
 
-      <section style={{margin:'0 20px 20px',padding:16,borderRadius:20,border:'1.5px solid #E4E1F4',background:'#FAF9FD'}}>
-        <h3 style={{fontSize:14,fontWeight:600,color:'#1E1A3C',marginBottom:12}}>{lang==='en'?'Settings':lang==='ru'?'Настройки':lang==='uz_cyrl'?'Созламалар':'Sozlamalar'}</h3>
-        <label style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,fontSize:13,color:'#766E9E'}}>
-          {lang==='en'?'Send audio after 1 second of silence':lang==='ru'?'Отправлять после 1 секунды тишины':lang==='uz_cyrl'?'1 сония сукутдан кейин овозни юбориш':'1 soniya sukutdan keyin ovozni yuborish'}
-          <span className="voice-auto-switch" style={{position:'relative',display:'inline-flex',flexShrink:0,width:52,height:30}}>
-            <input type="checkbox" role="switch" aria-label="1 soniyadan keyin avtomatik yuborish" checked={onboarding?.voice_auto_send===true} onChange={async e=>{try{await onUpdateOnboarding?.({voice_auto_send:e.target.checked})}catch{setToastMessage('Sozlama saqlanmadi.')}}} style={{position:'absolute',inset:0,width:'100%',height:'100%',margin:0,opacity:0,zIndex:1,cursor:'pointer'}}/>
-            <span aria-hidden="true" style={{width:52,height:30,borderRadius:30,background:onboarding?.voice_auto_send?'#7C3AED':'#DCD7EA',boxShadow:'inset 0 1px 3px #00000012',transition:'background 180ms'}}>
-              <span style={{display:'block',width:24,height:24,margin:3,borderRadius:'50%',background:'#fff',boxShadow:'0 2px 5px #00000020',transform:onboarding?.voice_auto_send?'translateX(22px)':'translateX(0)',transition:'transform 180ms'}}/>
-            </span>
-          </span>
-        </label>
-        <label style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,fontSize:13,color:'#766E9E',marginTop:16}}>Tasdiqlangan kategoriya tuzatishlarini eslab qolish<input type="checkbox" checked={onboarding?.remember_categories===true} onChange={async e=>{try{await onUpdateOnboarding?.({remember_categories:e.target.checked})}catch{setToastMessage('Sozlama saqlanmadi.')}}} style={{accentColor:'#7C3AED',width:20,height:20}}/></label>
-      </section>
       {/* Menu Sections list */}
       <motion.div
         initial={{ opacity: 0, y: 12 }}
@@ -1248,6 +1236,12 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
               <path d="M5 3L9 7L5 11" stroke="#C4BDE8" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </div>
+
+          <button id="menu_item_settings" onClick={()=>setActiveModal('settings')} style={{display:'flex',alignItems:'center',gap:14,padding:'14px 16px',border:0,borderBottom:'1px solid #E4E1F4',background:'transparent',width:'100%',textAlign:'left',fontFamily:'inherit',cursor:'pointer'}}>
+            <span style={{fontSize:18,width:28,textAlign:'center'}}>⚙️</span>
+            <span style={{flex:1,fontSize:14,fontWeight:600,color:'#1E1A3C'}}>{lang==='en'?'Settings':lang==='ru'?'Настройки':lang==='uz_cyrl'?'Созламалар':'Sozlamalar'}</span>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5 3L9 7L5 11" stroke="#C4BDE8" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          </button>
 
           {/* Privacy Policy & Public Offer (Maxfiylik siyosati va Oferta) */}
           <div 
@@ -2891,6 +2885,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
       </div>
     )}
 
+    <AnimatePresence>{activeModal==='settings'&&<ProfileSettings onboarding={onboarding} onSave={onUpdateOnboarding} onClose={()=>setActiveModal(null)}/>}</AnimatePresence>
     {/* Privacy Policy and Terms Modal (Maxfiylik siyosati va Ommaviy oferta) */}
     <PrivacyPolicyModal
       isOpen={activeModal === 'privacy_policy'}

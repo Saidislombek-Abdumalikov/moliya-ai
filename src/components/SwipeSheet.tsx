@@ -1,4 +1,4 @@
-import { useState, useRef, type ReactNode } from 'react';
+import { useState, useRef, useEffect, type ReactNode } from 'react';
 import { motion, useDragControls, useReducedMotion, type HTMLMotionProps } from 'motion/react';
 
 type Props = Omit<HTMLMotionProps<'div'>,'children'> & { children?:ReactNode; footer?:ReactNode; scrollBody?:boolean; onDismiss: () => void; locked?: boolean };
@@ -9,6 +9,18 @@ export default function SwipeSheet({onDismiss,locked=false,children,footer,scrol
   const controls=useDragControls();
   const reduced=useReducedMotion();
   const [expanded,setExpanded]=useState(false);
+  const [availableHeight,setAvailableHeight]=useState<number|null>(null);
+  const [keyboardInset,setKeyboardInset]=useState(0);
+  useEffect(()=>{
+    const viewport=window.visualViewport;
+    const update=()=>{
+      setAvailableHeight(Math.max(120,(viewport?.height||window.innerHeight)-12));
+      setKeyboardInset(viewport?Math.max(0,window.innerHeight-viewport.height-viewport.offsetTop):0);
+    };
+    update();viewport?.addEventListener('scroll',update);viewport?.addEventListener('resize',update);window.addEventListener('resize',update);
+    return()=>{viewport?.removeEventListener('scroll',update);viewport?.removeEventListener('resize',update);window.removeEventListener('resize',update);};
+  },[]);
+
   return <motion.div {...props} drag={locked?false:'y'} dragControls={controls} dragListener={false}
     dragConstraints={{top:0,bottom:0}} dragElastic={{top:0.12,bottom:0.65}} dragSnapToOrigin
     onDragStart={()=>{dragged.current=true;setDragging(true);}}
@@ -19,7 +31,7 @@ export default function SwipeSheet({onDismiss,locked=false,children,footer,scrol
       else if(info.offset.y < -35)setExpanded(true);
     }}
     transition={reduced?{duration:0}:props.transition}
-    style={{...style,...(dragging?{userSelect:'none',cursor:'grabbing'} as const:{}),...(scrollBody?{display:'flex',flexDirection:'column',overflow:'hidden'} as const:{}),overscrollBehavior:'contain',...(expanded?{height:'90dvh',maxHeight:'90dvh'}:{})}}>
+    style={{...style,...(keyboardInset?{marginBottom:keyboardInset}:{}),...(dragging?{userSelect:'none',cursor:'grabbing'} as const:{}),...(scrollBody?{display:'flex',flexDirection:'column',overflow:'hidden'} as const:{}),overscrollBehavior:'contain',...(expanded?{height:'90dvh',maxHeight:'90dvh'}:{}),...(availableHeight?{maxHeight:`min(${expanded?'90dvh':typeof style?.maxHeight==='number'?style.maxHeight+'px':style?.maxHeight||'90dvh'}, ${availableHeight}px)`}:{})}}>
     <button type="button" aria-label="Oynani kengaytirish" disabled={locked}
       onPointerDown={e=>{dragged.current=false;if(!locked)controls.start(e);}}
       onClick={()=>{if(!dragged.current)setExpanded(v=>!v);}}

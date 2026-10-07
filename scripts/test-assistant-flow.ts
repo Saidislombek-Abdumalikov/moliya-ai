@@ -55,6 +55,21 @@ const base = {
   repeat: "none",
   debtId: "",
 }
+// Missing return dates default to “not agreed”; explicit promises remain intact.
+const unknownLoan=normalizeAssistantReply({actions:[{...base,kind:'debt',person:'Ali'}]});
+assert.equal(unknownLoan.actions[0].dueUnknown,true);
+assert.equal(assistantActionIssue(unknownLoan.actions[0]),null);
+const datedLoan=normalizeAssistantReply({actions:[{...base,kind:'lending',person:'Ali',dueDate:'2026-10-08'}]});
+assert.equal(datedLoan.actions[0].dueUnknown,false);
+assert.equal(datedLoan.actions[0].dueDate,'2026-10-08');
+const invalidLoan=normalizeAssistantReply({actions:[{...base,kind:'debt',person:'Ali',dueDate:'invalid'}]});
+assert.equal(invalidLoan.actions[0].dueUnknown,false);
+assert.match(assistantActionIssue(invalidLoan.actions[0])!,/sanasi/);
+for(const reply of [unknownLoan,datedLoan,invalidLoan])assert.deepEqual(normalizeAssistantReply(reply),reply);
+const conflictingDate=normalizeAssistantReply({actions:[{...base,kind:'debt',person:'Ali',dueDate:'2026-10-08',dueUnknown:true}]});
+assert.equal(conflictingDate.actions[0].dueUnknown,false);
+const invalidUnknown=normalizeAssistantReply({actions:[{...base,kind:'debt',person:'Ali',dueDate:'invalid',dueUnknown:true}]});
+assert.match(assistantActionIssue(normalizeAssistantReply(invalidUnknown).actions[0])!,/sanasi/);
 let modelReply: any = {
   message: "",
   question: "",

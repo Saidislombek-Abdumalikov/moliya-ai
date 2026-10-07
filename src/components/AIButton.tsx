@@ -1,6 +1,7 @@
+import {localTransactionDate} from '../../shared/transactionDate';
 import AssistantReview from './AssistantReview';
 import {normalizeAssistantReply,cleanCategoryPreferences,type AssistantReply} from '../../shared/assistant';
-import {debtRelationships,debtPersonLabel} from '../../shared/debtPeople';
+import {debtPersonLabel} from '../../shared/debtPeople';
 import {debtPrincipalText,validDay,reminderPromise} from '../../shared/debts';
 import {prepareSilenceMonitor} from '../voiceSilence';
 import SwipeSheet from './SwipeSheet';
@@ -108,7 +109,9 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
   const [assistantDraftId,setAssistantDraftId]=useState<string|undefined>();
   const openedDraft=useRef('');
   const saveId=useRef<string>('');
+  const savingRef=useRef(false);
   const [reviewKey,setReviewKey]=useState(0);
+  const [assistantFooterHost,setAssistantFooterHost]=useState<HTMLDivElement|null>(null);
   const [selectedType, setSelectedType] = useState<EntryType>('expense')
   const reducedMotion=useReducedMotion();
   const [voiceStarting,setVoiceStarting]=useState(false);
@@ -144,28 +147,35 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
 
   const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
-    if (!file) return
+    if (!file || isProcessing) return
+    const generation=voiceGeneration.current
+    const controller=new AbortController();requestRef.current=controller
+    const timeout=setTimeout(()=>controller.abort(),45000)
 
     setIsProcessing(true)
     setAiError('')
     try {
       const base64Data = await prepareReceiptImage(file)
+      if(generation!==voiceGeneration.current)return
       {
         try {
           const res = await fetch('/api/parse-receipt', {
             method: 'POST',
             headers: getClientAuthHeaders(),
             body: JSON.stringify({ base64Image: base64Data, mimeType: 'image/jpeg', userId }),
-            signal: AbortSignal.timeout(45000)
+            signal: controller.signal
           })
 
+          if(generation!==voiceGeneration.current)return
           if (res.status === 401 || res.status === 403) {
             setAiError(res.status === 401 ? sessionMessage : restrictedMessage);
             setStep('form'); return;
           }
           if (res.status >= 500) {setAiError(serviceMessage);setStep('form');return;}
           if (res.status === 429) {
-            setAiError((await ai429Code(res)) === 'AI_QUOTA' ? copy.quota : copy.throttle);
+            const code=await ai429Code(res);
+            if(generation!==voiceGeneration.current)return
+            setAiError(code === 'AI_QUOTA' ? copy.quota : copy.throttle);
             setStep('form');
             return;
           }
@@ -175,6 +185,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
             parsed = await res.json()
           }
 
+          if(generation!==voiceGeneration.current)return
           if (!parsed || !parsed.amount) {
             setAiError(copy.receiptFailed);
             setStep('form')
@@ -195,19 +206,21 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
           }))
           setStep('form')
         } catch (err: any) {
+          if(generation!==voiceGeneration.current)return
           console.error(err)
           setAiError(err?.name === 'TimeoutError' || err?.name === 'AbortError' ? serviceMessage : copy.receiptFailed)
           setStep('form')
         } finally {
-          setIsProcessing(false)
+          if(generation===voiceGeneration.current)setIsProcessing(false)
         }
       }
 
     } catch (err) {
+      if(generation!==voiceGeneration.current)return
       setAiError(copy.receiptFailed)
       setStep('form')
       setIsProcessing(false)
-    } finally { e.target.value='' }
+    } finally { clearTimeout(timeout);if(requestRef.current===controller)requestRef.current=null;e.target.value='' }
   }
 
   useEffect(() => () => {
@@ -267,7 +280,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
   const selectType = (t: EntryType) => {
     setAssistantReply(null);setAiError('');
     setSelectedType(t)
-    setEntry((e) => ({ ...e, type: t, category: categories[t][0] }))
+    setEntry((e) => ({ ...e, type: t, category: categories[t][0], ...(['debt','lending'].includes(t)&&!e.debtDueDate?{debtDateConfirmed:true}:{}) }))
     setStep('form')
   }
 
@@ -363,6 +376,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
           if(response.status>=500)throw new Error('AI_SERVICE_UNAVAILABLE')
           if(!response.ok)throw new Error('AUDIO_UNCLEAR')
           const reply=normalizeAssistantReply(await response.json());
+          if(generation!==voiceGeneration.current)return;
           if(voiceTypeOverride.current&&reply.actions.length===1&&['expense','income','debt','lending'].includes(reply.actions[0].kind))reply.actions[0].kind=voiceTypeOverride.current;
           showAssistant(reply);setAiText(reply.transcription);
           setAssistantHistory(h=>[...h,{role:'user',content:reply.transcription},{role:'assistant',content:JSON.stringify(reply)}].slice(-8));
@@ -394,18 +408,10 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
   }
 
   const handleSave = async () => {
-    if(isSaving)return;
-    // Save transaction to context and Firestore
-    let finalDate = new Date().toISOString()
-    if (entry.date) {
-      try {
-        finalDate = new Date(entry.date).toISOString()
-      } catch (e) {
-        console.error('Invalid date format, using fallback', e)
-      }
-    }
-
-    if(assistantReply?.actions.length && !validDay(String(entry.date||'').slice(0,10))){setAiError('Sanani kiriting.');return;}
+    if(savingRef.current || isSaving || saved)return;
+    // Preserve the calendar day/time selected in the form; the DB stores these literally.
+    const finalDate = localTransactionDate(entry.date);
+    if(!finalDate){setAiError('Sanani kiriting.');return;}
     let numAmount = readMoneyInput(entry.amount)
     if(numAmount===null){setAiError(copy.clarify);return}
     if(['debt','lending'].includes(entry.type)){
@@ -429,11 +435,12 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
       category: entry.category,
       title: entry.title,
       debtWho: entry.debtWho?.trim(),
-      ...(['debt','lending'].includes(entry.type)?{debtDueDate:entry.debtDueDate||null,debtDateConfirmed:true,debtRelationship:entry.debtRelationship||'',debtPersonId:entry.debtPersonId||'person_'+crypto.randomUUID()}:{}),
+      ...(['debt','lending'].includes(entry.type)?{debtDueDate:entry.debtDueDate||null,debtDateConfirmed:true,debtRelationship:({"Do'st":'friend','Do‘st':'friend',Oila:'family',Bank:'bank',Hamkasb:'colleague',Boshqa:'other'} as Record<string,string>)[entry.category]||entry.debtRelationship||'' ,debtPersonId:entry.debtPersonId||'person_'+now}:{}),
       date: finalDate,
       cardId: entry.cardId === 'cash' ? undefined : entry.cardId,
     }
     
+    savingRef.current=true
     setIsSaving(true)
     setAiError('')
     try {
@@ -446,7 +453,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
         if(phrase)try{await updateOnboarding({category_preferences:cleanCategoryPreferences([...(onboarding.category_preferences||[]).filter(p=>p.phrase!==phrase),{phrase,category:entry.category}])});}catch{/* The confirmed transaction must not be retried for a preference failure. */}
       }
       if (hasSampleData) {
-        await setHasSampleData(false)
+        try{await setHasSampleData(false)}catch{/* Financial write already succeeded; sample cleanup is optional. */}
       }
 
       // 2. Database confirmed success: show celebratory card and auto-dismiss
@@ -467,6 +474,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
           : "Error saving to database. Please try again."
       )
     } finally {
+      savingRef.current=false
       setIsSaving(false)
     }
   }
@@ -539,6 +547,42 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
             }}
           >
             <SwipeSheet className="ai-restored-sheet" onDismiss={closeModal} locked={isProcessing || isSaving || recording || voiceStarting}
+              scrollBody
+              footer={!saved && !isProcessing && step==='form' ? (<div style={{ display: 'flex', gap: 10, paddingTop: 0, paddingBottom: 0 }}>
+                  <button
+                    disabled={voiceStarting || isSaving}
+                    onClick={startVoice}
+                    style={{
+                      width: 48, height: 48, borderRadius: 14, flexShrink: 0,
+                      border: '1.5px solid #E8E3F8', background: '#F7F5FF',
+                      cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                      <rect x="6" y="1" width="6" height="10" rx="3" fill="#7C3AED" fillOpacity="0.8" />
+                      <path d="M3 9C3 12.3 5.7 15 9 15C12.3 15 15 12.3 15 9" stroke="#7C3AED" strokeWidth="1.5" strokeLinecap="round" />
+                      <line x1="9" y1="15" x2="9" y2="17" stroke="#7C3AED" strokeWidth="1.5" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={handleSave}
+                    id="ai_save_transaction"
+                    disabled={readMoneyInput(entry.amount)===null || isSaving}
+                    style={{
+                      flex: 1, padding: '14px',
+                      borderRadius: 14, border: 'none',
+                      background: (readMoneyInput(entry.amount)===null || isSaving) ? '#EDE9FE' : '#7C3AED',
+                      color: (readMoneyInput(entry.amount)===null || isSaving) ? '#8B82C4' : '#fff',
+                      fontSize: 15, fontWeight: 600, fontFamily: 'inherit',
+                      cursor: (readMoneyInput(entry.amount)===null || isSaving) ? 'default' : 'pointer',
+                      boxShadow: (readMoneyInput(entry.amount)!==null && !isSaving) ? '0 4px 16px rgba(124, 58, 237, 0.3)' : 'none',
+                    }}
+                  >
+                    {isSaving
+                      ? (language === 'uz' ? 'Saqlanmoqda...' : language === 'uz_cyrl' ? 'Сақланмоқда...' : language === 'ru' ? 'Сохранение...' : 'Saving...')
+                      : (language === 'uz' ? 'Saqlash' : language === 'uz_cyrl' ? 'Сақлаш' : language === 'ru' ? 'Сохранить' : 'Save')}
+                  </button>
+                </div>) : !saved && !isProcessing && step==='assistant' ? <div ref={setAssistantFooterHost}/> : undefined}
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
@@ -547,11 +591,11 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
               style={{
                 width: '100%',
                 maxWidth: 'var(--app-max-width, 440px)',
-                maxHeight: '85dvh',
+                maxHeight: '92dvh',
                 overflowY: 'auto',
                 background: '#FFFFFF',
                 borderRadius: '28px 28px 0 0',
-                padding: '16px 20px calc(48px + env(safe-area-inset-bottom, 24px))',
+                padding: '16px 20px max(12px, env(safe-area-inset-bottom, 0px))',
                 boxShadow: '0 -10px 40px rgba(0,0,0,0.15)',
                 position: 'relative',
               }}
@@ -1025,21 +1069,21 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
             )}
 
             {!saved&&!isProcessing&&step==='assistant'&&assistantReply&&<>
-              <AssistantReview key={reviewKey} draftId={assistantDraftId} reply={assistantReply} onAsk={(text,actions)=>requestAssistant(text+'\nFormadagi joriy ma’lumotlar: '+JSON.stringify(actions))} onBusy={setIsSaving} onDone={finishAssistant}/>
+              <AssistantReview key={reviewKey} draftId={assistantDraftId} reply={assistantReply} onAsk={(text,actions)=>requestAssistant(text+'\nFormadagi joriy ma’lumotlar: '+JSON.stringify(actions))} onBusy={setIsSaving} onDone={finishAssistant} footerHost={assistantFooterHost}/>
               {aiError&&<p role="alert" style={{color:'#DC2626'}}>{aiError}</p>}
             </>}
             {/* Step: form */}
             {!saved && !isProcessing && step === 'form' && (
               <>
                 {/* Type switcher */}
-                <div style={{ display: 'flex', gap: 6, marginBottom: 20, overflowX: 'auto' }}>
+                <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
                   {(Object.keys(typeConfig) as EntryType[]).map((t) => {
                     const c = typeConfig[t]
                     const active = selectedType === t
                     return (
                       <button
                         key={t}
-                        onClick={() => { setSelectedType(t); setEntry((e) => ({ ...e, type: t, category: categories[t][0] })) }}
+                        onClick={() => { setSelectedType(t); setEntry((e) => ({ ...e, type: t, category: categories[t][0], ...(['debt','lending'].includes(t)&&!e.debtDueDate?{debtDateConfirmed:true}:{}) })) }}
                         style={{
                           flexShrink: 0,
                           padding: '7px 14px',
@@ -1104,16 +1148,15 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                   />
                 </div>
 
-              {['debt','lending'].includes(entry.type)&&<div className="ai-debt-fields">
-                <label>Odam<select aria-label="Qarzdagi odam" value={entry.debtPersonId||''} onChange={e=>{const person=customTransactions.find(t=>t.debtPersonId===e.target.value);setEntry(v=>({...v,debtPersonId:e.target.value||undefined,debtWho:person?.debtWho||'',debtRelationship:person?.debtRelationship||''}))}}><option value="">Yangi odam</option>{Array.from(new Map(customTransactions.filter(t=>t.debtPersonId).map(t=>[t.debtPersonId!,t])).entries()).map(([id,t])=><option key={id} value={id}>{debtPersonLabel(t.debtWho,t.debtRelationship)}</option>)}</select></label>
-                <div className="ai-debt-stack"><label>Ism<input aria-label="Qarzdagi odam ismi" maxLength={100} placeholder="Ali" value={entry.debtWho||''} onChange={e=>setEntry(v=>({...v,debtWho:e.target.value}))}/></label><label>Munosabat<select aria-label="Munosabat" value={entry.debtRelationship||''} onChange={e=>setEntry(v=>({...v,debtRelationship:e.target.value}))}><option value="">Tanlanmagan</option>{Object.entries(debtRelationships).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label></div>
-                <div className="ai-debt-stack"><label>Qaytarish sanasi<input aria-label="Qaytarish sanasi" type="date" value={entry.debtDueDate||''} onChange={e=>setEntry(v=>({...v,debtDueDate:e.target.value||null,debtDateConfirmed:!!e.target.value}))}/></label><button className="ai-debt-unknown" aria-pressed={entry.debtDateConfirmed&&!entry.debtDueDate} onClick={()=>setEntry(v=>({...v,debtDueDate:null,debtDateConfirmed:true}))} style={{alignSelf:'end',background:entry.debtDateConfirmed&&!entry.debtDueDate?'#DDD6FE':undefined}}>Hali kelishilmagan</button></div>
+              {['debt','lending'].includes(entry.type)&&<div className="ai-debt-fields finance-fields-row">
+                <label>Ism<input aria-label="Qarzdagi odam ismi" list="ai-debt-people" maxLength={100} placeholder="Ali" value={entry.debtWho||''} onChange={e=>{const name=e.target.value;const matches=Array.from(new Map(customTransactions.filter(t=>t.debtWho===name&&t.debtPersonId).map(t=>[t.debtPersonId!,t])).values());const person=matches.length===1?matches[0]:undefined;setEntry(v=>({...v,debtWho:name,debtPersonId:person?.debtPersonId,debtRelationship:person?.debtRelationship||''}))}}/><datalist id="ai-debt-people">{Array.from(new Map(customTransactions.filter(t=>t.debtWho).map(t=>[t.debtWho!,t])).values()).map(t=><option key={t.debtWho} value={t.debtWho}>{debtPersonLabel(t.debtWho,t.debtRelationship)}</option>)}</datalist></label>
+                <div><label>Qaytarish sanasi<input aria-label="Qaytarish sanasi" type="date" value={entry.debtDueDate||''} onChange={e=>setEntry(v=>({...v,debtDueDate:e.target.value||null,debtDateConfirmed:true}))}/></label><button className="ai-debt-unknown" aria-pressed={!entry.debtDueDate} onClick={()=>setEntry(v=>({...v,debtDueDate:null,debtDateConfirmed:true}))} style={{width:'100%',padding:'7px 8px',marginBottom:10,background:!entry.debtDueDate?'#DDD6FE':undefined}}>Hali kelishilmagan {!entry.debtDueDate?'✓':''}</button></div>
               </div>}
 
                 {/* Category */}
                 <div style={{ marginBottom: 14 }}>
                   <label style={{ fontSize: 12, color: '#8B82C4', fontWeight: 500, display: 'block', marginBottom: 6 }}>{copy.category}</label>
-                  <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 4 }}>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', paddingBottom: 4 }}>
                     {categories[selectedType].map((cat) => {
                       // Xaritalangan emojilar
                       const categoryEmoji: Record<string, string> = {
@@ -1165,6 +1208,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                   </div>
                 </div>
 
+                <div className="finance-fields-row">
                 {/* Account Selection */}
                 <div style={{ marginBottom: 14 }}>
                   <label style={{ fontSize: 12, color: '#8B82C4', fontWeight: 500, display: 'block', marginBottom: 4 }}>
@@ -1200,20 +1244,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                   <label style={{ fontSize: 12, color: '#8B82C4', fontWeight: 500, display: 'block', marginBottom: 6 }}>{copy.date}</label>
                   <input
                     type="datetime-local"
-                    value={(() => {
-                      const now = new Date();
-                      const pad = (n: number) => String(n).padStart(2, '0');
-                      const fallback = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
-                      if (!entry.date) return fallback;
-                      const str = String(entry.date).trim();
-                      if (str.includes('T') && str.length >= 16) return str.slice(0, 16);
-                      if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return `${str}T12:00`;
-                      const d = new Date(str);
-                      if (!isNaN(d.getTime())) {
-                        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-                      }
-                      return fallback;
-                    })()}
+                    value={localTransactionDate(entry.date)||''}
                     onChange={(e) => setEntry((prev) => ({ ...prev, date: e.target.value }))}
                     style={{
                       width: '100%',
@@ -1240,6 +1271,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                   />
                 </div>
 
+                </div>
                 {/* Note */}
                 <div style={{ marginBottom: 20 }}>
                   <label style={{ fontSize: 12, color: '#8B82C4', fontWeight: 500, display: 'block', marginBottom: 6 }}>{copy.note}</label>
@@ -1274,41 +1306,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                 </div>
 
 
-<div style={{ display: 'flex', gap: 10, paddingTop: 8, paddingBottom: 24 }}>
-                  <button
-                    disabled={voiceStarting || isSaving}
-                    onClick={startVoice}
-                    style={{
-                      width: 48, height: 48, borderRadius: 14, flexShrink: 0,
-                      border: '1.5px solid #E8E3F8', background: '#F7F5FF',
-                      cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    }}
-                  >
-                    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                      <rect x="6" y="1" width="6" height="10" rx="3" fill="#7C3AED" fillOpacity="0.8" />
-                      <path d="M3 9C3 12.3 5.7 15 9 15C12.3 15 15 12.3 15 9" stroke="#7C3AED" strokeWidth="1.5" strokeLinecap="round" />
-                      <line x1="9" y1="15" x2="9" y2="17" stroke="#7C3AED" strokeWidth="1.5" strokeLinecap="round" />
-                    </svg>
-                  </button>
-                  <button
-                    onClick={handleSave}
-                    id="ai_save_transaction"
-                    disabled={readMoneyInput(entry.amount)===null || isSaving}
-                    style={{
-                      flex: 1, padding: '14px',
-                      borderRadius: 14, border: 'none',
-                      background: (readMoneyInput(entry.amount)===null || isSaving) ? '#EDE9FE' : '#7C3AED',
-                      color: (readMoneyInput(entry.amount)===null || isSaving) ? '#8B82C4' : '#fff',
-                      fontSize: 15, fontWeight: 600, fontFamily: 'inherit',
-                      cursor: (readMoneyInput(entry.amount)===null || isSaving) ? 'default' : 'pointer',
-                      boxShadow: (readMoneyInput(entry.amount)!==null && !isSaving) ? '0 4px 16px rgba(124, 58, 237, 0.3)' : 'none',
-                    }}
-                  >
-                    {isSaving
-                      ? (language === 'uz' ? 'Saqlanmoqda...' : language === 'uz_cyrl' ? 'Сақланмоқда...' : language === 'ru' ? 'Сохранение...' : 'Saving...')
-                      : (language === 'uz' ? 'Saqlash' : language === 'uz_cyrl' ? 'Сақлаш' : language === 'ru' ? 'Сохранить' : 'Save')}
-                  </button>
-                </div>
+
                 {aiError && (
                   <p style={{ fontSize: 13, color: '#DC2626', marginTop: -14, marginBottom: 16, textAlign: 'center' }}>{aiError}</p>
                 )}

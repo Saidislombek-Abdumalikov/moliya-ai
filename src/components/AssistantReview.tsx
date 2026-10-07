@@ -1,4 +1,5 @@
 import { useState, useRef } from "react"
+import { createPortal } from "react-dom"
 import { useFinance } from "../FinanceContext"
 import {
   assistantActionIssue,
@@ -15,7 +16,9 @@ export default function AssistantReview({
   onDone,
   onBusy,
   draftId,
+  footerHost,
 }: {
+  footerHost?: HTMLElement | null
   draftId?: string
   reply: AssistantReply
   onAsk: (text: string, actions: AssistantAction[]) => void
@@ -45,7 +48,7 @@ export default function AssistantReview({
     income: "Daromad",
     debt: "Qarz oldim",
     lending: "Qarz berdim",
-    payment: "Rejali to‘lov",
+    payment: "🗓️ Rejali to‘lov",
     repayment: "Qarz qaytarildi",
   }
   const patch = (i: number, data: Partial<AssistantAction>) =>
@@ -127,6 +130,7 @@ export default function AssistantReview({
             ...(["debt", "lending"].includes(a.kind)
               ? {
                   debtWho: a.person,
+                  debtRelationship:({"Do'st":'friend','Do‘st':'friend',Oila:'family',Bank:'bank',Hamkasb:'colleague',Boshqa:'other'} as Record<string,string>)[a.category] || '', 
                   debtPersonId: "person_" + ids.current[i],
                   debtDueDate: a.dueDate,
                   debtDateConfirmed: true,
@@ -167,6 +171,23 @@ export default function AssistantReview({
       onBusy(false)
     }
   }
+  const confirmButton=(<button
+          onClick={save}
+          disabled={busy}
+          style={{
+            width: "100%",
+            padding: 15,
+            border: 0,
+            borderRadius: 14,
+            background: "#7C3AED",
+            color: "white",
+            font: "inherit",
+            fontWeight: 600,
+            cursor: "pointer",
+          }}
+        >
+          {busy ? "Saqlanmoqda…" : "Tasdiqlash"}
+        </button>);
   return (
     <div className="ai-debt-fields">
       {reply.message && (
@@ -195,6 +216,7 @@ export default function AssistantReview({
       )}
       {actions.map((a, i) => (
         <fieldset
+          className="assistant-fields-grid"
           key={ids.current[i]}
           disabled={busy || done.includes(i)}
           style={{
@@ -208,7 +230,7 @@ export default function AssistantReview({
           <legend style={{ fontSize: 13, color: "#7C3AED" }}>
             {labels[a.kind]} {done.includes(i) ? "✓ Saqlandi" : ""}
           </legend>
-          <label>
+          <label className="finance-span">
             Nomi / izoh
             <input
               value={a.title}
@@ -259,7 +281,7 @@ export default function AssistantReview({
           </label>
           {a.currency && a.currency !== "UZS" && (
             <>
-              <label>
+              <label className="finance-span">
                 1 {a.currency} uchun kurs (so‘m)
                 <input
                   inputMode="decimal"
@@ -272,7 +294,7 @@ export default function AssistantReview({
                   }
                 />
               </label>
-              <p style={{ fontSize: 12, color: "#766E9E", marginBottom: 12 }}>
+              <p className="finance-span" style={{ fontSize: 12, color: "#766E9E", marginBottom: 12 }}>
                 Siz kiritgan kurs · {actionAmount(a)?.toLocaleString() || "—"}{" "}
                 so‘m.{" "}
                 {a.kind === "payment"
@@ -280,6 +302,22 @@ export default function AssistantReview({
                   : ""}
               </p>
             </>
+          )}
+          {a.kind !== "payment" && (
+            <label>
+              Hisob
+              <select
+                value={a.cardId || "cash"}
+                onChange={(e) => patch(i, { cardId: e.target.value })}
+              >
+                <option value="cash">Naqd</option>
+                {cards.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.bank} ({c.number.slice(-4)})
+                  </option>
+                ))}
+              </select>
+            </label>
           )}
           <label>
             {a.kind === "payment" ? "Keyingi to‘lov sanasi" : "Sana"}
@@ -326,7 +364,7 @@ export default function AssistantReview({
                 />
               </label>
               <button
-                className="ai-debt-unknown"
+                className="ai-debt-unknown finance-span"
                 aria-pressed={a.dueUnknown}
                 onClick={() =>
                   patch(i, { dueDate: null, dueUnknown: !a.dueUnknown })
@@ -358,28 +396,12 @@ export default function AssistantReview({
             </label>
           )}
           {!["payment", "repayment"].includes(a.kind) && (
-            <label>
+            <label className="finance-span">
               Kategoriya
               <input
                 value={a.category}
                 onChange={(e) => patch(i, { category: e.target.value })}
               />
-            </label>
-          )}
-          {a.kind !== "payment" && (
-            <label>
-              Hisob
-              <select
-                value={a.cardId || "cash"}
-                onChange={(e) => patch(i, { cardId: e.target.value })}
-              >
-                <option value="cash">Naqd</option>
-                {cards.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.bank} ({c.number.slice(-4)})
-                  </option>
-                ))}
-              </select>
             </label>
           )}
         </fieldset>
@@ -400,7 +422,7 @@ export default function AssistantReview({
               placeholder="Yozing..."
             />
           </label>
-          <button className="ai-debt-unknown" disabled={busy || !answer.trim()}>
+          <button className="ai-debt-unknown finance-span" disabled={busy || !answer.trim()}>
             Yuborish
           </button>
         </form>
@@ -413,25 +435,8 @@ export default function AssistantReview({
           {error}
         </p>
       )}
-      {!!actions.length && (
-        <button
-          onClick={save}
-          disabled={busy}
-          style={{
-            width: "100%",
-            padding: 15,
-            border: 0,
-            borderRadius: 14,
-            background: "#7C3AED",
-            color: "white",
-            font: "inherit",
-            fontWeight: 600,
-            cursor: "pointer",
-          }}
-        >
-          {busy ? "Saqlanmoqda…" : "Tasdiqlash"}
-        </button>
-      )}
+      {!footerHost && !!actions.length && confirmButton}
+      {footerHost && !!actions.length && createPortal(confirmButton, footerHost)}
     </div>
   )
 }

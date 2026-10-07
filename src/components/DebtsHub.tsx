@@ -27,12 +27,13 @@ const button = {
 } as const
 const input = {
   width: "100%",
-  padding: 12,
-  borderRadius: 12,
-  border: "1px solid #DDD6FE",
+  padding: "16px 20px",
+  borderRadius: 20,
+  border: "1px solid rgba(124,58,237,.15)",
   margin: "6px 0 12px",
-  background: "#fff",
-  color: "#1E1A3C",
+  background: "linear-gradient(145deg,#FFFFFF,#F8F7FC)",
+  color: "#4B456D",
+  boxShadow:"inset 0 2px 6px #7C3AED08,0 4px 16px #7C3AED0F",
   font: "inherit",
 } as const
 export default function DebtsHub() {
@@ -207,7 +208,34 @@ export default function DebtsHub() {
               justifyContent: "center",
             }}
           >
-            <SwipeSheet
+            <SwipeSheet className="ai-restored-sheet"
+              footer={tx ? (                  <button
+                    disabled={busy || !name.trim() || (!!due && !validDay(due))}
+                    style={{
+                      ...button,
+                      width: "100%",
+                      background: "#7C3AED",
+                      color: "#fff",
+                      marginBottom: 0,
+                    }}
+                    onClick={() =>
+                      void run(
+                        () =>
+                          debtAction(tx, "edit", {
+                            personName: name.trim(),
+                            relationship,
+                            personId,
+                            dueDate: due || null,
+                          }),
+                        due
+                          ? reminderPromise(due, String(tx.date).slice(0, 10))
+                          : "Sanasiz saqlandi",
+                      )
+                    }
+                  >
+                    O‘zgarishlarni saqlash
+                  </button>) : undefined}
+              transition={{type:'spring',damping:26,stiffness:220}}
               onDismiss={dismissNotices}
               locked={busy}
               initial={{ y: "100%" }}
@@ -218,7 +246,8 @@ export default function DebtsHub() {
                 width: "100%",
                 maxWidth: 440,
                 padding: 20,
-                borderRadius: "24px 24px 0 0",
+                borderRadius: "28px 28px 0 0",
+                boxShadow:"0 -10px 40px #00000026",
                 maxHeight: "80dvh",
                 overflowY: "auto",
               }}
@@ -277,7 +306,34 @@ export default function DebtsHub() {
               justifyContent: "center",
             }}
           >
-            <SwipeSheet
+            <SwipeSheet className="ai-restored-sheet"
+              footer={tx ? (                  <button
+                    disabled={busy || !name.trim() || (!!due && !validDay(due))}
+                    style={{
+                      ...button,
+                      width: "100%",
+                      background: "#7C3AED",
+                      color: "#fff",
+                      marginBottom: 0,
+                    }}
+                    onClick={() =>
+                      void run(
+                        () =>
+                          debtAction(tx, "edit", {
+                            personName: name.trim(),
+                            relationship,
+                            personId,
+                            dueDate: due || null,
+                          }),
+                        due
+                          ? reminderPromise(due, String(tx.date).slice(0, 10))
+                          : "Sanasiz saqlandi",
+                      )
+                    }
+                  >
+                    O‘zgarishlarni saqlash
+                  </button>) : undefined}
+              transition={{type:'spring',damping:26,stiffness:220}}
               onDismiss={close}
               locked={busy}
               scrollBody
@@ -289,9 +345,10 @@ export default function DebtsHub() {
                 background: "#fff",
                 color: "#1E1A3C",
                 width: "100%",
-                maxWidth: 480,
+                maxWidth: "var(--app-max-width,440px)",
                 padding: "16px 20px max(16px, env(safe-area-inset-bottom))",
-                borderRadius: "24px 24px 0 0",
+                borderRadius: "28px 28px 0 0",
+                boxShadow:"0 -10px 40px #00000026",
                 maxHeight: "90dvh",
               }}
             >
@@ -392,6 +449,7 @@ export default function DebtsHub() {
                       </div>
                     </>
                   )}
+                  <div className="finance-fields-row">
                   <label>
                     Odam
                     <select
@@ -414,6 +472,9 @@ export default function DebtsHub() {
                       ))}
                     </select>
                   </label>
+                  <label>Munosabat<select aria-label="Munosabat" style={input} value={relationship} onChange={e=>setRelationship(e.target.value)}><option value="">Tanlanmagan</option>{Object.entries(debtRelationships).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label>
+                  </div>
+                  <div className="finance-fields-row"><label>Ism
                   <input
                     aria-label="Ism"
                     style={input}
@@ -422,8 +483,8 @@ export default function DebtsHub() {
                     placeholder="Ism"
                     onChange={(e) => setName(e.target.value)}
                   />
-                  <label>Munosabat<select aria-label="Munosabat" style={input} value={relationship} onChange={e=>setRelationship(e.target.value)}><option value="">Tanlanmagan</option>{Object.entries(debtRelationships).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label>
-                  <label>
+
+                  </label><label>
                     Qaytarish sanasi
                     <input
                       aria-label="Qaytarish sanasi"
@@ -433,38 +494,14 @@ export default function DebtsHub() {
                       onChange={(e) => setDue(e.target.value)}
                     />
                   </label>
-                  <button style={button} onClick={() => setDue("")}>
+                  </div>
+                  <button style={{...button,background:!due?'#DDD6FE':button.background}} aria-pressed={!due} onClick={() => setDue("")}>
                     Hali kelishilmagan
                   </button>
                   <p style={{ fontSize: 12, margin: "10px 0" }}>
                     {reminderPromise(due, String(tx.date).slice(0, 10))}
                   </p>
-                  <button
-                    disabled={busy || !name.trim() || (!!due && !validDay(due))}
-                    style={{
-                      ...button,
-                      width: "100%",
-                      background: "#7C3AED",
-                      color: "#fff",
-                      marginBottom: 18,
-                    }}
-                    onClick={() =>
-                      void run(
-                        () =>
-                          debtAction(tx, "edit", {
-                            personName: name.trim(),
-                            relationship,
-                            personId,
-                            dueDate: due || null,
-                          }),
-                        due
-                          ? reminderPromise(due, String(tx.date).slice(0, 10))
-                          : "Sanasiz saqlandi",
-                      )
-                    }
-                  >
-                    O‘zgarishlarni saqlash
-                  </button>
+
                   <strong>To‘lovlar tarixi</strong>
                   {all
                     .filter((p) => p.debtPaymentFor === String(tx.id))

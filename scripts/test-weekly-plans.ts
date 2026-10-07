@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { financialInsight } from "../shared/financialAssistant.js"
-import { cleanPlannedPayments, nextPayment } from "../shared/plannedPayments.js"
+import { cleanPlannedPayments, nextPayment, editedPaymentAnchor } from "../shared/plannedPayments.js"
 import { registrationTrialEnd } from "../shared/registrationTrial.js"
 import { effectiveAccess } from "../api/_accessHelper.js"
 import { safePreferences, publicOnboarding } from "../api/_userPolicy.js"
@@ -77,3 +77,9 @@ assert.equal(registrationTrialEnd({}), null)
 console.log(
   "Passed: Tashkent rolling week, exclusion of old/future records, recurring month-end/year rollover, one-off completion, plan validation, preference privilege stripping, trial expiry and paid VIP preservation.",
 )
+
+const february=nextPayment(clean)!;
+const edited=cleanPlannedPayments([{...february,title:'Edited rent',anchorDay:editedPaymentAnchor(february,february.dueDate,'monthly')}])[0];
+assert.equal(nextPayment(edited)?.dueDate,'2026-03-31');
+assert.equal(editedPaymentAnchor(february,'2026-02-20','monthly'),undefined);
+assert.equal(editedPaymentAnchor(february,february.dueDate,'weekly'),undefined);

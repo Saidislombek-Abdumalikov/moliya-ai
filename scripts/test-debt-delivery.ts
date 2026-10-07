@@ -30,6 +30,7 @@ const user = {
     consent_accepted_at: "2026-01-01",
   },
   transactions: [loan],
+  onboarding: {},
 }
 let fresh: any = user,
   restricted = false,
@@ -49,6 +50,7 @@ const claims = new Map<string, any>()
       filters[k] = v
       return q
     },
+    is(k: string, v: any) { filters[k]=v; return q },
     match(v: any) {
       filters = v
       return q
@@ -68,6 +70,7 @@ const claims = new Map<string, any>()
       return q
     },
     async maybeSingle() {
+      if(op==="update" && table==="users")Object.assign(fresh,payload);
       return {
         data: String(filters.id).startsWith("restricted_")
           ? restricted

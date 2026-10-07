@@ -76,7 +76,7 @@ await test('webhook confirms once and preserves unrelated pending buttons',async
  assert.equal(sent.filter(x=>x.method==='editMessageText').length,edits);
 });
 await test('webhook database outage returns retryable failure without a write',async()=>{const d=await stage();const savedRpc=(supabase as any).rpc;(supabase as any).rpc=async()=>({data:null,error:{message:'private database detail'}});try{const res=await callback(d.id);assert.equal(res.statusCode,503);assert.equal(JSON.stringify(res.body).includes('private'),false);assert.deepEqual(await transactions(),[])}finally{(supabase as any).rpc=savedRpc}});
-// Full inbound message -> shared parser -> existing SQL autosave, transports mocked.
+// Full inbound message -> shared parser -> confirmation (receipt remains legacy autosave), transports mocked.
 await db.exec(await readFile(new URL('../migrations/12-bot-message-delivery.sql',import.meta.url),'utf8'));
 const {encodeWav}=await import('../src/audioRecorder.js');
 const wav=Buffer.from(await encodeWav(new Float32Array(16000)).arrayBuffer());
@@ -95,14 +95,15 @@ const wav=Buffer.from(await encodeWav(new Float32Array(16000)).arrayBuffer());
   if(patch){for(const field of ['onboarding','device_info'])if(field in patch)await db.query(`UPDATE users SET ${field}=$1::jsonb WHERE id=$2`,[JSON.stringify(patch[field]),uid]);}
   return {data:(await db.query('SELECT * FROM users WHERE id=$1',[uid])).rows[0] || null,error:null};
  };
- const q:any={select(){return q},update(v:any){patch=v;return q},insert(){return q},eq(k:string,v:any){if(k==='id')uid=v;return q},is(){return q},maybeSingle:execute,then(ok:any,bad:any){return execute().then(ok,bad)}};return q;
+ const q:any={like(){return q},select(){return q},update(v:any){patch=v;return q},insert(){return q},eq(k:string,v:any){if(k==='id')uid=v;return q},is(){return q},maybeSingle:execute,then(ok:any,bad:any){return execute().then(ok,bad)}};return q;
 };
 let transportId=1000;
 globalThis.fetch=async(input:any,options:any)=>{
  const req=input instanceof Request?input:new Request(input,options),url=req.url;
  if(url.includes('generativelanguage.googleapis.com')){
   const content=await req.clone().json();const str=JSON.stringify(content.contents);
-  const parsed=str.includes('Read this receipt.')?{isReceipt:true,totalText:'25 000',currency:'UZS',category:'Boshqa',title:'Do‘kon'}:
+  const parsed=str.includes('You are a finance input assistant.')?{message:'',question:'',transcription:'400000 ishlatdim',actions:[{kind:str.includes('Alidan')?'debt':'expense',amount:str.includes('Alidan')?100000:400000,currency:'UZS',title:str.includes('Alidan')?'Ali':'Xarajat',category:'Boshqa',date:'2026-10-07',person:str.includes('Alidan')?'Ali':'',dueDate:null,dueUnknown:false,repeat:'none',debtId:''}]}:
+   str.includes('Read this receipt.')?{isReceipt:true,totalText:'25 000',currency:'UZS',category:'Boshqa',title:'Do‘kon'}:
    str.includes('Transcribe exactly what is heard.')?{transcription:'400000 ishlatdim'}:
    {transcription:'400000 ishlatdim',type:'expense',amount:400000,currency:'UZS',category:'Boshqa'};
   return new Response(JSON.stringify({candidates:[{content:{role:'model',parts:[{text:JSON.stringify(parsed)}]},finishReason:'STOP'}]}),{status:200,headers:{'Content-Type':'application/json'}});
@@ -119,24 +120,34 @@ async function inbound(messageId:number,extra:any){
  return res;
 }
 for(const [index,extra,expected] of [[601,{text:'400000 ishlatdim'},400000],[602,{voice:{file_id:'test-audio',duration:1,mime_type:'audio/wav'}},400000],[603,{photo:[{file_id:'test-image'}]},25000]] as const){
- await test(`inbound ${index}: parse and save once without confirmation`,async()=>{
+ await test(`inbound ${index}: parse, confirm once and reject replay`,async()=>{
   await db.query("UPDATE users SET onboarding='{"+'"language":"uz","completed":true'+"}' WHERE id=$1",[user]);
   sent.length=0;
   const result=await inbound(index,extra);assert.equal(result.statusCode,200,JSON.stringify(result.body));
+  if(index!==603){
+   assert.equal((await transactions()).length,0,'AI parsing must never commit money');
+   const button=sent.flatMap(x=>x.body.reply_markup?.inline_keyboard?.flat()||[]).find(x=>String(x.callback_data||'').startsWith('txok_'));
+   assert.ok(button,'A confirmation button is required');
+   assert.equal((await callback(button.callback_data.slice(5))).body.status,'confirmed');
+   assert.equal((await callback(button.callback_data.slice(5))).body.status,'confirmed');
+  }
   const txs=await transactions();assert.equal(txs.length,1,JSON.stringify(result.body));assert.equal(txs[0].amount,-expected);assert.equal(txs[0].type,'expense');
   assert.ok(sent.some(x=>x.body.text?.includes('Saqlandi') || x.body.text?.includes('saqlandi')));
   assert.equal((await inbound(index,extra)).body.status,'duplicate');assert.equal((await transactions()).length,1);
  });
 }
-await test('debt due-date reply updates the existing loan without another transaction',async()=>{
- await db.query("UPDATE users SET onboarding='{\"language\":\"uz\",\"completed\":true}' WHERE id=$1",[user]);
+await test('undated debt remains pending until confirmation then saves with no guessed return date',async()=>{
+ await db.query('UPDATE users SET onboarding=$1 WHERE id=$2',[JSON.stringify({language:'uz',completed:true}),user]);
  sent.length=0;
- await inbound(700,{text:'Alidan 100 ming qarz oldim'});
- const before=await transactions();assert.equal(before.length,1);assert.equal(before[0].type,'debt');assert.equal(before[0].debtWho,'Ali');assert.ok(before[0].debtDatePromptId);
- assert.ok(sent.some(x=>x.body.reply_markup?.force_reply));
- const response=await inbound(701,{text:'ertaga',reply_to_message:{message_id:before[0].debtDatePromptId}});
- assert.equal(response.statusCode,200);
- const after=await transactions();assert.equal(after.length,1);assert.equal(after[0].id,before[0].id);assert.equal(after[0].debtDateConfirmed,true);
- const {localDay,addDays}=await import('../shared/debts.js');assert.equal(after[0].debtDueDate,addDays(localDay(),1));
+ const result=await inbound(700,{text:'Alidan 100 ming qarz oldim'});
+ assert.equal(result.statusCode,200,JSON.stringify(result.body));
+ assert.equal((await transactions()).length,0);
+ assert.equal(sent.some(x=>x.body.reply_markup?.force_reply),false);
+ const button=sent.flatMap(x=>x.body.reply_markup?.inline_keyboard?.flat()||[]).find(x=>String(x.callback_data||'').startsWith('txok_'));
+ assert.ok(button);
+ assert.equal((await callback(button.callback_data.slice(5))).body.status,'confirmed');
+ const after=await transactions();assert.equal(after.length,1);assert.equal(after[0].type,'debt');assert.equal(after[0].debtWho,'Ali');assert.equal(after[0].debtDueDate,null);assert.equal(after[0].debtDateConfirmed,true);
+ assert.equal((await inbound(700,{text:'Alidan 100 ming qarz oldim'})).body.status,'duplicate');
+ assert.equal((await transactions()).length,1);
 });
 console.log(`${count} bot confirmation checks passed. Offline PostgreSQL; not a live load test.`);await db.close();

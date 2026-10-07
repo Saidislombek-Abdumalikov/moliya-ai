@@ -81,8 +81,9 @@ export function normalizeAssistantReply(raw: any): AssistantReply {
       category: String(x.category || "Boshqa").slice(0, 60),
       date: validDay(x.date) ? x.date : null,
       person: String(x.person || "").slice(0, 100),
-      dueDate: validDay(x.dueDate) ? x.dueDate : null,
-      dueUnknown: x.dueUnknown === true,
+      // Keep invalid supplied dates invalid across API/client normalization.
+      dueDate: x.dueDate == null || x.dueDate === '' ? null : String(x.dueDate).slice(0, 100),
+      dueUnknown: (x.dueDate == null || x.dueDate === '') && (x.dueUnknown === true || ['debt','lending'].includes(x.kind)),
       repeat: ["weekly", "monthly"].includes(x.repeat) ? x.repeat : "none",
       debtId: String(x.debtId || "").slice(0, 200),
     }
