@@ -1,24 +1,13 @@
-import { AnimatePresence, motion } from 'motion/react'
-import { useState, useRef } from "react"
-import { useFinance } from "../FinanceContext"
-import SwipeSheet from "./SwipeSheet"
-import {
-  cleanPlannedPayments,
-  editedPaymentAnchor,
-  nextPayment,
-  type PlannedPayment,
-} from "../../shared/plannedPayments"
-import { tashkentDay } from "../../shared/reminderPolicy"
-export default function UpcomingPayments() {
-  const {
-    onboarding,
-    updateOnboarding,
-    addTransaction,
-    customTransactions,
-    cards,
-  } = useFinance()
-  const saving = useRef(false)
-  const [cardId, setCardId] = useState("cash")
+import {aiPopupStyle,aiPopupTransition} from './aiPopupStyle';
+import {createPortal} from 'react-dom';
+import {AnimatePresence,motion} from 'motion/react';
+import {useEffect,useState,useRef} from 'react';
+import {useFinance} from '../FinanceContext';
+import SwipeSheet from './SwipeSheet';
+import {cleanPlannedPayments,editedPaymentAnchor,nextPayment,paymentIcons,paymentIconKey,paymentRecordId,nextUnseenPaymentReminder,tomorrowDay,type PlannedPayment} from '../../shared/plannedPayments';
+import {tashkentDay} from '../../shared/reminderPolicy';
+export default function UpcomingPayments(){
+ const {onboarding,updateOnboarding,addTransaction,customTransactions,cards,userId}=useFinance();
   const lang = onboarding?.language || "uz"
   const words = {
     uz: [
@@ -98,319 +87,69 @@ export default function UpcomingPayments() {
       "Not saved. Please retry.",
     ],
   }[lang]
-  const plans = cleanPlannedPayments(onboarding?.planned_payments).sort(
-    (a, b) => a.dueDate.localeCompare(b.dueDate),
-  )
-  const [open, setOpen] = useState(false),
-    [pay, setPay] = useState<PlannedPayment | null>(null),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState("")
-  const [editId, setEditId] = useState<string | null>(null)
-  const [title, setTitle] = useState(""),
-    [amount, setAmount] = useState(""),
-    [date, setDate] = useState(tashkentDay(new Date())),
-    [repeat, setRepeat] = useState<PlannedPayment["repeat"]>("none")
-  const save = async (updated: PlannedPayment[]) => {
-    await updateOnboarding({ planned_payments: updated })
-  }
-  const run = async (fn: () => Promise<void>) => {
-    if (saving.current) return
-    saving.current = true
-    setBusy(true)
-    setError("")
-    try {
-      await fn()
-    } catch {
-      setError(words[16])
-    } finally {
-      saving.current = false
-      setBusy(false)
-    }
-  }
-  if (!plans.length && !open && !pay) return null
-  return (
-    <section
-      style={{
-        margin: "0 20px 24px",
-        padding: 16,
-        borderRadius: 20,
-        background: "linear-gradient(135deg,#FAF9FD,#F4F0FF)",
-        border: "1.5px solid #E6DFFF",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 8,
-        }}
-      >
-        <h3 style={{ fontSize: 15, color: "#1E1A3C" }}>{words[0]}</h3>
-        <button
-          className="planned-button"
-          onClick={() => {
-            setError("")
-            setEditId(null)
-            setTitle("")
-            setAmount("")
-            setDate(tashkentDay(new Date()))
-            setRepeat("none")
-            setOpen(true)
-          }}
-        >
-          {words[1]}
-        </button>
-      </div>
-      {error && <p role="alert">{error}</p>}
-      {!plans.length && (
-        <p style={{ fontSize: 12, color: "#64748B", marginTop: 12 }}>
-          {words[13]}
-        </p>
-      )}
-      {plans.map((p) => (
-        <div
-          key={p.id}
-          style={{
-            paddingTop: 12,
-            marginTop: 10,
-            borderTop: "1px solid #E6DFFF",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              gap: 10,
-            }}
-          >
-            <strong style={{ fontSize: 13, overflowWrap: "anywhere" }}>
-              {p.repeat==='monthly'?'🔁':p.repeat==='weekly'?'📅':'🧾'} {p.title}
-            </strong>
-            <span style={{ fontSize: 13, whiteSpace: "nowrap" }}>
-              {p.amount.toLocaleString("en-US").replace(/,/g, " ")} so‘m
-            </span>
-          </div>
-          <div
-            style={{
-              fontSize: 12,
-              marginTop: 4,
-              color:
-                p.dueDate <= tashkentDay(new Date()) ? "#B45309" : "#64748B",
-            }}
-          >
-            {p.dueDate} ·{" "}
-            {words[p.repeat === "none" ? 5 : p.repeat === "weekly" ? 6 : 7]}{" "}
-            {p.dueDate <= tashkentDay(new Date()) ? " · " + words[14] : ""}
-          </div>
-          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-            <button
-              disabled={busy}
-              className="planned-button"
-              onClick={() => {
-                setError("")
-                setCardId("cash")
-                setPay(p)
-              }}
-            >
-              {words[9]}
-            </button>
-            <button
-              className="planned-button"
-              disabled={busy}
-              onClick={() => {
-                setError("")
-                setEditId(p.id)
-                setTitle(p.title)
-                setAmount(String(p.amount))
-                setDate(p.dueDate)
-                setRepeat(p.repeat)
-                setOpen(true)
-              }}
-            >
-              {lang === "en"
-                ? "Edit"
-                : lang === "ru"
-                  ? "Изменить"
-                  : lang === "uz_cyrl"
-                    ? "Таҳрирлаш"
-                    : "Tahrirlash"}
-            </button>
-            <button
-              disabled={busy}
-              className="planned-button"
-              onClick={() =>
-                run(() => save(plans.filter((x) => x.id !== p.id)))
-              }
-            >
-              {words[15]}
-            </button>
-          </div>
-        </div>
-      ))}
-      <AnimatePresence>{(open || pay) && (
-        <motion.div className="finance-popup-overlay" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} onClick={()=>{if(!busy){setOpen(false);setPay(null)}}}>
-          <SwipeSheet
-            className="ai-restored-sheet ai-debt-fields"
-            initial={{y:'100%'}} animate={{y:0}} exit={{y:'100%'}} transition={{type:'spring',damping:26,stiffness:220}}
-            onClick={e=>e.stopPropagation()}
-            footer={pay ? (                <button
-                  disabled={busy}
-                  className="finance-popup-primary"
-                  onClick={() =>
-                    run(async () => {
-                      const id = `planned_${pay.id}_${pay.dueDate}`
-                      if (!customTransactions.some((t) => String(t.id) === id))
-                        await addTransaction({
-                          id,
-                          type: "expense",
-                          amount: pay.amount,
-                          note: pay.title,
-                          category: "Boshqa",
-                          cardId,
-                          date: tashkentDay(new Date()),
-                        })
-                      const next = nextPayment(pay)
-                      await save(
-                        plans.flatMap((p) =>
-                          p.id === pay.id ? (next ? [next] : []) : [p],
-                        ),
-                      )
-                      setPay(null)
-                    })
-                  }
-                >
-                  {words[11]}
-                </button>) : <button disabled={busy} className="finance-popup-primary" type="submit" form="planned-payment-form">{words[8]}</button>}
-            locked={busy}
-            onDismiss={() => {
-              setOpen(false)
-              setPay(null)
-            }}
-            style={{
-              background: "white",
-              borderRadius: "28px 28px 0 0",
-              padding: "16px 20px max(12px, env(safe-area-inset-bottom))",
-              width: "100%",
-              maxWidth: "var(--app-max-width,440px)",
-              maxHeight: "92dvh",
-              boxShadow:"0 -10px 40px #00000026",
-            }}
-            scrollBody
-          >
-            <div className="finance-popup-heading"><h3>{pay?'✅':'🗓️'} {pay?words[10]:words[0]}</h3><button className="finance-popup-close" disabled={busy} aria-label={words[12]} onClick={()=>{setOpen(false);setPay(null)}}>✕</button></div>
-            {pay ? (
-              <>
 
-                <p style={{ margin: "14px 0" }}>
-                  {pay.title} — {pay.amount.toLocaleString()} so‘m
-                </p>
-                <select
-                  aria-label={lang === "en" ? "Account" : "Hisob"}
-                  value={cardId}
-                  onChange={(e) => setCardId(e.target.value)}
-                >
-                  <option value="cash">
-                    {lang === "en"
-                      ? "Cash"
-                      : lang === "ru"
-                        ? "Наличные"
-                        : lang === "uz_cyrl"
-                          ? "Нақд"
-                          : "Naqd"}
-                  </option>
-                  {cards.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.bank} · {c.number.slice(-4)}
-                    </option>
-                  ))}
-                </select>
-
-              </>
-            ) : (
-              <form id="planned-payment-form"
-                onSubmit={(e) => {
-                  e.preventDefault()
-                  run(async () => {
-                    const p = cleanPlannedPayments([
-                      {
-                        id: editId || crypto.randomUUID(),
-                        title,
-                        amount: Number(amount),
-                        dueDate: date,
-                        repeat,
-                        anchorDay: editedPaymentAnchor(plans.find(p=>p.id===editId),date,repeat),
-                      },
-                    ])[0]
-                    if (!p || (!editId && plans.length >= 100))
-                      throw new Error("INVALID_PLAN")
-                    await save(
-                      editId
-                        ? plans.map((x) => (x.id === editId ? p : x))
-                        : [...plans, p],
-                    )
-                    setOpen(false)
-                    setTitle("")
-                    setAmount("")
-                  })
-                }}
-              >
-
-                <label>
-                  {words[2]}
-                  <input
-                    required
-                    maxLength={100}
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                  />
-                </label>
-                <label>
-                  {words[3]}
-                  <input
-                    required
-                    type="number"
-                    inputMode="decimal"
-                    min="0.01"
-                    step="0.01"
-                    max="1000000000000000"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                  />
-                </label>
-                <div className="finance-fields-row">
-                <label>
-                  {words[4]}
-                  <input
-                    required
-                    type="date"
-                    value={date}
-                    onChange={(e) => setDate(e.target.value)}
-                  />
-                </label>
-                <label>{words[repeat==='none'?5:repeat==='weekly'?6:7]}<select
-                  aria-label={words[5]}
-                  value={repeat}
-                  onChange={(e) =>
-                    setRepeat(e.target.value as PlannedPayment["repeat"])
-                  }
-                >
-                  {(["none", "weekly", "monthly"] as const).map((v, i) => (
-                    <option key={v} value={v}>
-                      {words[5 + i]}
-                    </option>
-                  ))}
-                </select>
-                </label></div>
-
-
-              </form>
-            )}
-            {error && <p role="alert">{error}</p>}
-
-          </SwipeSheet>
-        </motion.div>
-      )}</AnimatePresence>
-    </section>
-  )
+ const plans=cleanPlannedPayments(onboarding?.planned_payments).sort((a,b)=>a.dueDate.localeCompare(b.dueDate));
+ const saving=useRef(false);
+ const seenNotices=useRef(new Set<string>());
+ const [busy,setBusy]=useState(false),[error,setError]=useState('');
+ const [selected,setSelected]=useState<string|null>(null),[editing,setEditing]=useState(false),[paying,setPaying]=useState(false),[deleting,setDeleting]=useState(false);
+ const [notice,setNotice]=useState(false),[today,setToday]=useState(tashkentDay(new Date()));
+ const [title,setTitle]=useState(''),[amount,setAmount]=useState(''),[date,setDate]=useState(today),[time,setTime]=useState(''),[repeat,setRepeat]=useState<PlannedPayment['repeat']>('none'),[icon,setIcon]=useState('other'),[cardId,setCardId]=useState('cash');
+ const plan=plans.find(p=>p.id===selected);
+ const open=selected!==null||editing;
+ useEffect(()=>{const update=()=>setToday(tashkentDay(new Date()));const timer=setInterval(update,60000);window.addEventListener('focus',update);return()=>{clearInterval(timer);window.removeEventListener('focus',update);};},[]);
+ useEffect(()=>{const url=new URL(location.href);const id=url.searchParams.get('paymentId');if(id){setSelected(id);url.searchParams.delete('paymentId');history.replaceState({},'',url.pathname+url.search+url.hash);}},[]);
+ useEffect(()=>{
+   if(open||!userId||onboarding?.notifications?.opt1===false)return;
+   const noticeKey=(p:PlannedPayment)=>`moliya_plan_notice_${userId}_${today}_${p.id}_${p.dueDate}`;
+   const due=nextUnseenPaymentReminder(plans,today,customTransactions,p=>{try{return sessionStorage.getItem(noticeKey(p))==='1';}catch{return seenNotices.current.has(noticeKey(p));}});
+   if(!due)return;
+   seenNotices.current.add(noticeKey(due));
+   try{sessionStorage.setItem(noticeKey(due),'1');}catch{}
+   setSelected(due.id);setNotice(true);
+ },[today,userId,open,JSON.stringify(plans),customTransactions]);
+ const close=()=>{if(saving.current)return;setSelected(null);setEditing(false);setPaying(false);setDeleting(false);setNotice(false);setError('');};
+ const save=async(updated:PlannedPayment[])=>{await updateOnboarding({planned_payments:updated});};
+ const run=async(fn:()=>Promise<void>)=>{if(saving.current)return;saving.current=true;setBusy(true);setError('');try{await fn();}catch{setError(words[16]);}finally{saving.current=false;setBusy(false);}};
+ const edit=(p?:PlannedPayment)=>{setSelected(p?.id||null);setTitle(p?.title||'');setAmount(p?String(p.amount):'');setDate(p?.dueDate||today);setTime(p?.time||'');setRepeat(p?.repeat||'none');setIcon(p?.icon||'other');setEditing(true);setNotice(false);setError('');};
+ const paid=async()=>{
+   if(!plan)return;
+   const id=paymentRecordId(plan);
+   if(!customTransactions.some(t=>String(t.id)===id))await addTransaction({id,type:'expense',amount:plan.amount,note:plan.title,title:plan.title,category:'Boshqa',cardId,date:today});
+   const next=nextPayment(plan);
+   await save(plans.flatMap(p=>p.id===plan.id?(next?[next]:[]):[p]));
+   setSelected(null);setPaying(false);setNotice(false);
+ };
+ const notPaid=async()=>{if(!plan)return;await save(plans.map(p=>p.id===plan.id?{...p,snoozedUntil:tomorrowDay(today)}:p));setSelected(null);setNotice(false);};
+ return <section className="upcoming-calm">
+   <div className="calm-header"><h3>{words[0]}</h3><motion.button whileTap={{scale:.9}} className="calm-icon" aria-label={words[1]} onClick={()=>edit()}>＋</motion.button></div>
+   {!plans.length&&<p className="calm-empty">{words[13]}</p>}
+   {plans.map(p=><motion.button key={p.id} whileTap={{scale:.98}} className="calm-row" onClick={()=>{setSelected(p.id);setNotice(false);setError('');}}>
+     <span className="payment-glyph" aria-hidden="true">{paymentIcons[paymentIconKey(p.icon)]}</span><span className="payment-copy"><strong>{p.title}</strong><small>{p.dueDate}{p.time?' · '+p.time:''}</small></span><b>{p.amount.toLocaleString('en-US').replace(/,/g,' ')} <small>so‘m</small></b>
+   </motion.button>)}
+   {createPortal(<AnimatePresence>{open&&<motion.div className="finance-popup-overlay" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} onClick={close}>
+     <SwipeSheet className="ai-restored-sheet ai-debt-fields" scrollBody locked={busy} onDismiss={close} onClick={e=>e.stopPropagation()} initial={{y:'100%'}} animate={{y:0}} exit={{y:'100%'}} transition={aiPopupTransition} style={aiPopupStyle}
+       footer={editing?<button className="finance-popup-primary" form="planned-payment-form" type="submit" disabled={busy}>{words[8]}</button>:paying?<button className="finance-popup-primary" disabled={busy} onClick={()=>void run(paid)}>{words[8]}</button>:undefined}>
+       <h3 className="calm-heading">{editing?words[0]:plan?.title||words[13]}</h3>
+       {editing?<form id="planned-payment-form" onSubmit={e=>{e.preventDefault();void run(async()=>{
+         const p=cleanPlannedPayments([{id:selected||crypto.randomUUID(),title,amount:Number(amount),dueDate:date,time,repeat,icon,createdDay:plan?.createdDay||today,anchorDay:editedPaymentAnchor(plan,date,repeat),...(plan?.dueDate===date?{snoozedUntil:plan.snoozedUntil}:{})}])[0];
+         if(!p||(!selected&&plans.length>=100))throw Error('INVALID_PLAN');
+         await save(selected?plans.map(x=>x.id===selected?p:x):[...plans,p]);setEditing(false);setSelected(null);
+       });}}>
+         <label>{words[2]}<input required value={title} maxLength={100} onChange={e=>setTitle(e.target.value)}/></label>
+         <label>{words[3]}<input required type="number" min="0.01" max="1000000000000" step="0.01" value={amount} onChange={e=>setAmount(e.target.value)}/></label>
+         <div className="finance-fields-row"><label>{words[4]}<input required type="date" value={date} onChange={e=>setDate(e.target.value)}/></label><label>Vaqt (ixtiyoriy)<input type="time" value={time} onChange={e=>setTime(e.target.value)}/></label></div>
+         <div className="finance-fields-row"><label>Takrorlanish<select value={repeat} onChange={e=>setRepeat(e.target.value as PlannedPayment['repeat'])}>{(['none','weekly','monthly'] as const).map((v,i)=><option key={v} value={v}>{words[5+i]}</option>)}</select></label><label>Belgi<select value={icon} onChange={e=>setIcon(e.target.value)}>{Object.entries(paymentIcons).map(([key,emoji])=><option key={key} value={key}>{emoji}</option>)}</select></label></div>
+       </form>:plan?<>
+         <div className="calm-hero"><span className="payment-glyph">{paymentIcons[paymentIconKey(plan.icon)]}</span><h2>{plan.amount.toLocaleString()} <small>so‘m</small></h2><p>{plan.dueDate}{plan.time?' · '+plan.time:''}</p></div>
+         {paying?<><p className="calm-note">{words[10]}</p><select aria-label="Hisob" value={cardId} onChange={e=>setCardId(e.target.value)}><option value="cash">Naqd</option>{cards.map(c=><option key={c.id} value={c.id}>{c.bank} · {c.number.slice(-4)}</option>)}</select></>:<>
+           {plan.dueDate<=today?<div className="calm-subsection"><p>To‘lov amalga oshdimi?</p><div className="calm-actions"><button className="calm-action" disabled={busy} onClick={()=>{setCardId('cash');setPaying(true);}}>✅ To‘ladim</button><button className="calm-action" disabled={busy} onClick={()=>void run(notPaid)}>Hali to‘lamadim</button></div></div>:notice&&<p className="calm-note">🔔 To‘lov kuni yaqinlashmoqda</p>}
+           <div className="calm-actions"><button className="calm-action" onClick={()=>edit(plan)}>Tahrirlash</button><button className="calm-action calm-danger" onClick={()=>setDeleting(true)}>{words[15]}</button></div>
+           {deleting&&<div className="calm-subsection"><p>Reja o‘chirilsinmi?</p><div className="calm-actions"><button className="calm-action" disabled={busy} onClick={()=>setDeleting(false)}>{words[12]}</button><button className="calm-action calm-danger" disabled={busy} onClick={()=>void run(async()=>{await save(plans.filter(p=>p.id!==plan.id));setSelected(null);setDeleting(false);})}>{words[15]}</button></div></div>}
+         </>}
+       </>:null}
+       {error&&<p role="alert" className="calm-error">{error}</p>}
+     </SwipeSheet>
+   </motion.div>}</AnimatePresence>,document.body)}
+ </section>;
 }

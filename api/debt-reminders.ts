@@ -1,3 +1,5 @@
+import {deliverPlannedReminder} from './services/_plannedReminderService.js';
+import {cleanPlannedPayments,paymentReminderKind} from '../shared/plannedPayments.js';
 import {logBotMessage} from './services/_telegramMessageService.js';
 import crypto from "node:crypto"
 import type { VercelRequest, VercelResponse } from "@vercel/node"
@@ -172,6 +174,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .range(offset, offset + 49)
       if (error) throw new Error("STORE_UNAVAILABLE")
       for (const user of data || []) {
+        const plans=cleanPlannedPayments(user.onboarding?.planned_payments).filter(p=>paymentReminderKind(p,today,user.transactions||[]));
+        for(let i=0;i<plans.length;i+=5){
+          if(Date.now()>=deadline)return res.status(503).json({error:'REMINDERS_INCOMPLETE',...counts});
+          const results=await Promise.all(plans.slice(i,i+5).map(p=>deliverPlannedReminder(user,p,today)));
+          for(const result of results)counts[result]++;
+        }
         const debts = (user.transactions || []).filter(
           (t: DebtRecord) =>
             isDebt(t) &&

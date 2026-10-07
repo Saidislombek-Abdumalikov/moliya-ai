@@ -16,7 +16,8 @@
     "test:ai": "node --import tsx scripts/test-ai-runtime.ts && node --import tsx scripts/test-client-ai-boundary.ts && node --import tsx scripts/test-amount-evidence.ts && node --import tsx scripts/test-transaction-directions.ts && node --import tsx scripts/test-ai-media.ts",
     "test:debts": "node --import tsx scripts/test-debts.ts && node --import tsx scripts/test-debt-delivery.ts",
     "test:weekly": "node --import tsx scripts/test-weekly-plans.ts && node --import tsx scripts/test-atomic-quota.ts && node --import tsx scripts/test-automation-rules.ts",
-    "test:assistant": "node --import tsx scripts/test-assistant-flow.ts && node --import tsx scripts/test-debts.ts && node --import tsx scripts/test-critical-security.ts && node --import tsx scripts/test-transaction-date.ts"
+    "test:assistant": "node --import tsx scripts/test-assistant-flow.ts && node --import tsx scripts/test-debts.ts && node --import tsx scripts/test-critical-security.ts && node --import tsx scripts/test-transaction-date.ts",
+    "test:plans": "node --import tsx scripts/test-planned-reminders.ts && node --import tsx scripts/test-client-preference-race.ts"
   },
   "dependencies": {
     "@google/genai": "^2.12.0",

@@ -40,3 +40,5 @@ va storage ruxsatlarini alohida tekshirish kerak.
 14 bajarilmasa kunlik eslatma cron va admin boshqaruvi xavfsiz ravishda 503 qaytaradi; yangi backenddan oldin qo‘llang.
 15 audit jadvalida oldindan berilgan table va column ruxsatlarini bekor qiladi;
 faqat serverning `service_role` roli o‘qib/qo‘sha oladi.
+
+22-planned-reminders.sql — rejali to‘lovlar uchun kunlik Telegram eslatmalari ledgeri; 21 dan keyin, yangi backenddan oldin bajaring. Mavjud qarz cronidan foydalanadi.

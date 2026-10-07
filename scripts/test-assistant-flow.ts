@@ -367,19 +367,18 @@ const bot = await botAssistant(
 )
 assert.match(bot.text, /165000/)
 assert.equal(user.transactions.length, 0)
-assert.equal(user.onboarding.planned_payments, undefined)
-const id = user.onboarding.assistant_pending.id
-assert.ok(publicOnboarding(user).assistant_draft)
-assert.match(await resolveAssistantPlan(uid, id, true), /saqlandi/)
-assert.equal(user.onboarding.planned_payments.length, 1)
-assert.equal(user.transactions.length, 0)
-await resolveAssistantPlan(uid, id, true)
-assert.equal(user.onboarding.planned_payments.length, 1)
+assert.equal(user.onboarding.planned_payments.length,1);
+assert.equal(user.onboarding.assistant_pending,null);
+assert.doesNotMatch(JSON.stringify(bot.keyboard),/asok_|txok_/);
+const id=user.onboarding.planned_payments[0].id;
+await botAssistant(uid,123,18,{text:'har oy 15 wifi 165 ming'},'https://example.test');
+assert.equal(user.onboarding.planned_payments.length,1);
+assert.equal(user.transactions.length,0);
 user.is_blocked = true
 await assert.rejects(
   resolveAssistantPlan(uid, id, true),
   /ACCOUNT_NOT_ELIGIBLE/,
 )
 console.log(
-  "Assistant contract passed: flexible/single-action requests and multi-action rejection, missing amounts/dates, original currency, history, authenticated audio, shared quota, no parser writes, preference isolation, bot plan confirmation and replay. Gemini/Telegram were mocked; no live calls.",
+  "Assistant contract passed: flexible/single-action requests and multi-action rejection, missing amounts/dates, original currency, history, authenticated audio, shared quota, no parser writes, preference isolation, bot plan autosave and replay. Gemini/Telegram were mocked; no live calls.",
 )

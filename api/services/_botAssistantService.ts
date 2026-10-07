@@ -1,3 +1,4 @@
+import {tashkentDay} from '../../shared/reminderPolicy.js';
 import { parseSafeDate } from "../_uzbekFinancialNormalizer.js"
 import { createHash } from "node:crypto"
 import { supabase } from "../_supabaseClient.js"
@@ -9,7 +10,7 @@ import {
 } from "../../shared/assistant.js"
 import { cleanPlannedPayments } from "../../shared/plannedPayments.js"
 import { updateProfileSnapshot } from "./_profileWriteService.js"
-import { stageBotDraft } from "./_botDraftService.js"
+import { saveBotMessageTransactions } from "./_botDraftService.js"
 const escape = (s: unknown) =>
   String(s || "")
     .replace(/&/g, "&amp;")
@@ -77,7 +78,7 @@ export async function botAssistant(
       ["expense", "income", "debt", "lending"].includes(a.kind),
     )
   ) {
-    const staged = await stageBotDraft(
+    const staged = await saveBotMessageTransactions(
       userId,
       chatId,
       messageId,
@@ -85,9 +86,10 @@ export async function botAssistant(
         type: a.kind,
         amount: a.amount,
         category: a.category,
-        note: a.title,
+        note: a.note || reply.transcription || a.title,
         title: a.title,
         ...parseSafeDate(a.date),
+        ...(a.time?{time:a.time}:{}),
         cardId: "cash",
         ...(["debt", "lending"].includes(a.kind)
           ? {
@@ -100,30 +102,27 @@ export async function botAssistant(
       })),
     )
     // Clear only the conversation that produced this draft; profile conflicts remain visible.
-    const fresh = await userFor(userId)
-    await updateProfileSnapshot(userId, fresh, {
-      onboarding: { ...fresh.onboarding, assistant_pending: null },
-    })
-    if (staged.status !== "pending")
-      return { text: "Bu yozuv avval ko‘rib chiqilgan.", keyboard: undefined }
-    const stagedPreview = staged.transactions
-      .map(
-        (t: any) =>
-          `${labels[t.type]}: ${String(t.title || t.note || "").slice(0, 40)} — ${Math.abs(Number(t.amount))} UZS`,
-      )
-      .join("\n")
-    return {
-      text: `${escape(stagedPreview)}\n\nNaqd hisobga saqlansinmi?`,
-      keyboard: {
-        inline_keyboard: [
-          [
-            { text: "✅ Tasdiqlash", callback_data: "txok_" + staged.id },
-            { text: "❌ Bekor qilish", callback_data: "txno_" + staged.id },
-          ],
-        ],
-      },
-    }
+    try{
+      const fresh = await userFor(userId);
+      await updateProfileSnapshot(userId, fresh, {onboarding: {...fresh.onboarding,assistant_pending:null}});
+    }catch{/* The financial write has already committed. */}
+    const savedId=staged.transactions?.[0]?.id;
+    const link=new URL(appUrl);if(savedId)link.searchParams.set('editTransaction',savedId);
+    return {text:`✅ ${staged.replayed?'Avval saqlangan':'Saqlandi'}\n${escape(preview)}`,keyboard:{inline_keyboard:[[{text:'✏️ Ko‘rish / tahrirlash',web_app:{url:link.href}}],[{text:'🌐 Webda ochish',url:link.href}]]}};
   }
+  if(complete && reply.actions.every(a=>a.kind==='payment')){
+    const fresh=await userFor(userId);
+    const plans=cleanPlannedPayments(fresh.onboarding?.planned_payments);
+    const a=reply.actions[0],planId=`assistant_${id}_0`;
+    if(!plans.some(p=>p.id===planId)){
+      if(plans.length>=100)throw Error('PLAN_LIMIT');
+      plans.push({id:planId,title:a.title,amount:a.amount!,dueDate:a.date!,time:a.time||undefined,icon:a.icon,repeat:a.repeat,anchorDay:Number(a.date!.slice(8)),createdDay:tashkentDay(new Date())});
+    }
+    await updateProfileSnapshot(userId,fresh,{onboarding:{...fresh.onboarding,planned_payments:plans,assistant_pending:null}});
+    const link=new URL(appUrl);link.searchParams.set('paymentId',planId);
+    return {text:`🗓 Reja saqlandi\n${escape(a.title)} · ${a.amount} so‘m\n📅 ${a.date}${a.time?' · '+a.time:''}\n🔔 Eslataman. Balans o‘zgarmadi.`,keyboard:{inline_keyboard:[[{text:'📱 Rejani ochish',web_app:{url:link.href}}],[{text:'🌐 Webda ochish',url:link.href}]]}};
+  }
+
   const pending = {
     id,
     reply,
@@ -201,6 +200,7 @@ export async function resolveAssistantPlan(
           amount: a.amount!,
           dueDate: a.date!,
           repeat: a.repeat,
+          time:a.time||undefined,icon:a.icon,createdDay:tashkentDay(new Date()),
           anchorDay: Number(a.date!.slice(8)),
         })
     })

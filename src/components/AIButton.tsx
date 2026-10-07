@@ -1,3 +1,4 @@
+import {aiPopupStyle,aiPopupTransition} from './aiPopupStyle';
 import {localTransactionDate} from '../../shared/transactionDate';
 import AssistantReview from './AssistantReview';
 import {normalizeAssistantReply,cleanCategoryPreferences,type AssistantReply} from '../../shared/assistant';
@@ -101,7 +102,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
   const serviceMessage = ({uz:'AI xizmatidan javob kelmadi. Birozdan so‘ng qayta urinib ko‘ring.',uz_cyrl:'AI хизматидан жавоб келмади. Бироздан сўнг қайта уриниб кўринг.',ru:'Сервис ИИ не ответил. Попробуйте немного позже.',en:'The AI service did not respond. Please try again shortly.'})[language];
   const restrictedMessage = ({uz:'Hisobga kirish cheklangan. Botdagi tasdiqlarni tekshiring.',uz_cyrl:'Ҳисобга кириш чекланган. Ботдаги тасдиқларни текширинг.',ru:'Доступ ограничен. Проверьте подтверждения в боте.',en:'Access restricted. Check your verification in the bot.'})[language];
   const typeIndex = (type: EntryType) => (Object.keys(typeConfig) as EntryType[]).indexOf(type)
-  const { addTransaction, hasSampleData, setHasSampleData, cards, userId,customTransactions,onboarding,updateOnboarding } = useFinance()
+  const { addTransaction, hasSampleData, setHasSampleData, cards, userId,customTransactions,onboarding } = useFinance()
   const [open, setOpen] = useState(false)
   const [step, setStep] = useState<'type' | 'form' | 'voice' | 'done' | 'removeSamples' | 'assistant'>('type')
   const [assistantReply,setAssistantReply]=useState<AssistantReply|null>(null);
@@ -239,7 +240,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
     if(a.currency==='UZS' && ['expense','income','debt','lending'].includes(a.kind)){
       const type=a.kind as EntryType;
       setSelectedType(type);
-      setEntry({type,amount:a.amount===null?'':String(a.amount),category:a.category,title:a.title,note:a.title,date:a.date? a.date+'T12:00':'',cardId:'cash',debtWho:a.person,debtDueDate:a.dueDate,debtDateConfirmed:!!a.dueDate||a.dueUnknown});
+      setEntry({type,amount:a.amount===null?'':String(a.amount),category:a.category,title:a.title,note:a.note||reply.transcription||a.title,date:a.date? a.date+'T'+(a.time||new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Tashkent',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date())):'',cardId:'cash',debtWho:a.person,debtDueDate:a.dueDate,debtDateConfirmed:!!a.dueDate||a.dueUnknown});
       setAiError(reply.question);setStep('form');
     }else setStep('assistant');
   };
@@ -447,14 +448,17 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
       // 1. Authoritative backend/Supabase persistence must complete BEFORE success
       if(!customTransactions.some(t=>String(t.id)===String(customTx.id)))await addTransaction(customTx)
 
+      void (async()=>{
       const original=assistantReply?.actions[0];
       if(original && onboarding?.remember_categories && original.category!==entry.category && entry.category.trim()){
         const phrase=original.title.trim().toLowerCase();
-        if(phrase)try{await updateOnboarding({category_preferences:cleanCategoryPreferences([...(onboarding.category_preferences||[]).filter(p=>p.phrase!==phrase),{phrase,category:entry.category}])});}catch{/* The confirmed transaction must not be retried for a preference failure. */}
+        if(phrase)try{await fetch('/api/auth/sync-data',{method:'POST',headers:getClientAuthHeaders(),body:JSON.stringify({onboarding:{category_preferences:cleanCategoryPreferences([...(onboarding.category_preferences||[]).filter(p=>p.phrase!==phrase),{phrase,category:entry.category}])}})});window.dispatchEvent(new Event('user_sync_requested'));}catch{/* The confirmed transaction must not be retried for a preference failure. */}
       }
       if (hasSampleData) {
         try{await setHasSampleData(false)}catch{/* Financial write already succeeded; sample cleanup is optional. */}
       }
+
+      })().catch(()=>{});
 
       // 2. Database confirmed success: show celebratory card and auto-dismiss
       if(assistantDraftId)void fetch('/api/auth/sync-data',{method:'POST',headers:getClientAuthHeaders(),body:JSON.stringify({clearAssistantDraft:assistantDraftId})});
@@ -586,19 +590,9 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
-              transition={{ type: 'spring', damping: 26, stiffness: 220 }}
+              transition={aiPopupTransition}
               onClick={(e) => e.stopPropagation()}
-              style={{
-                width: '100%',
-                maxWidth: 'var(--app-max-width, 440px)',
-                maxHeight: '92dvh',
-                overflowY: 'auto',
-                background: '#FFFFFF',
-                borderRadius: '28px 28px 0 0',
-                padding: '16px 20px max(12px, env(safe-area-inset-bottom, 0px))',
-                boxShadow: '0 -10px 40px rgba(0,0,0,0.15)',
-                position: 'relative',
-              }}
+              style={aiPopupStyle}
             >
               {/* Header Handle Bar with Close Button */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
@@ -1275,8 +1269,9 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
                 {/* Note */}
                 <div style={{ marginBottom: 20 }}>
                   <label style={{ fontSize: 12, color: '#8B82C4', fontWeight: 500, display: 'block', marginBottom: 6 }}>{copy.note}</label>
-                  <input
-                    type="text"
+                  <textarea
+                    rows={2}
+                    maxLength={4000}
                     placeholder={copy.optional}
                     value={entry.note}
                     onChange={(e) => setEntry((prev) => ({ ...prev, note: e.target.value }))}

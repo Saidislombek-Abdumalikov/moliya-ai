@@ -103,7 +103,7 @@ button:active {
 .ai-restored-sheet,.ai-restored-sheet *{box-sizing:border-box}
 .ai-restored-sheet input,.ai-restored-sheet select{min-width:0;max-width:100%}
 .ai-debt-fields label{display:block;margin-bottom:12px;font-size:12px;font-weight:500;color:#8B82C4}
-.ai-debt-fields input,.ai-debt-fields select{display:block;width:100%;margin-top:6px;padding:16px 20px;border-radius:20px;border:1px solid rgba(124,58,237,.15);background:linear-gradient(145deg,#FFFFFF,#F8F7FC);box-shadow:inset 0 2px 6px rgba(124,58,237,.03),0 4px 16px rgba(124,58,237,.06);font:inherit;font-size:15px;font-weight:600;color:#4B456D;outline-color:#8B5CF6}
+.ai-debt-fields input,.ai-debt-fields select,.ai-debt-fields textarea{display:block;width:100%;margin-top:6px;padding:16px 20px;border-radius:20px;border:1px solid rgba(124,58,237,.15);background:linear-gradient(145deg,#FFFFFF,#F8F7FC);box-shadow:inset 0 2px 6px rgba(124,58,237,.03),0 4px 16px rgba(124,58,237,.06);font:inherit;font-size:15px;font-weight:600;color:#4B456D;outline-color:#8B5CF6}
 .ai-debt-unknown{padding:12px 20px;border:1px solid #E8E3F8;border-radius:14px;margin-bottom:12px;background:#F7F5FF;color:#6D28D9;font:inherit;font-size:14px;cursor:pointer}
 
 .voice-auto-switch:focus-within{outline:2px solid #7C3AED;outline-offset:4px;border-radius:30px}
@@ -115,12 +115,52 @@ button:active {
 .finance-span,.assistant-fields-grid legend{grid-column:1/-1}
 .finance-fields-row input,.finance-fields-row select{padding-left:10px!important;padding-right:10px!important}
 .finance-popup-overlay{position:fixed;inset:0;z-index:400;display:flex;align-items:flex-end;justify-content:center;background:rgba(15,12,41,.45);backdrop-filter:blur(4px);overscroll-behavior:contain}
-.finance-popup-heading{display:flex;align-items:center;justify-content:space-between;gap:12;margin-bottom:16px}
+.finance-popup-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
 .finance-popup-heading h3{font-size:18px;font-weight:700;color:#1E1A3C}
 .finance-popup-close{width:28px;height:28px;border:0;border-radius:50%;background:#F5F4FA;color:#5C548A;font-size:14px;font-weight:700;cursor:pointer;flex-shrink:0}
 .finance-popup-primary{width:100%;padding:14px;border:0;border-radius:14px;background:#7C3AED;color:#fff;font:inherit;font-size:15px;font-weight:600;cursor:pointer;box-shadow:0 4px 16px #7C3AED4D}
 .finance-popup-primary:disabled{background:#EDE9FE;color:#8B82C4;cursor:default;box-shadow:none}
-.profile-setting-row{display:flex;align-items:center;justify-content:space-between;gap:16;padding:16px 0;border-bottom:1px solid #F0ECF8}
+.profile-setting-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 0;border-bottom:1px solid #F0ECF8}
 .profile-setting-row strong{display:block;font-size:14px;font-weight:600;color:#1E1A3C}
 .profile-setting-row small{display:block;font-size:12px;color:#8B82C4;line-height:1.5;margin-top:5px}
 @media(max-width:340px){.finance-fields-row,.assistant-fields-grid{grid-template-columns:minmax(0,1fr)}.finance-span{grid-column:auto}}
+
+/* Related finance views use the restored AI popup palette and control sizes. */
+.calm-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
+.calm-header h3,.calm-heading{font-size:18px;font-weight:700;color:#1E1A3C;margin:0 0 16px;line-height:1.4}
+.calm-header h3{margin:0}
+.calm-icon{width:40px;height:40px;display:grid;place-items:center;border:1px solid #DDD6FE;border-radius:14px;background:#EDE9FE;color:#7C3AED;font-size:24px;cursor:pointer;flex-shrink:0}
+.calm-row{display:flex;align-items:center;gap:12px;width:100%;border:1px solid rgba(124,58,237,.15);border-radius:20px;padding:16px;margin:10px 0;background:linear-gradient(145deg,#FFFFFF,#F8F7FC);color:#4B456D;text-align:left;font:inherit;cursor:pointer;box-shadow:inset 0 2px 6px rgba(124,58,237,.03),0 4px 16px rgba(124,58,237,.06)}
+.calm-row>span:not(.payment-glyph){flex:1;min-width:0}
+.calm-row strong{display:block;font-size:15px;font-weight:600;line-height:1.4;overflow-wrap:anywhere;color:#1E1A3C}
+.calm-row small{display:block;font-size:12px;color:#8B82C4;margin-top:6px;line-height:1.4}
+.calm-row b{font-size:15px;font-weight:600;text-align:right;max-width:46%;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.calm-row b small{display:inline;font-weight:400}
+.calm-actions{display:flex;gap:10px;margin:16px 0}
+.calm-action{flex:1;border:1px solid #DDD6FE;background:#EDE9FE;color:#7C3AED;padding:14px;border-radius:14px;font:inherit;font-size:15px;font-weight:600;cursor:pointer;min-width:0}
+.calm-action:disabled{opacity:.5;cursor:default}
+.calm-danger{color:#DC2626;background:#FEF2F2;border-color:#FECACA}
+.calm-hero{text-align:center;padding:20px 16px;background:#F7F5FF;border:1px solid #DDD6FE;border-radius:20px;margin:12px 0 18px}
+.calm-hero h2{font-size:28px;font-weight:700;margin:10px 0;color:#7C3AED;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.calm-hero small,.calm-hero p{font-size:13px;color:#8B82C4;line-height:1.5}
+.calm-note{font-size:14px;line-height:1.6;color:#4B456D;overflow-wrap:anywhere;margin:12px 0}
+.calm-muted{font-size:12px;color:#8B82C4}
+.calm-subsection{border-top:1px solid #F0ECF8;padding-top:16px;margin-top:16px;font-size:14px;color:#4B456D}
+.calm-empty{padding:20px 0;font-size:13px;color:#8B82C4;text-align:center}
+.calm-text{border:0;background:none;padding:10px 0;color:#8B82C4;font:inherit;font-size:12px;cursor:pointer}
+.calm-segments{display:flex;padding:4px;border-radius:14px;background:#F5F4FA;gap:4px}
+.calm-segments button{flex:1;border:0;border-radius:10px;padding:10px;background:transparent;color:#8B82C4;font:inherit;font-size:14px;font-weight:600;cursor:pointer}
+.calm-segments button[aria-pressed=true]{background:#7C3AED;color:#fff;box-shadow:0 4px 16px rgba(124,58,237,.2)}
+.calm-error{color:#DC2626;font-size:13px;margin:10px 0}
+.calm-success{color:#15803D;font-size:13px;margin:8px 0}
+.upcoming-calm{margin:0 20px 24px;padding:16px;border:1px solid #DDD6FE;border-radius:20px;background:#F7F5FF}
+.payment-glyph{display:inline-grid;place-items:center;width:44px;height:44px;background:#EDE9FE;border-radius:14px;flex-shrink:0;font-size:22px}
+.profile-setting-row{gap:16px;padding:16px 0;align-items:center}
+.profile-setting-row strong{font-size:15px;color:#1E1A3C}
+.profile-setting-row small{font-size:13px;color:#8B82C4;max-width:30ch}
+.ai-debt-fields textarea{resize:vertical;min-height:78px;max-height:160px;line-height:1.5}
+.calm-action,.calm-icon,.finance-popup-primary{transition:background .18s,box-shadow .18s,transform .18s}
+.calm-action:active:not(:disabled),.calm-icon:active:not(:disabled),.finance-popup-primary:active:not(:disabled){transform:scale(.98)}
+.calm-action:focus-visible,.calm-icon:focus-visible,.calm-row:focus-visible,.calm-segments button:focus-visible,.finance-popup-primary:focus-visible{outline:2px solid #7C3AED;outline-offset:3px}
+@media(max-width:360px){.calm-row{gap:8px;padding:14px 10px}.calm-row strong,.calm-row b{font-size:14px}.payment-glyph{width:36px;height:36px;font-size:20px}.calm-hero h2{font-size:25px}}
+@media(prefers-reduced-motion:reduce){.calm-action,.calm-icon,.finance-popup-primary{transition:none}}

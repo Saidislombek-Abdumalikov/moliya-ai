@@ -1,5 +1,7 @@
-import {debtRelationships,debtPersonLabel} from '../../shared/debtPeople';
-import { useEffect, useMemo, useRef, useState } from "react"
+import {aiPopupStyle,aiPopupTransition} from './aiPopupStyle';
+import {createPortal} from 'react-dom';
+import {debtPersonLabel} from '../../shared/debtPeople';
+import { useEffect, useRef, useState } from "react"
 import { AnimatePresence, motion } from "motion/react"
 import SwipeSheet from "./SwipeSheet"
 import { useFinance, type Transaction } from "../FinanceContext"
@@ -11,20 +13,10 @@ import {
   dueDebts,
   localDay,
   validDay,
-  reminderPromise,
 } from "../../shared/debts"
 import { readMoneyInput, formatMoneyInput } from "../../shared/moneyInput"
 const money = (n: number) =>
   n.toLocaleString("en-US", { maximumFractionDigits: 2 }).replace(/,/g, " ")
-const button = {
-  border: 0,
-  borderRadius: 12,
-  padding: "12px 14px",
-  background: "#F3EEFF",
-  color: "#6D28D9",
-  cursor: "pointer",
-  fontWeight: 600,
-} as const
 const input = {
   width: "100%",
   padding: "16px 20px",
@@ -37,7 +29,7 @@ const input = {
   font: "inherit",
 } as const
 export default function DebtsHub() {
-  const { customTransactions: all, userId, debtAction } = useFinance()
+  const { customTransactions: all, userId, debtAction, deleteTransaction } = useFinance()
   const [open, setOpen] = useState(false),
     [tab, setTab] = useState("debt"),
     [closed, setClosed] = useState(false),
@@ -53,6 +45,7 @@ export default function DebtsHub() {
     [error, setError] = useState(""),
     [success, setSuccess] = useState(""),
     [notice, setNotice] = useState(false)
+  const [editing,setEditing]=useState(false),[searching,setSearching]=useState(false),[deleting,setDeleting]=useState(false);
   const busyRef = useRef(false)
   const paymentAttempt = useRef<{ key: string; id: string } | null>(null)
   const [today, setToday] = useState(localDay())
@@ -97,6 +90,7 @@ export default function DebtsHub() {
   }, [])
   const tx = all.find((t) => String(t.id) === selected && isDebt(t))
   useEffect(() => {
+    setEditing(false);setDeleting(false);
     if (tx) {
       setName(tx.debtWho || ""); setRelationship(tx.debtRelationship||"")
       setPersonId(tx.debtPersonId || "person_" + crypto.randomUUID())
@@ -107,17 +101,6 @@ export default function DebtsHub() {
       paymentAttempt.current = null
     }
   }, [selected, !!tx])
-  const people = useMemo(
-    () =>
-      Array.from(
-        new Map(
-          debts
-            .filter((t) => t.debtPersonId)
-            .map((t) => [t.debtPersonId!, t.debtWho || "Nomsiz"]),
-        ).entries(),
-      ),
-    [all],
-  )
   const filtered = debts
     .filter(
       (t) =>
@@ -183,446 +166,44 @@ export default function DebtsHub() {
       for (const t of reminders) await debtAction(t, "dismiss")
       setNotice(false)
     }, "")
-  return (
-    <>
-      <motion.button className="home-summary-card debt-summary" whileTap={{scale:0.98}} onClick={()=>setOpen(true)}>
-        <span className="summary-title">Qarz / Haqqim <span>↗</span></span>
-        {(['debt','lending'] as const).map(kind=><span key={kind} className="debt-summary-line">
-          <span className="summary-caption">{kind==='debt'?'Qarzlarim':'Haqqim'}</span>
-          <strong className="summary-money" style={{color:kind==='debt'?'#7C3AED':'#4C1D95'}}>{money(debts.filter(t=>t.type===kind).reduce((sum,t)=>sum+debtRemaining(t,all),0))} <small>so‘m</small></strong>
-        </span>)}
-      </motion.button>
-      <AnimatePresence>
-        {notice && !open && reminders.length > 0 && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            style={{
-              position: "fixed",
-              inset: 0,
-              zIndex: 1100,
-              background: "#100A2980",
-              display: "flex",
-              alignItems: "flex-end",
-              justifyContent: "center",
-            }}
-          >
-            <SwipeSheet className="ai-restored-sheet"
-              footer={tx ? (                  <button
-                    disabled={busy || !name.trim() || (!!due && !validDay(due))}
-                    style={{
-                      ...button,
-                      width: "100%",
-                      background: "#7C3AED",
-                      color: "#fff",
-                      marginBottom: 0,
-                    }}
-                    onClick={() =>
-                      void run(
-                        () =>
-                          debtAction(tx, "edit", {
-                            personName: name.trim(),
-                            relationship,
-                            personId,
-                            dueDate: due || null,
-                          }),
-                        due
-                          ? reminderPromise(due, String(tx.date).slice(0, 10))
-                          : "Sanasiz saqlandi",
-                      )
-                    }
-                  >
-                    O‘zgarishlarni saqlash
-                  </button>) : undefined}
-              transition={{type:'spring',damping:26,stiffness:220}}
-              onDismiss={dismissNotices}
-              locked={busy}
-              initial={{ y: "100%" }}
-              animate={{ y: 0 }}
-              exit={{ y: "100%" }}
-              style={{
-                background: "#fff",
-                width: "100%",
-                maxWidth: 440,
-                padding: 20,
-                borderRadius: "28px 28px 0 0",
-                boxShadow:"0 -10px 40px #00000026",
-                maxHeight: "80dvh",
-                overflowY: "auto",
-              }}
-            >
-              <h3 style={{ fontWeight: 700, marginBottom: 12 }}>
-                Qarz eslatmalari
-              </h3>
-              {reminders.map((t) => (
-                <button
-                  key={t.id}
-                  style={{
-                    ...button,
-                    width: "100%",
-                    textAlign: "left",
-                    marginBottom: 8,
-                  }}
-                  onClick={() => {
-                    setSelected(String(t.id))
-                    setTab(t.type)
-                    setOpen(true)
-                    setNotice(false)
-                  }}
-                >
-                  {t.type === "debt" ? "Qaytarasiz" : "Qaytarib olasiz"} ·{" "}
-                  {t.debtWho || "Nomsiz"}
-                  <br />
-                  {money(debtRemaining(t, all))} so‘m · {status(t)}
-                </button>
-              ))}
-              {error && <p role="alert">{error}</p>}
-              <button
-                disabled={busy}
-                style={{ ...button, width: "100%", marginTop: 8 }}
-                onClick={dismissNotices}
-              >
-                {busy ? "Kutilmoqda…" : "Keyinroq"}
-              </button>
-            </SwipeSheet>
-          </motion.div>
-        )}
-      </AnimatePresence>
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={close}
-            style={{
-              position: "fixed",
-              inset: 0,
-              zIndex: 1050,
-              background: "#100A2980",
-              display: "flex",
-              alignItems: "flex-end",
-              justifyContent: "center",
-            }}
-          >
-            <SwipeSheet className="ai-restored-sheet"
-              footer={tx ? (                  <button
-                    disabled={busy || !name.trim() || (!!due && !validDay(due))}
-                    style={{
-                      ...button,
-                      width: "100%",
-                      background: "#7C3AED",
-                      color: "#fff",
-                      marginBottom: 0,
-                    }}
-                    onClick={() =>
-                      void run(
-                        () =>
-                          debtAction(tx, "edit", {
-                            personName: name.trim(),
-                            relationship,
-                            personId,
-                            dueDate: due || null,
-                          }),
-                        due
-                          ? reminderPromise(due, String(tx.date).slice(0, 10))
-                          : "Sanasiz saqlandi",
-                      )
-                    }
-                  >
-                    O‘zgarishlarni saqlash
-                  </button>) : undefined}
-              transition={{type:'spring',damping:26,stiffness:220}}
-              onDismiss={close}
-              locked={busy}
-              scrollBody
-              initial={{ y: "100%" }}
-              animate={{ y: 0 }}
-              exit={{ y: "100%" }}
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                background: "#fff",
-                color: "#1E1A3C",
-                width: "100%",
-                maxWidth: "var(--app-max-width,440px)",
-                padding: "16px 20px max(16px, env(safe-area-inset-bottom))",
-                borderRadius: "28px 28px 0 0",
-                boxShadow:"0 -10px 40px #00000026",
-                maxHeight: "90dvh",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  marginBottom: 16,
-                }}
-              >
-                <button
-                  style={button}
-                  disabled={busy}
-                  onClick={() => {
-                    if (selected) {
-                      setSelected(null)
-                      setError("")
-                    } else if (person) setPerson(null)
-                    else close()
-                  }}
-                >
-                  Ro‘yxat
-                </button>
-                <strong>
-                  {tx
-                    ? tx.debtWho || "Qarz"
-                    : person
-                      ? filtered.find((t) => personKey(t) === person)
-                          ?.debtWho || "Nomsiz"
-                      : "Qarzlar"}
-                </strong>
-                <button style={button} onClick={close} disabled={busy}>
-                  ✕
-                </button>
-              </div>
-              {error && (
-                <p role="alert" style={{ color: "#DC2626", marginBottom: 12 }}>
-                  {error}
-                </p>
-              )}
-              {success && (
-                <p role="status" style={{ color: "#15803D", marginBottom: 12 }}>
-                  {success}
-                </p>
-              )}
-              {tx ? (
-                <>
-                  <p>
-                    {tx.type === "debt" ? "Qarz oldim" : "Qarz berdim"} ·{" "}
-                    {String(tx.date).slice(0, 10)}
-                  </p>
-                  <h2
-                    style={{ fontSize: 24, fontWeight: 700, margin: "10px 0" }}
-                  >
-                    Qoldiq: {money(debtRemaining(tx, all))} so‘m
-                  </h2>
-                  <p style={{ fontSize: 13, marginBottom: 12 }}>
-                    Boshlang‘ich: {money(Math.abs(Number(tx.amount)))} so‘m ·{" "}
-                    {status(tx)}
-                  </p>
-                  <p style={{ marginBottom: 12 }}>{tx.note}</p>
-                  {debtRemaining(tx, all) > 0 && (
-                    <>
-                      <label>
-                        Qaytarilgan summa
-                        <input
-                          aria-label="Qaytarilgan summa"
-                          style={input}
-                          inputMode="decimal"
-                          value={amount}
-                          onChange={(e) =>
-                            setAmount(formatMoneyInput(e.target.value))
-                          }
-                        />
-                      </label>
-                      <div
-                        style={{ display: "flex", gap: 8, marginBottom: 20 }}
-                      >
-                        <button
-                          style={button}
-                          disabled={busy || readMoneyInput(amount) === null}
-                          onClick={() => pay(readMoneyInput(amount)!)}
-                        >
-                          Qisman {tx.type === "debt" ? "qaytardim" : "oldim"}
-                        </button>
-                        <button
-                          style={{
-                            ...button,
-                            background: "#7C3AED",
-                            color: "#fff",
-                          }}
-                          disabled={busy}
-                          onClick={() => pay(debtRemaining(tx, all))}
-                        >
-                          To‘liq {tx.type === "debt" ? "qaytardim" : "oldim"}
-                        </button>
-                      </div>
-                    </>
-                  )}
-                  <div className="finance-fields-row">
-                  <label>
-                    Odam
-                    <select
-                      style={input}
-                      value={
-                        people.some(([id]) => id === personId) ? personId : ""
-                      }
-                      onChange={(e) => {
-                        const id = e.target.value
-                        setPersonId(id || "person_" + crypto.randomUUID()); setRelationship(debts.find(t=>t.debtPersonId===id)?.debtRelationship||"")
-                        if (id)
-                          setName(people.find(([p]) => p === id)?.[1] || "")
-                      }}
-                    >
-                      <option value="">Yangi / alohida odam</option>
-                      {people.map(([id, n]) => (
-                        <option value={id} key={id}>
-                          {debtPersonLabel(n,debts.find(t=>t.debtPersonId===id)?.debtRelationship)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>Munosabat<select aria-label="Munosabat" style={input} value={relationship} onChange={e=>setRelationship(e.target.value)}><option value="">Tanlanmagan</option>{Object.entries(debtRelationships).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label>
-                  </div>
-                  <div className="finance-fields-row"><label>Ism
-                  <input
-                    aria-label="Ism"
-                    style={input}
-                    value={name}
-                    maxLength={100}
-                    placeholder="Ism"
-                    onChange={(e) => setName(e.target.value)}
-                  />
+  const back=()=>{if(busyRef.current)return;if(editing){setEditing(false);return;}if(selected){setSelected(null);return;}if(person){setPerson(null);return;}close();};
 
-                  </label><label>
-                    Qaytarish sanasi
-                    <input
-                      aria-label="Qaytarish sanasi"
-                      type="date"
-                      style={input}
-                      value={due}
-                      onChange={(e) => setDue(e.target.value)}
-                    />
-                  </label>
-                  </div>
-                  <button style={{...button,background:!due?'#DDD6FE':button.background}} aria-pressed={!due} onClick={() => setDue("")}>
-                    Hali kelishilmagan
-                  </button>
-                  <p style={{ fontSize: 12, margin: "10px 0" }}>
-                    {reminderPromise(due, String(tx.date).slice(0, 10))}
-                  </p>
-
-                  <strong>To‘lovlar tarixi</strong>
-                  {all
-                    .filter((p) => p.debtPaymentFor === String(tx.id))
-                    .map((p) => (
-                      <p
-                        key={p.id}
-                        style={{
-                          padding: "10px 0",
-                          borderBottom: "1px solid #F1EDF8",
-                        }}
-                      >
-                        {String(p.date).slice(0, 10)} ·{" "}
-                        {money(Math.abs(Number(p.amount)))} so‘m
-                      </p>
-                    ))}
-                </>
-              ) : (
-                <>
-                  {!person && (
-                    <>
-                      <div
-                        style={{ display: "flex", gap: 8, marginBottom: 12 }}
-                      >
-                        {["debt", "lending"].map((t) => (
-                          <button
-                            style={{
-                              ...button,
-                              background: tab === t ? "#7C3AED" : "#F3EEFF",
-                              color: tab === t ? "#fff" : "#6D28D9",
-                              flex: 1,
-                            }}
-                            key={t}
-                            onClick={() => setTab(t)}
-                          >
-                            {t === "debt" ? "Qarzlarim" : "Haqdorligim"}
-                          </button>
-                        ))}
-                      </div>
-                      <input
-                        aria-label="Qarz qidirish"
-                        style={input}
-                        placeholder="Ism yoki izoh bo‘yicha qidirish"
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                      />
-                      <label style={{ display: "block", marginBottom: 16 }}>
-                        <input
-                          type="checkbox"
-                          checked={closed}
-                          onChange={(e) => setClosed(e.target.checked)}
-                        />{" "}
-                        Yopilganlar tarixi
-                      </label>
-                    </>
-                  )}
-                  {!filtered.length && (
-                    <p
-                      style={{
-                        padding: 20,
-                        textAlign: "center",
-                        color: "#766E9E",
-                      }}
-                    >
-                      Hozircha yozuv yo‘q. AI tugmasidan qarz qo‘shing.
-                    </p>
-                  )}
-                  {person
-                    ? filtered
-                        .filter((t) => personKey(t) === person)
-                        .map((t) => (
-                          <button
-                            key={t.id}
-                            style={{
-                              ...button,
-                              display: "block",
-                              width: "100%",
-                              textAlign: "left",
-                              marginBottom: 10,
-                            }}
-                            onClick={() => setSelected(String(t.id))}
-                          >
-                            <strong>{money(debtRemaining(t, all))} so‘m</strong>
-                            <p>{status(t)}</p>
-                            <small>{t.note}</small>
-                          </button>
-                        ))
-                    : groups.map((g) => (
-                        <button
-                          key={g.key}
-                          style={{
-                            ...button,
-                            display: "block",
-                            width: "100%",
-                            textAlign: "left",
-                            marginBottom: 10,
-                            padding: 16,
-                          }}
-                          onClick={() => setPerson(g.key)}
-                        >
-                          <strong>
-                            {debtPersonLabel(g.items[0].debtWho,g.items[0].debtRelationship)} · {g.items.length}{" "}
-                            ta
-                          </strong>
-                          <p>
-                            {money(
-                              g.items.reduce(
-                                (sum, t) => sum + debtRemaining(t, all),
-                                0,
-                              ),
-                            )}{" "}
-                            so‘m
-                          </p>
-                          <small>{status(g.items[0])}</small>
-                        </button>
-                      ))}
-                </>
-              )}
-            </SwipeSheet>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </>
-  )
+  return <>
+    <motion.button className="home-summary-card debt-summary" whileTap={{scale:.98}} onClick={()=>setOpen(true)}>
+      <span className="summary-title">Qarz / Haqqim <span>↗</span></span>
+      {(['debt','lending'] as const).map(kind=><span key={kind} className="debt-summary-line"><span className="summary-caption">{kind==='debt'?'Qarzlarim':'Haqqim'}</span><strong className="summary-money">{money(debts.filter(t=>t.type===kind).reduce((sum,t)=>sum+debtRemaining(t,all),0))} <small>so‘m</small></strong></span>)}
+    </motion.button>
+    {createPortal(<><AnimatePresence>{notice&&!open&&reminders.length>0&&<motion.div className="finance-popup-overlay" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} onClick={dismissNotices}>
+      <SwipeSheet className="ai-restored-sheet ai-debt-fields" scrollBody onDismiss={dismissNotices} locked={busy} style={aiPopupStyle} transition={aiPopupTransition} onClick={e=>e.stopPropagation()} initial={{y:'100%'}} animate={{y:0}} exit={{y:'100%'}}>
+        <h3 className="calm-heading">🔔 Qarz eslatmasi</h3>
+        {reminders.map(t=><button className="calm-row" key={t.id} onClick={()=>{setSelected(String(t.id));setTab(t.type);setOpen(true);setNotice(false);}}><span><strong>{t.debtWho||'Nomsiz'}</strong><small>{status(t)}</small></span><b>{money(debtRemaining(t,all))} so‘m</b></button>)}
+        <button className="calm-action" disabled={busy} onClick={dismissNotices}>Keyinroq</button>
+      </SwipeSheet>
+    </motion.div>}</AnimatePresence>
+    <AnimatePresence>{open&&<motion.div className="finance-popup-overlay" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} onClick={close}>
+      <SwipeSheet scrollBody className="ai-restored-sheet ai-debt-fields" onDismiss={back} locked={busy} style={aiPopupStyle} transition={aiPopupTransition} onClick={e=>e.stopPropagation()} initial={{y:'100%'}} animate={{y:0}} exit={{y:'100%'}}
+        footer={tx&&editing?<button className="finance-popup-primary" disabled={busy||!name.trim()||!!due&&!validDay(due)} onClick={()=>void run(async()=>{await debtAction(tx,'edit',{personName:name.trim(),relationship,personId,dueDate:due||null});setEditing(false);})}>Saqlash</button>:undefined}>
+        <div className="calm-header"><h3>{tx?tx.debtWho||'Nomsiz':person?filtered.find(t=>personKey(t)===person)?.debtWho:'Qarz / Haqqim'}</h3>{!tx&&!person&&<button className="calm-icon" aria-label="Qidirish" aria-expanded={searching} onClick={()=>{setSearching(v=>!v);setSearch('');}}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg></button>}</div>
+        {error&&<p role="alert" className="calm-error">{error}</p>}{success&&<p role="status" className="calm-success">{success}</p>}
+        {tx?<>
+          <div className="calm-hero"><small>{tx.type==='debt'?'Qarz qoldig‘i':'Olinadigan summa'}</small><h2>{money(debtRemaining(tx,all))} <small>so‘m</small></h2><p>{status(tx)}</p></div>
+          {editing?<>
+            <div className="finance-fields-row"><label>Ism<input style={input} value={name} maxLength={100} onChange={e=>setName(e.target.value)}/></label><label>Qaytarish sanasi<input style={input} type="date" value={due} onChange={e=>setDue(e.target.value)}/></label></div>
+            <button className="calm-action" aria-pressed={!due} onClick={()=>setDue('')}>Hali kelishilmagan {!due?'✓':''}</button>
+            {debtRemaining(tx,all)>0&&<div className="calm-subsection"><label>Qaytarilgan summa<input style={input} inputMode="decimal" value={amount} onChange={e=>setAmount(formatMoneyInput(e.target.value))}/></label><div className="calm-actions"><button className="calm-action" disabled={busy||readMoneyInput(amount)===null} onClick={()=>pay(readMoneyInput(amount)!)}>Qisman qaytarildi</button><button className="calm-action" disabled={busy} onClick={()=>pay(debtRemaining(tx,all))}>To‘liq qaytarildi</button></div></div>}
+          </>:<>
+            {tx.note&&<p className="calm-note">{tx.note}</p>}
+            <small className="calm-muted">{String(tx.date).slice(0,10)} · Boshlang‘ich {money(Math.abs(Number(tx.amount)))} so‘m</small>
+            <div className="calm-actions"><button className="calm-action" onClick={()=>setEditing(true)}>Tahrirlash</button><button className="calm-action calm-danger" onClick={()=>setDeleting(true)}>O‘chirish</button></div>
+            {deleting&&<div className="calm-subsection"><p>Bu yozuv o‘chirilsinmi?</p><div className="calm-actions"><button className="calm-action" disabled={busy} onClick={()=>setDeleting(false)}>Bekor qilish</button><button className="calm-action calm-danger" disabled={busy} onClick={()=>void run(async()=>{if(all.some(p=>p.debtPaymentFor===String(tx.id)))throw Error('To‘lovlari bor qarzni o‘chirib bo‘lmaydi.');if(!await deleteTransaction(tx.id))throw Error('O‘chirilmadi');setSelected(null);},'')}>O‘chirish</button></div></div>}
+            {all.some(p=>p.debtPaymentFor===String(tx.id))&&<details className="calm-subsection"><summary>To‘lovlar tarixi</summary>{all.filter(p=>p.debtPaymentFor===String(tx.id)).map(p=><p key={p.id}>{String(p.date).slice(0,10)} · {money(Math.abs(Number(p.amount)))} so‘m</p>)}</details>}
+          </>}
+        </>:<>
+          {!person&&<><div className="calm-segments">{['debt','lending'].map(t=><button key={t} aria-pressed={tab===t} onClick={()=>setTab(t)}>{t==='debt'?'Qarzlarim':'Haqqim'}</button>)}</div>{searching&&<input aria-label="Qarz qidirish" autoFocus style={input} placeholder="Ism yoki izoh" value={search} onChange={e=>setSearch(e.target.value)}/>}<button className="calm-text" aria-pressed={closed} onClick={()=>setClosed(v=>!v)}>{closed?'Faol qarzlar':'Yopilganlar tarixi'}</button></>}
+          {!filtered.length&&<p className="calm-empty">Hozircha yozuv yo‘q</p>}
+          {person?filtered.filter(t=>personKey(t)===person).map(t=><motion.button whileTap={{scale:.98}} className="calm-row" key={t.id} onClick={()=>setSelected(String(t.id))}><span><strong>{t.title||'Qarz'}</strong><small>{status(t)}</small></span><b>{money(debtRemaining(t,all))} so‘m</b></motion.button>):groups.map(g=><motion.button whileTap={{scale:.98}} className="calm-row" key={g.key} onClick={()=>{setPerson(g.key);if(g.items.length===1)setSelected(String(g.items[0].id));}}><span><strong>{debtPersonLabel(g.items[0].debtWho,g.items[0].debtRelationship)}</strong><small>{g.items.length} ta · {status(g.items[0])}</small></span><b>{money(g.items.reduce((sum,t)=>sum+debtRemaining(t,all),0))} so‘m</b></motion.button>)}
+        </>}
+      </SwipeSheet>
+    </motion.div>}</AnimatePresence></>,document.body)}
+  </>;
 }

@@ -47,6 +47,6 @@ export function withBotAppLinks(markup: any, appUrl: string): any {
     row.some(b => isApp(b?.web_app?.url) || isApp(b?.url))
       ? row.map(b => [b]) : [row]);
   if (!buttons.some((b: any) => isApp(b?.url)))
-    rows.push([{text: '🌐 Veb-ilovani ochish', url: appUrl}]);
+    rows.push([{text: '🌐 Veb-ilovani ochish', url: buttons.find((b:any)=>isApp(b?.web_app?.url))?.web_app.url || appUrl}]);
   return {...markup, inline_keyboard: rows};
 }

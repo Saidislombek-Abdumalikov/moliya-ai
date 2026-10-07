@@ -696,6 +696,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   // Dedicated data refresh function to keep Bot, Mini App, and Web App in sync
   const refreshSequence=useRef(0);
+  const preferenceWrites=useRef(0);
   const sessionRenewal=useRef<Promise<any> | null>(null);
   const renewTelegramSession = () => {
     if (logoutPending.current) return Promise.reject(new Error('Chiqish davom etmoqda.'));
@@ -716,6 +717,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return sessionRenewal.current;
   };
   const refreshUserData = async (_targetId?: string | null) => {
+    if(preferenceWrites.current>0)return;
     const refreshToken=readSessionToken();
     if(!refreshToken) {
       if ((window as any).Telegram?.WebApp?.initData) return renewTelegramSession();
@@ -792,6 +794,10 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const updateOnboarding = async (newData: Partial<OnboardingResult>): Promise<OnboardingResult> => {
     const targetUserId = getEffectiveUserId();
+    const preferenceSession=readSessionToken();
+    preferenceWrites.current++;
+    ++refreshSequence.current;
+    try {
 
     // 1. Optimistically update local state & storage immediately (preserving bot-authoritative identity fields)
     const updated = {
@@ -823,13 +829,16 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     let response: Response;
     try { response = await savePreferences(); }
     catch (error) {
+      if(preferenceSession!==readSessionToken())throw error;
       setOnboarding(onboarding);
       localStorage.setItem('user_onboarding_v1', JSON.stringify(onboarding));
       throw error;
     }
     // Bot and app may edit the same profile at the same instant. The backend
     // reads a fresh snapshot on each request, so one retry resolves that race.
+    if(preferenceSession!==readSessionToken())throw Error('Sessiya o‘zgardi. Qayta kiring.');
     if (response.status === 409 && !newData.planned_payments) response = await savePreferences();
+    if(preferenceSession!==readSessionToken())throw Error('Sessiya o‘zgardi. Qayta kiring.');
     if(!response.ok) {
       setOnboarding(onboarding);
       localStorage.setItem('user_onboarding_v1',JSON.stringify(onboarding));
@@ -837,16 +846,27 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
 
     return updated;
+    } finally {
+      preferenceWrites.current--;
+      ++refreshSequence.current;
+    }
   };
 
   const writeFinancial = async (financialAction:string,payload:unknown,expected:unknown=null) => {
-    const response=await fetch('/api/auth/sync-data',{method:'POST',headers:getClientAuthHeaders(),body:JSON.stringify({financialAction,payload,expected})});
+    const sessionAtStart=readSessionToken();
+    const response=await fetchWithTimeout('/api/auth/sync-data',{method:'POST',headers:getClientAuthHeaders(),body:JSON.stringify({financialAction,payload,expected})});
+    if(sessionAtStart!==readSessionToken())throw Error('Sessiya o‘zgardi. Qayta kiring.');
     if(!response.ok){
       await refreshUserData().catch(()=>{});
       throw new Error(response.status===409 ? 'Ma’lumot boshqa qurilmada o‘zgargan. Yangilangan holatni tekshirib, qayta urinib ko‘ring.' : 'O‘zgarish saqlanmadi. Qayta urinib ko‘ring.');
     }
-    // A refresh failure after a successful commit must not encourage duplicate submission.
-    await refreshUserData().catch(()=>{});
+    // The server has committed. Show that confirmed write immediately; sync in the background.
+    if(financialAction==='put_transaction'){
+      ++refreshSequence.current;
+      const committed=payload as Transaction;
+      setCustomTransactions(current=>{const next=[committed,...current.filter(t=>String(t.id)!==String(committed.id))];localStorage.setItem('user_transactions_v1',JSON.stringify(next));return next;});
+      void refreshUserData().catch(()=>{});
+    }else await refreshUserData().catch(()=>{});
   };
   const saveCards = async (updatedCards: Card[], adjustments: Transaction[] = []): Promise<boolean> => {
     try {await writeFinancial('save_cards_atomic',{cards:updatedCards,transactions:adjustments},{cards,transactions:customTransactions});return true;}

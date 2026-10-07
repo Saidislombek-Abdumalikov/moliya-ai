@@ -1,3 +1,4 @@
+import {tashkentDay} from '../../shared/reminderPolicy';
 import { useState, useRef } from "react"
 import { createPortal } from "react-dom"
 import { useFinance } from "../FinanceContext"
@@ -81,6 +82,7 @@ export default function AssistantReview({
             amount: actionAmount(a)!,
             dueDate: a.date!,
             repeat: a.repeat,
+            time:a.time||undefined,icon:a.icon,createdDay:tashkentDay(new Date()),
             anchorDay: Number(a.date!.slice(8)),
           })
         }
@@ -122,10 +124,11 @@ export default function AssistantReview({
             id,
             type: a.kind,
             amount,
-            note: a.title + currencyNote,
+            note: (a.note || reply.transcription || a.title) + currencyNote,
             title: a.title,
             category: a.category,
             date: a.date!,
+            time:a.time||undefined,
             cardId: a.cardId || "cash",
             ...(["debt", "lending"].includes(a.kind)
               ? {
@@ -186,7 +189,7 @@ export default function AssistantReview({
             cursor: "pointer",
           }}
         >
-          {busy ? "Saqlanmoqda…" : "Tasdiqlash"}
+          {busy ? "Saqlanmoqda…" : "Saqlash"}
         </button>);
   return (
     <div className="ai-debt-fields">
@@ -231,13 +234,14 @@ export default function AssistantReview({
             {labels[a.kind]} {done.includes(i) ? "✓ Saqlandi" : ""}
           </legend>
           <label className="finance-span">
-            Nomi / izoh
+            Nomi
             <input
               value={a.title}
               onChange={(e) => patch(i, { title: e.target.value })}
               maxLength={100}
             />
           </label>
+          <label className="finance-span">Izoh<textarea value={a.note||reply.transcription||a.title} onChange={e=>patch(i,{note:e.target.value})} rows={2}/></label>
           <label>
             Summa
             <input
@@ -327,6 +331,7 @@ export default function AssistantReview({
               onChange={(e) => patch(i, { date: e.target.value })}
             />
           </label>
+          <label>Vaqt (ixtiyoriy)<input type="time" value={a.time||""} onChange={e=>patch(i,{time:e.target.value||null})}/></label>
           {a.kind === "payment" && (
             <label>
               Takrorlanish
@@ -406,7 +411,7 @@ export default function AssistantReview({
           )}
         </fieldset>
       ))}
-      {!done.length && !!reply.question && (
+      {!done.length && !!reply.question && !actions.every(a=>a.kind==='payment') && (
         <form
           onSubmit={(e) => {
             e.preventDefault()

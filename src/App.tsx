@@ -24,7 +24,7 @@ export default function App() {
 
   const [showTour, setShowTour] = useState(false);
   const dismissedTourFor = useRef<string | null>(null);
-  const [activeScreen, setActiveScreen] = useState<Screen>('home');
+  const [activeScreen, setActiveScreen] = useState<Screen>(()=>{const target=new URLSearchParams(location.search).get('screen');return (['home','calendar','analytics','profile'] as const).includes(target as Screen)?target as Screen:'home';});
   const tourGeneration = onboarding?.account_created_at || '';
   const tourSurface = isTelegramMiniApp() ? 'telegram' : 'web';
   const tourIdentity = userId ? tourKey(userId,tourGeneration,tourSurface) : '';

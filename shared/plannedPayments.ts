@@ -1,9 +1,14 @@
+import {validDay,daysBetween} from './debts.js';
 export interface PlannedPayment {
   id: string
   title: string
   amount: number
   dueDate: string
   repeat: "none" | "weekly" | "monthly"
+  time?: string
+  icon?: string
+  createdDay?: string
+  snoozedUntil?: string
   anchorDay?: number
 }
 export function cleanPlannedPayments(value: unknown): PlannedPayment[] {
@@ -40,6 +45,10 @@ export function cleanPlannedPayments(value: unknown): PlannedPayment[] {
         amount: p.amount,
         dueDate: p.dueDate,
         repeat: p.repeat,
+        ...(typeof p.time==='string' && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(p.time)?{time:p.time}:{}),
+        icon:paymentIconKey(p.icon),
+        ...(validDay(p.createdDay)?{createdDay:p.createdDay}:{}),
+        ...(validDay(p.snoozedUntil)?{snoozedUntil:p.snoozedUntil}:{}),
         anchorDay:
           Number.isInteger(p.anchorDay) && p.anchorDay >= 1 && p.anchorDay <= 31
             ? p.anchorDay
@@ -61,11 +70,25 @@ export function nextPayment(p: PlannedPayment): PlannedPayment | null {
     ).getUTCDate()
     d.setUTCDate(Math.min(day, last))
   }
-  return { ...p, dueDate: d.toISOString().slice(0, 10) }
+  return { ...p, dueDate: d.toISOString().slice(0, 10), snoozedUntil: undefined }
 }
 
 // Preserve a monthly anchor after February/short-month clamping when editing other fields.
 export function editedPaymentAnchor(previous: PlannedPayment | undefined, dueDate: string, repeat: PlannedPayment['repeat']): number | undefined {
   return previous?.repeat === 'monthly' && repeat === 'monthly' && previous.dueDate === dueDate
     ? previous.anchorDay : undefined;
+}
+
+export const paymentIcons:Record<string,string>={wifi:'📶',phone:'📱',home:'🏠',utilities:'💡',transport:'🚕',education:'📚',health:'💊',subscription:'🔁',other:'🧾'};
+export function paymentIconKey(value:unknown):string {return typeof value==='string' && Object.prototype.hasOwnProperty.call(paymentIcons,value)?value:'other';}
+export function paymentRecordId(p:PlannedPayment):string{return `planned_${p.id}_${p.dueDate}`;}
+export function paymentReminderKind(p:PlannedPayment,today:string,transactions:{id?:string|number}[]):'early'|'due'|null {
+  if(transactions.some(t=>String(t.id)===paymentRecordId(p)) || (p.snoozedUntil && p.snoozedUntil>today))return null;
+  if(p.dueDate<=today)return 'due';
+  return daysBetween(today,p.dueDate)<=3 && (!p.createdDay || daysBetween(p.createdDay,p.dueDate)>3)?'early':null;
+}
+export function tomorrowDay(today:string):string {const d=new Date(today+'T00:00:00Z');d.setUTCDate(d.getUTCDate()+1);return d.toISOString().slice(0,10);}
+
+export function nextUnseenPaymentReminder(plans:PlannedPayment[],today:string,transactions:{id?:string|number}[],wasSeen:(p:PlannedPayment)=>boolean):PlannedPayment|undefined {
+  return plans.find(p=>paymentReminderKind(p,today,transactions)!==null&&!wasSeen(p));
 }

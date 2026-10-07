@@ -1093,82 +1093,10 @@ async function renderStatsMessage(userId: string, period: 'today' | 'month' | 'a
     periodTitle = "Barcha vaqtlar";
   }
 
-  // Sort newest transactions first
-  const sortedTxs = [...filteredTxs].sort((a: any, b: any) => {
-    const timeA = a.date ? new Date(`${a.date}T${a.time || '00:00'}:00Z`).getTime() : (Number(a.id) || 0);
-    const timeB = b.date ? new Date(`${b.date}T${b.time || '00:00'}:00Z`).getTime() : (Number(b.id) || 0);
-    return timeB - timeA;
-  });
-
-  const totals = financialTotals(sortedTxs);
-  const totalExpense = totals.expense;
-  const totalIncome = totals.income;
-  const catTotals = totals.categories;
-  const balance = totals.cashFlow;
-  const netSign = balance >= 0 ? '+' : '';
-
-  // Pagination for records list
-  const pageSize = 8;
-  const totalPages = Math.max(1, Math.ceil(sortedTxs.length / pageSize));
-  const currentPage = Math.max(1, Math.min(page, totalPages));
-  const startIndex = (currentPage - 1) * pageSize;
-  const pageTxs = sortedTxs.slice(startIndex, startIndex + pageSize);
-
-  let recordsListText = '';
-  if (sortedTxs.length === 0) {
-    recordsListText = `<i>Ushbu davrda hech qanday operatsiya kiritilmagan.</i>\n`;
-  } else {
-    recordsListText = pageTxs.map((t: any, idx: number) => {
-      const globalNum = startIndex + idx + 1;
-      const kind = financialKind(t);
-      const isInc = kind === 'income' || kind === 'debt';
-      const typeEmoji = kind === 'debt' || kind === 'lending' ? '🤝' : isInc ? '🟢' : '🔴';
-      const amt = financialAmount(t).toLocaleString('uz-UZ').replace(/,/g, ' ');
-      const sign = isInc ? '+' : '-';
-      const name = (t.title || t.note || t.name || (kind === 'debt' ? 'Olingan qarz' : kind === 'lending' ? 'Berilgan qarz' : 'Xarajat')).trim();
-      const catEmoji = CATEGORY_EMOJIS[t.category] || (isInc ? '💰' : '📦');
-      const catName = t.category || 'Boshqa';
-      const dateDisplay = t.date ? t.date : 'Bugun';
-      const timeDisplay = t.time ? ` ${t.time}` : '';
-      const paymentType = t.cardId === 'cash' || !t.cardId ? '💵 Naqd' : '💳 Karta';
-
-      return `${globalNum}. ${typeEmoji} <b>${name}</b>: <code>${sign}${amt} so'm</code>\n` +
-             `   └ ${catEmoji} <i>${catName}</i> • 📅 ${dateDisplay}${timeDisplay} • ${paymentType}`;
-    }).join('\n\n');
-  }
-
-  // Top category summary
-  const topCats = Object.entries(catTotals).sort((a, b) => b[1] - a[1]).slice(0, 3);
-  let topCatStr = '';
-  if (topCats.length > 0) {
-    topCatStr = topCats.map(([cat, sum]) => {
-      const em = CATEGORY_EMOJIS[cat] || '📦';
-      return `${em} ${cat}: <b>${sum.toLocaleString('uz-UZ').replace(/,/g, ' ')}</b>`;
-    }).join('  |  ');
-  }
-
-  const quota = await checkAiQuota(userId);
-  const planLabel = quota.isTrial
-    ? '💎 1-Kunlik Premium Sinov'
-    : quota.isPremium
-      ? '⭐ VIP Premium'
-      : '🆓 Bepul Tarif';
-
-  const statsText =
-    `📊 <b>Moliyaviy hisobot: ${periodTitle}</b>\n\n` +
-    `🔴 <b>Xarajat:</b> ${totalExpense.toLocaleString('uz-UZ').replace(/,/g, ' ')} so'm\n` +
-    `🟢 <b>Daromad:</b> ${totalIncome.toLocaleString('uz-UZ').replace(/,/g, ' ')} so'm\n` +
-    (totals.borrowed ? `🤝 <b>Olingan qarz:</b> ${totals.borrowed.toLocaleString('uz-UZ')} so'm\n` : '') +
-    (totals.lent ? `🤝 <b>Berilgan qarz:</b> ${totals.lent.toLocaleString('uz-UZ')} so'm\n` : '') +
-    `⚖️ <b>Pul oqimi:</b> ${netSign}${balance.toLocaleString('uz-UZ').replace(/,/g, ' ')} so'm\n` +
-    `📋 <b>Jami operatsiyalar:</b> ${sortedTxs.length} ta\n` +
-    (topCatStr ? `🏆 <b>Top xarajatlar:</b> ${topCatStr}\n` : '') +
-    `🏷 <b>Tarif:</b> ${planLabel}\n` +
-    `\n──────────────────\n` +
-    `📝 <b>Kiritilgan yozuvlar (${sortedTxs.length > 0 ? `${startIndex + 1}-${Math.min(startIndex + pageSize, sortedTxs.length)} / ${sortedTxs.length}` : '0'}):</b>\n\n` +
-    recordsListText +
-    (totalPages > 1 ? `\n\n📄 <i>Sahifa: ${currentPage} / ${totalPages}</i>` : '') +
-    `\n\n👇 <i>Barcha xarajatlar tahlili va grafiklar Mini Appda!</i>`;
+  const totals=financialTotals(filteredTxs);
+  const totalExpense=totals.expense,totalIncome=totals.income,balance=totals.cashFlow;
+  const netSign=balance>=0?'+':'';
+  const statsText = `📊 <b>${periodTitle}</b>\n\n🔴 Xarajat: ${totalExpense.toLocaleString('uz-UZ')} so‘m\n🟢 Daromad: ${totalIncome.toLocaleString('uz-UZ')} so‘m\n⚖️ Pul oqimi: ${netSign}${balance.toLocaleString('uz-UZ')} so‘m\n\n📈 Batafsil tahlil — quyidagi tugmada.`;
 
   // Dynamic Navigation & Filter Keyboard
   const periodRow = [
@@ -1179,25 +1107,8 @@ async function renderStatsMessage(userId: string, period: 'today' | 'month' | 'a
 
   const inline_keyboard: any[] = [periodRow];
 
-  // Pagination row if multiple pages exist
-  if (totalPages > 1) {
-    const pageRow: any[] = [];
-    if (currentPage > 1) {
-      pageRow.push({ text: `⬅️ Oldingi`, callback_data: `stats_${period}_${currentPage - 1}` });
-    }
-    pageRow.push({ text: `• ${currentPage} / ${totalPages} •`, callback_data: `noop` });
-    if (currentPage < totalPages) {
-      pageRow.push({ text: `Keyingi ➡️`, callback_data: `stats_${period}_${currentPage + 1}` });
-    }
-    inline_keyboard.push(pageRow);
-  }
-
-  inline_keyboard.push([
-    { text: "📱 Mini Appda to'liq ko'rish 🚀", web_app: { url: appUrl } }
-  ]);
-  inline_keyboard.push([
-    { text: "🔙 Asosiy Profil", callback_data: "view_profile" }
-  ]);
+  const analysisUrl=new URL(appUrl);analysisUrl.searchParams.set('screen','analytics');
+  inline_keyboard.push([{text:'📱 Tahlilni ochish',web_app:{url:analysisUrl.href}}],[{text:'🌐 Webda tahlil',url:analysisUrl.href}]);
 
   return { text: statsText, keyboard: { inline_keyboard } };
 }

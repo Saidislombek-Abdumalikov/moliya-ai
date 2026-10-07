@@ -1,3 +1,4 @@
+import {paymentIconKey} from "./plannedPayments.js"
 import { validDay } from "./debts.js"
 export type AssistantKind = "expense" | "income" | "debt" | "lending" | "payment" | "repayment"
 export interface AssistantAction {
@@ -5,6 +6,9 @@ export interface AssistantAction {
   amount: number | null
   currency: string
   title: string
+  note?: string
+  time?: string | null
+  icon?: string
   category: string
   date: string | null
   person: string
@@ -78,6 +82,9 @@ export function normalizeAssistantReply(raw: any): AssistantReply {
           ? x.currency.toUpperCase().slice(0, 8)
           : "",
       title: String(x.title || "").slice(0, 100),
+      note: String(raw.transcription || x.note || x.title || '').slice(0, 4000),
+      time: x.time == null || x.time === '' ? null : String(x.time).slice(0,20),
+      icon: paymentIconKey(x.icon),
       category: String(x.category || "Boshqa").slice(0, 60),
       date: validDay(x.date) ? x.date : null,
       person: String(x.person || "").slice(0, 100),
@@ -112,6 +119,7 @@ export function actionAmount(action: AssistantAction): number | null {
   return amount > 0 && amount <= 1e12 ? amount : null
 }
 export function assistantActionIssue(a: AssistantAction): string | null {
+  if(a.time && !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(a.time))return 'Vaqtni aniqlashtiring.';
   if (!a.amount) return "Summani kiriting."
   if (!a.currency) return "Valyutani tanlang."
   if (actionAmount(a) === null) return "So‘mga aylantirish kursini kiriting."

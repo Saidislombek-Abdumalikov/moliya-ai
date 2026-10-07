@@ -4,7 +4,9 @@ import { motion, useDragControls, useReducedMotion, type HTMLMotionProps } from 
 type Props = Omit<HTMLMotionProps<'div'>,'children'> & { children?:ReactNode; footer?:ReactNode; scrollBody?:boolean; onDismiss: () => void; locked?: boolean };
 // Drag starts only on the handle; forms and content keep native scrolling.
 export default function SwipeSheet({onDismiss,locked=false,children,footer,scrollBody=false,style,...props}:Props) {
+  const sheetRef=useRef<HTMLDivElement>(null);
   const dragged=useRef(false);
+  useEffect(()=>{const key=(e:KeyboardEvent)=>{const sheets=document.querySelectorAll('[data-finance-sheet]');if(e.key==='Escape'&&!locked&&sheets[sheets.length-1]===sheetRef.current){e.preventDefault();onDismiss();}};window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key);},[locked,onDismiss]);
   const [dragging,setDragging]=useState(false);
   const controls=useDragControls();
   const reduced=useReducedMotion();
@@ -21,7 +23,7 @@ export default function SwipeSheet({onDismiss,locked=false,children,footer,scrol
     return()=>{viewport?.removeEventListener('scroll',update);viewport?.removeEventListener('resize',update);window.removeEventListener('resize',update);};
   },[]);
 
-  return <motion.div {...props} drag={locked?false:'y'} dragControls={controls} dragListener={false}
+  return <motion.div {...props} ref={sheetRef} data-finance-sheet role="dialog" aria-modal="true" drag={locked?false:'y'} dragControls={controls} dragListener={false}
     dragConstraints={{top:0,bottom:0}} dragElastic={{top:0.12,bottom:0.65}} dragSnapToOrigin
     onDragStart={()=>{dragged.current=true;setDragging(true);}}
     onDragEnd={(_,info)=>{

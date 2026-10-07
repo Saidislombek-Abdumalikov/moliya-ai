@@ -1,4 +1,6 @@
-import { useState } from 'react'
+import {aiPopupStyle,aiPopupTransition} from './aiPopupStyle';
+import {createPortal} from 'react-dom';
+import { useState, useRef }  from 'react'
 import { motion } from 'motion/react'
 import SwipeSheet from './SwipeSheet'
 import type { OnboardingResult } from './Onboarding'
@@ -16,14 +18,16 @@ export default function ProfileSettings({onboarding, onSave, onClose}: {
 }) {
   const t=copy[onboarding?.language || 'uz']
   const [busy,setBusy]=useState(false), [error,setError]=useState('')
+  const pending=useRef(false);
   const change=async(key:'voice_auto_send'|'remember_categories')=>{
-    if(busy || !onSave)return
+    if(pending.current || !onSave)return
+    pending.current=true
     setBusy(true);setError('')
-    try{await onSave({[key]:onboarding?.[key]!==true})}catch{setError(t[5])}finally{setBusy(false)}
+    try{await onSave({[key]:onboarding?.[key]!==true})}catch{setError(t[5])}finally{pending.current=false;setBusy(false)}
   }
-  return <motion.div className="finance-popup-overlay" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} onClick={()=>{if(!busy)onClose()}}>
-    <SwipeSheet className="ai-restored-sheet" onDismiss={onClose} locked={busy} scrollBody initial={{y:'100%'}} animate={{y:0}} exit={{y:'100%'}} transition={{type:'spring',damping:26,stiffness:220}} onClick={e=>e.stopPropagation()} style={{width:'100%',maxWidth:'var(--app-max-width,440px)',maxHeight:'90dvh',padding:'16px 20px max(16px,env(safe-area-inset-bottom))',borderRadius:'28px 28px 0 0',background:'#fff',boxShadow:'0 -10px 40px #00000026'}}>
-      <div className="finance-popup-heading"><h3>⚙️ {t[0]}</h3><button className="finance-popup-close" aria-label={t[6]} disabled={busy} onClick={onClose}>✕</button></div>
+  return createPortal(<motion.div className="finance-popup-overlay" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} onClick={()=>{if(!busy)onClose()}}>
+    <SwipeSheet className="ai-restored-sheet" onDismiss={onClose} locked={busy} scrollBody initial={{y:'100%'}} animate={{y:0}} exit={{y:'100%'}} transition={aiPopupTransition} onClick={e=>e.stopPropagation()} style={aiPopupStyle}>
+      <div className="finance-popup-heading"><h3>⚙️ {t[0]}</h3></div>
       {(['voice_auto_send','remember_categories'] as const).map((key,i)=><label key={key} className="profile-setting-row">
         <span><strong>{t[1+i*2]}</strong><small>{t[2+i*2]}</small></span>
         <span className="voice-auto-switch" style={{position:'relative',display:'inline-flex',flexShrink:0,width:52,height:30}}>
@@ -33,5 +37,5 @@ export default function ProfileSettings({onboarding, onSave, onClose}: {
       </label>)}
       {error&&<p role="alert" style={{fontSize:13,color:'#DC2626',marginTop:12}}>{error}</p>}
     </SwipeSheet>
-  </motion.div>
+  </motion.div>,document.body)
 }
