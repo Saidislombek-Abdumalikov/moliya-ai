@@ -93,6 +93,7 @@ export function normalizeAssistantReply(raw: any): AssistantReply {
       dueUnknown: (x.dueDate == null || x.dueDate === '') && (x.dueUnknown === true || ['debt','lending'].includes(x.kind)),
       repeat: ["weekly", "monthly"].includes(x.repeat) ? x.repeat : "none",
       debtId: String(x.debtId || "").slice(0, 200),
+      ...(typeof x.cardId === "string" ? {cardId:x.cardId.slice(0,200)} : {}),
     }
   })
   return {

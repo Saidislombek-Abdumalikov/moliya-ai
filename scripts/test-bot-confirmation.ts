@@ -98,14 +98,15 @@ const wav=Buffer.from(await encodeWav(new Float32Array(16000)).arrayBuffer());
  const q:any={like(){return q},select(){return q},update(v:any){patch=v;return q},insert(){return q},eq(k:string,v:any){if(k==='id')uid=v;return q},is(){return q},maybeSingle:execute,then(ok:any,bad:any){return execute().then(ok,bad)}};return q;
 };
 let transportId=1000;
+let scriptedAssistantReply:any=null;
 globalThis.fetch=async(input:any,options:any)=>{
  const req=input instanceof Request?input:new Request(input,options),url=req.url;
  if(url.includes('generativelanguage.googleapis.com')){
   const content=await req.clone().json();const str=JSON.stringify(content.contents);
-  const parsed=str.includes('You are a finance input assistant.')?{message:'',question:'',transcription:'400000 ishlatdim',actions:[{kind:str.includes('Alidan')?'debt':'expense',amount:str.includes('Alidan')?100000:400000,currency:'UZS',title:str.includes('Alidan')?'Ali':'Xarajat',category:'Boshqa',date:'2026-10-07',person:str.includes('Alidan')?'Ali':'',dueDate:null,dueUnknown:false,repeat:'none',debtId:''}]}:
+  const parsed=scriptedAssistantReply || (str.includes('You are a finance input assistant.')?{message:'',question:'',transcription:'400000 ishlatdim',actions:[{kind:str.includes('Alidan')?'debt':'expense',amount:str.includes('Alidan')?100000:400000,currency:'UZS',title:str.includes('Alidan')?'Ali':'Xarajat',category:'Boshqa',date:'2026-10-07',person:str.includes('Alidan')?'Ali':'',dueDate:null,dueUnknown:false,repeat:'none',debtId:''}]}:
    str.includes('Read this receipt.')?{isReceipt:true,totalText:'25 000',currency:'UZS',category:'Boshqa',title:'Do‘kon'}:
    str.includes('Transcribe exactly what is heard.')?{transcription:'400000 ishlatdim'}:
-   {transcription:'400000 ishlatdim',type:'expense',amount:400000,currency:'UZS',category:'Boshqa'};
+   {transcription:'400000 ishlatdim',type:'expense',amount:400000,currency:'UZS',category:'Boshqa'});
   return new Response(JSON.stringify({candidates:[{content:{role:'model',parts:[{text:JSON.stringify(parsed)}]},finishReason:'STOP'}]}),{status:200,headers:{'Content-Type':'application/json'}});
  }
  assert.ok(url.startsWith('https://api.telegram.org/'),url);
@@ -140,4 +141,30 @@ await test('undated debt autosaves once with no guessed return date',async()=>{
  assert.equal((await inbound(700,{text:'Alidan 100 ming qarz oldim'})).body.status,'duplicate');
  assert.equal((await transactions()).length,1);
 });
+const mealItem={kind:'expense',category:'Oziq-ovqat',currency:'UZS',date:'2026-10-08',account:'cash',group:'lunch',amount:24000,title:'Somsa',amountEvidence:'24 mingli'};
+await test('one lunch: 24000 plus 4000 saves exactly one 28000 expense and sends database receipt',async()=>{
+ scriptedAssistantReply={transcription:'Kecha abetga 24 mingli somsa va 4 mingli non choy',actions:[mealItem,{...mealItem,title:'Non choy',amount:4000,amountEvidence:'4 mingli'}]};
+ try{
+  sent.length=0;
+  await db.query('UPDATE users SET onboarding=$1 WHERE id=$2',[JSON.stringify({language:'uz',completed:true}),user]);
+  await inbound(710,{voice:{file_id:'test-audio',duration:5}});
+  const txs=await transactions();assert.equal(txs.length,1);assert.equal(txs[0].amount,-28000);
+  const receipt=sent.find(x=>x.body.text?.includes('Muvaffaqiyatli saqlandi'));
+  assert.ok(receipt);assert.match(receipt.body.text,/Oziq-ovqat/);assert.match(receipt.body.text,/Somsa|somsa/);
+  assert.match(receipt.body.text.replace(/[^0-9]/g,''),/28000/);
+  await inbound(710,{voice:{file_id:'test-audio',duration:5}});assert.equal((await transactions()).length,1);
+ }finally{scriptedAssistantReply=null;}
+});
+for(const [id,reply] of [
+ [711,{transcription:'avtobusga',actions:[],message:"Avtobusga qilgan xarajatni yozib qo'ydim."}],
+ [712,{transcription:'24 mingli somsa',actions:[{...mealItem,amount:24000000}]}],
+ [713,{transcription:'24 mingli somsa va 4 mingli taksi',actions:[mealItem,{...mealItem,category:'Transport',amount:4000,amountEvidence:'4 mingli'}]}]
+] as const){
+ await test(`unsafe interpretation ${id}: no ledger write and no success claim`,async()=>{
+  scriptedAssistantReply=reply;
+  try{await db.query('UPDATE users SET onboarding=$1 WHERE id=$2',[JSON.stringify({language:'uz',completed:true}),user]);sent.length=0;await inbound(id,{voice:{file_id:'test-audio',duration:5}});assert.equal((await transactions()).length,0);
+   assert.equal(sent.some(x=>/yozib qo|Muvaffaqiyatli saqlandi/.test(x.body.text||'')),false);
+  }finally{scriptedAssistantReply=null;}
+ });
+}
 console.log(`${count} bot confirmation checks passed. Offline PostgreSQL; not a live load test.`);await db.close();

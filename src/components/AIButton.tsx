@@ -240,7 +240,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
     if(a.currency==='UZS' && ['expense','income','debt','lending'].includes(a.kind)){
       const type=a.kind as EntryType;
       setSelectedType(type);
-      setEntry({type,amount:a.amount===null?'':String(a.amount),category:a.category,title:a.title,note:a.note||reply.transcription||a.title,date:a.date? a.date+'T'+(a.time||new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Tashkent',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date())):'',cardId:'cash',debtWho:a.person,debtDueDate:a.dueDate,debtDateConfirmed:!!a.dueDate||a.dueUnknown});
+      setEntry({type,amount:a.amount===null?'':String(a.amount),category:a.category,title:a.title,note:a.note||reply.transcription||a.title,date:a.date? a.date+'T'+(a.time||new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Tashkent',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date())):'',cardId:a.cardId||'cash',debtWho:a.person,debtDueDate:a.dueDate,debtDateConfirmed:!!a.dueDate||a.dueUnknown});
       setAiError(reply.question);setStep('form');
     }else setStep('assistant');
   };
@@ -292,7 +292,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
     const controller=new AbortController();requestRef.current=controller;
     const timeout=setTimeout(()=>controller.abort(),45000);
     try{
-      const response=await fetch('/api/parse-expense',{method:'POST',headers:getClientAuthHeaders(),signal:controller.signal,body:JSON.stringify({mode:'assistant',text,userId,history:assistantHistory})});
+      const response=await fetch('/api/parse-expense',{method:'POST',headers:getClientAuthHeaders(),signal:controller.signal,body:JSON.stringify({mode:'assistant',text,userId,language:onboarding?.language,history:assistantHistory})});
       if(response.status===401)throw Error('SESSION_REQUIRED');
       if(response.status===403)throw Error('ACCOUNT_RESTRICTED');
       if(response.status===429)throw Error(await ai429Code(response));
@@ -368,7 +368,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
           const dataUrl=await blobDataUrl(wav)
           const response=await fetch('/api/parse-expense',{
             method:'POST',headers:getClientAuthHeaders(),signal:controller.signal,
-            body:JSON.stringify({mode:'assistant',base64Audio:dataUrl.split(',')[1],userId,history:assistantHistory})
+            body:JSON.stringify({mode:'assistant',base64Audio:dataUrl.split(',')[1],userId,language:onboarding?.language,history:assistantHistory})
           })
           if(generation!==voiceGeneration.current)return
           if(response.status===401)throw new Error('SESSION_REQUIRED')

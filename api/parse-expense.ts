@@ -44,7 +44,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }else if(typeof text!=='string'||!text.trim()||text.length>4000)return res.status(400).json({error:'INVALID_TEXT'});
       const quota=await checkAndRecordAiUsage(caller.userId,audio?'voice':'text',audio?'Audio':text,'mini_app');
       if(!quota.allowed)return res.status(quota.statusCode||429).json({error:quota.code,message:quota.message});
-      try{return res.status(200).json(await parseAssistant({text,audio,history:req.body.history},caller.userDoc));}
+      try{return res.status(200).json(await parseAssistant({text,audio,history:req.body.history,language:req.body.language},caller.userDoc));}
       catch{return res.status(503).json({error:'AI_PARSING_UNAVAILABLE'});}
     }
     if (base64Audio !== undefined) {
