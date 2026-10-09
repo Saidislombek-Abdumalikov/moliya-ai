@@ -60,10 +60,16 @@ export function prepareAssistantReply(raw:any, language:keyof typeof copy, audio
   if((language==='uz'||language==='uz_cyrl') && /\b(?:borrow(?:ing)?|lend(?:ing)?|debt|loan)\b/i.test(String(data.question||'')))key='kind';
   if(key==='multiple')return reject(c.multiple);
   if(Object.hasOwn(c,key) && key!=='notSaved' && key!=='multiple')data.question=c[key as keyof typeof c];
-  // A model cannot attest to a database write. Successful receipts come from
-  // the bot's write result; incomplete drafts never display model acknowledgments.
+  // For a transaction, all output comes from fields or a clarification, never
+  // a model-written acknowledgment. This also handles unanticipated synonyms.
   if(data.actions.length)data.message='';
-  else if(/saqla(?:dim|ndi|b)|yozib\s+qo|qayd\s+(?:qil|et)|\b(?:saved|recorded|logged)\b|сохран|записал/i.test(String(data.message||'')))data.message=c.notSaved;
-  if(audio && !data.actions.length && !data.question && (!data.message || data.message===data.transcription || data.message===c.notSaved)){data.message=c.notSaved;data.question=c.audio;}
+  else if(data.intent!=='answer'){
+    data.message=c.notSaved;
+    if(!data.question)data.question=audio?c.audio:c.amount;
+  }
+  else if(/saqla(?:dim|ndi|b)|kirit(?:dim|ildi)|yozib\s+qo|qayd\s+(?:qil|et)|\b(?:saved|recorded|logged)\b|сохран|записал/i.test(String(data.message||''))){
+    data.message=c.notSaved;
+    if(!data.question)data.question=audio?c.audio:c.amount;
+  }
   return normalizeAssistantReply(data);
 }

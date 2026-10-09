@@ -1,3 +1,4 @@
+import {safeWarn} from "../_logger.js";
 import {createHash} from 'node:crypto';
 import {supabase} from '../_supabaseClient.js';
 import {normalizeBotTransactions} from './_financialDataService.js';
@@ -5,7 +6,7 @@ import {normalizeBotTransactions} from './_financialDataService.js';
 async function draftRpc(userId:string,id:string,action:string,payload:any=null) {
   if(!/^moliya_user_tg_[0-9]+$/.test(userId) || !/^[a-f0-9]{32}$/.test(id))throw new Error('INVALID_BOT_DRAFT');
   const {data,error}=await supabase.rpc('moliya_bot_draft',{p_user_id:userId,p_id:id,p_action:action,p_payload:payload});
-  if(error || !data || typeof data.status!=='string')throw new Error('BOT_DRAFT_UNAVAILABLE');
+  if(error || !data || typeof data.status!=='string'){safeWarn('[BOT_STORE_FAILURE]',{stage:action,code:typeof error?.code==='string'?error.code:'UNKNOWN'});throw new Error('BOT_DRAFT_UNAVAILABLE');}
   return data;
 }
 export async function stageBotDraft(userId:string,chatId:number|string,messageId:number,items:any[]) {

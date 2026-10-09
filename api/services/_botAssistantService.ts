@@ -110,7 +110,7 @@ export async function botAssistant(
     const link=new URL(appUrl);if(savedId)link.searchParams.set('editTransaction',savedId);
     const saved=staged.transactions?.[0];
     const receipt=staged.replayed ? '✅ Bu xabar avval saqlangan.' : saved ?
-      `✨ Muvaffaqiyatli saqlandi!\n\n💸 ${escape(labels[saved.type] || saved.type)}\n🏷 ${escape(saved.category || 'Boshqa')}\n💰 ${Math.abs(Number(saved.amount)).toLocaleString('uz-UZ')} so‘m\n📝 ${escape(String(saved.note || saved.title || '').slice(0,600))}\n📅 ${escape(saved.date || '')}${saved.time?' · '+escape(saved.time):''}` : '✅ Saqlandi';
+      `✨ <b>Muvaffaqiyatli saqlandi!</b>\n\n💸 ${escape(labels[saved.type] || saved.type)}\n🏷 <b>Kategoriya:</b> ${escape(saved.category || 'Boshqa')}\n💰 <b>Summa:</b> ${Math.abs(Number(saved.amount)).toLocaleString('uz-UZ')} so‘m\n📝 <b>Izoh:</b> ${escape(String(saved.note || saved.title || '').slice(0,600))}\n📅 <b>Sana:</b> ${escape(saved.date || '')}${saved.time?' | '+escape(saved.time):''}` : '✅ Saqlandi';
     return {text:receipt,keyboard:{inline_keyboard:[[{text:'✏️ Ko‘rish / tahrirlash',web_app:{url:link.href}}],[{text:'🌐 Webda ochish',url:link.href}]]}};
   }
   if(complete && reply.actions.every(a=>a.kind==='payment')){
@@ -160,7 +160,7 @@ export async function botAssistant(
       [{ text: "🌐 Webda ochish", url: link.toString() }],
     )
   const message = [
-    /saqla(?:dim|ndi|b)|yozib\s+qo|qayd\s+(?:qil|et)|\b(?:saved|recorded|logged)\b|сохран|записал/i.test(reply.message)
+    /saqla(?:dim|ndi|b)|kirit(?:dim|ildi)|yozib\s+qo|qayd\s+(?:qil|et)|\b(?:saved|recorded|logged)\b|сохран|записал/i.test(reply.message)
       ? 'Hozircha hech narsa saqlanmadi.' : reply.message,
     preview,
     reply.question || (reply.actions.length ? reply.actions.map(assistantActionIssue).find(Boolean) : ""),

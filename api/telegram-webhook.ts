@@ -1,3 +1,4 @@
+import {botAssistantFailure} from "./_apiErrors.js";
 import {botAssistant,resolveAssistantPlan} from './services/_botAssistantService.js';
 import {registrationTrialEnd} from '../shared/registrationTrial.js';
 import {debtPrincipalText,withDebtDetails,debtDueFromText,validDay,reminderPromise} from '../shared/debts.js';
@@ -2116,7 +2117,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
         } catch (voiceErr) {
           safeError('[BOT] Voice/Audio parsing error:', voiceErr);
-          const notice='⚠️ AI xizmatidan javob kelmadi. Hech narsa saqlanmadi. Birozdan so‘ng qayta urinib ko‘ring.';
+          const failure=botAssistantFailure(voiceErr);
+          safeWarn('[BOT_ASSISTANT_FAILURE]',{code:failure.code});
+          const notice=failure.message;
           if(statusMsgId)await editTelegramMessage(chatId,statusMsgId,notice,undefined,userId);
           else await sendTelegramMessage(chatId,notice,undefined,userId);
           return res.status(503).json({status:'ai_unavailable'});
@@ -2321,7 +2324,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if(!quota.allowed){await sendTelegramMessage(chatId,quota.message||'AI vaqtincha mavjud emas.',undefined,userId);return res.status(200).json({status:'quota_exceeded'});}
         await sendChatAction(chatId,'typing').catch(()=>{});
         try{const reply=await botAssistant(userId,chatId,message.message_id,{text},appUrl);const delivery=await sendTelegramMessage(chatId,reply.text,reply.keyboard,userId,'ai_response');if(!delivery?.ok)throw Error('BOT_DELIVERY_FAILED');return res.status(200).json({status:'assistant'});}
-        catch{await sendTelegramMessage(chatId,'AI javobi yoki tasdiqlash oynasi tayyor bo‘lmadi. Hech narsa avtomatik saqlanmadi. Qayta urinib ko‘ring.',undefined,userId);return res.status(503).json({error:'AI_ASSISTANT_UNAVAILABLE'});}
+        catch(error){const failure=botAssistantFailure(error);safeWarn('[BOT_ASSISTANT_FAILURE]',{code:failure.code});await sendTelegramMessage(chatId,failure.message,undefined,userId);return res.status(503).json({error:failure.code});}
       }
 
     }

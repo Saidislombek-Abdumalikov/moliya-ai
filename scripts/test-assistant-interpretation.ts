@@ -30,3 +30,9 @@ console.log('Interpretation checks passed: meal sum, mixed records, scale mismat
 
 const omitted=prepareAssistantReply({transcription:"yo‘lkiraga 17 ming so‘m ketdi plyus + kartadan avtobusga 2 ming 300 so‘m berdim",actions:[{...base,amount:2300,amountEvidence:'2 ming 300'}]},'uz',true);
 assert.equal(omitted.actions.length,0);assert.match(omitted.message,/faqat bitta/);
+for(const message of ["Avtobus uchun to'lovni xarajat sifatida kiritdim.",'Tayyor, bajarildi.','Hisobga oldim.']){
+ const noWrite=prepareAssistantReply({intent:'transaction',actions:[],transcription:'Avtobusga 2300 so‘m berdim',message},'uz',true);
+ assert.equal(noWrite.actions.length,0);assert.match(noWrite.message,/hech narsa saqlanmadi/);assert.ok(noWrite.question);assert.ok(!JSON.stringify(noWrite).includes(message));
+}
+const readOnly=prepareAssistantReply({intent:'answer',actions:[],transcription:'Budjet nima?',message:'Budjet — daromad va xarajatlar rejasi.'},'uz',true);
+assert.match(readOnly.message,/daromad/);

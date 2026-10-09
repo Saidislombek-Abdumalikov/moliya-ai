@@ -15,3 +15,9 @@ await test('financial conflict remains actionable',()=>assert.deepEqual(publicFi
 await test('unknown financial error and status are hidden',()=>assert.deepEqual(publicFinancialError({message:internal,statusCode:200}),{statusCode:500,error:'FINANCIAL_WRITE_FAILED'}));
 await test('database outage preserves retryable status',()=>assert.deepEqual(publicFinancialError(new Error('FINANCIAL_STORE_UNAVAILABLE')),{statusCode:503,error:'FINANCIAL_STORE_UNAVAILABLE'}));
 console.log(`${count} API error disclosure checks passed. No live services called.`);
+const {botAssistantFailure,assistantProviderCode}=await import('../api/_apiErrors.js');
+for(const [input,code] of [[{status:429},'AI_PROVIDER_LIMIT'],[{status:403},'AI_PROVIDER_AUTH'],[{status:404},'AI_PROVIDER_CONFIG'],[{name:'TimeoutError'},'AI_TIMEOUT'],[new SyntaxError('private payload'),'AI_INVALID_RESPONSE']] as const)assert.equal(assistantProviderCode(input),code);
+for(const code of ['BOT_DELIVERY_FAILED','BOT_DRAFT_UNAVAILABLE','PROFILE_STORE_UNAVAILABLE'])assert.doesNotMatch(botAssistantFailure(new Error(code)).message,/Hech narsa saqlanmadi/);
+assert.match(botAssistantFailure(Error('AI_PROVIDER_LIMIT')).message,/limiti/);
+assert.match(botAssistantFailure(Error('AI_INVALID_RESPONSE')).message,/to‘liq/);
+assert.doesNotMatch(JSON.stringify(botAssistantFailure(Error('private secret'))),/private secret/);

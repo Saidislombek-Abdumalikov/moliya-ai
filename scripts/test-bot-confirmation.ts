@@ -99,9 +99,11 @@ const wav=Buffer.from(await encodeWav(new Float32Array(16000)).arrayBuffer());
 };
 let transportId=1000;
 let scriptedAssistantReply:any=null;
+let providerStatus=200;
 globalThis.fetch=async(input:any,options:any)=>{
  const req=input instanceof Request?input:new Request(input,options),url=req.url;
  if(url.includes('generativelanguage.googleapis.com')){
+  if(providerStatus!==200)return new Response(JSON.stringify({error:{code:providerStatus,message:'simulated failure',status:providerStatus===429?'RESOURCE_EXHAUSTED':'PERMISSION_DENIED'}}),{status:providerStatus,headers:{'Content-Type':'application/json'}});
   const content=await req.clone().json();const str=JSON.stringify(content.contents);
   const parsed=scriptedAssistantReply || (str.includes('You are a finance input assistant.')?{message:'',question:'',transcription:'400000 ishlatdim',actions:[{kind:str.includes('Alidan')?'debt':'expense',amount:str.includes('Alidan')?100000:400000,currency:'UZS',title:str.includes('Alidan')?'Ali':'Xarajat',category:'Boshqa',date:'2026-10-07',person:str.includes('Alidan')?'Ali':'',dueDate:null,dueUnknown:false,repeat:'none',debtId:''}]}:
    str.includes('Read this receipt.')?{isReceipt:true,totalText:'25 000',currency:'UZS',category:'Boshqa',title:'Do‘kon'}:
@@ -167,4 +169,13 @@ for(const [id,reply] of [
   }finally{scriptedAssistantReply=null;}
  });
 }
+await test('provider throttling is reported separately and creates no financial write',async()=>{
+ providerStatus=429;
+ try{
+  await db.query('UPDATE users SET onboarding=$1 WHERE id=$2',[JSON.stringify({language:'uz',completed:true}),user]);
+  sent.length=0;const result=await inbound(720,{voice:{file_id:'test-audio',duration:5}});
+  assert.equal(result.statusCode,503);assert.equal((await transactions()).length,0);
+  assert.ok(sent.some(x=>x.body.text?.includes('limiti vaqtincha')));
+ }finally{providerStatus=200;}
+});
 console.log(`${count} bot confirmation checks passed. Offline PostgreSQL; not a live load test.`);await db.close();

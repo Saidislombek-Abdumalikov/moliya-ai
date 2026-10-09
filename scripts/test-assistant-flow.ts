@@ -382,3 +382,9 @@ await assert.rejects(
 console.log(
   "Assistant contract passed: flexible/single-action requests and multi-action rejection, missing amounts/dates, original currency, history, authenticated audio, shared quota, no parser writes, preference isolation, bot plan autosave and replay. Gemini/Telegram were mocked; no live calls.",
 )
+
+assert.ok(providerBodies.some(b=>JSON.stringify(b.generationConfig).includes('amountEvidence')),'The actual SDK request must carry the structured response schema');
+modelReply={intent:'transaction',actions:[],transcription:'avtobusga 2300 so‘m berdim',message:"Avtobus uchun to‘lovni xarajat sifatida kiritdim."};
+user=seed();
+const noOp=await botAssistant(uid,123,991,{audio:wav},'https://example.test');
+assert.doesNotMatch(noOp.text,/kiritdim/);assert.match(noOp.text,/hech narsa saqlanmadi/);assert.equal(user.transactions.length,0);
