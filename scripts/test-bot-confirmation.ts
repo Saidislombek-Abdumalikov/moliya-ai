@@ -178,4 +178,25 @@ await test('provider throttling is reported separately and creates no financial 
   assert.ok(sent.some(x=>x.body.text?.includes('limiti vaqtincha')));
  }finally{providerStatus=200;}
 });
+await test('plain stats command returns structured financial report and analysis links without AI',async()=>{
+ const day=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tashkent',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+ const txs=[{id:'loan',type:'debt',amount:100000,date:day},{id:'repay',type:'expense',amount:-40000,date:day,debtPaymentFor:'loan'},{id:'meal',type:'expense',amount:-28000,category:'Food <x>',date:day}];
+ await db.query('UPDATE users SET transactions=$1,onboarding=$2 WHERE id=$3',[JSON.stringify(txs),JSON.stringify({language:'uz',completed:true}),user]);
+ providerStatus=403;
+ try{
+  sent.length=0;
+  const result=await inbound(740,{text:'stats'});
+  assert.equal(result.statusCode,200);
+  const report=sent.find(x=>x.body.text?.includes('Moliyaviy hisobot'));
+  assert.ok(report,'Statistics must not fall through to AI');
+  const body=report.body.text.replace(/[\s\u00a0\u202f]/g,'');
+  assert.match(body,/Xarajat:<\/b>28000/);
+  assert.match(body,/qarzlarim:<\/b>60000/);
+  assert.match(body,/Food&lt;x&gt;/);
+  const buttons=report.body.reply_markup.inline_keyboard.flat();
+  const links=buttons.flatMap((b:any)=>[b.url,b.web_app?.url].filter(Boolean));
+  assert.equal(links.length,2);
+  for(const link of links){assert.equal(new URL(link).searchParams.get('screen'),'analytics');assert.equal(new URL(link).searchParams.get('period'),'monthly');}
+ }finally{providerStatus=200;}
+});
 console.log(`${count} bot confirmation checks passed. Offline PostgreSQL; not a live load test.`);await db.close();

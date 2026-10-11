@@ -110,6 +110,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
   const [assistantDraftId,setAssistantDraftId]=useState<string|undefined>();
   const openedDraft=useRef('');
   const saveId=useRef<string>('');
+  const closeAfterSave=useRef<ReturnType<typeof setTimeout>|null>(null);
   const savingRef=useRef(false);
   const [reviewKey,setReviewKey]=useState(0);
   const [assistantFooterHost,setAssistantFooterHost]=useState<HTMLDivElement|null>(null);
@@ -227,6 +228,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
   useEffect(() => () => {
     silenceMonitor.current?.stop();silenceMonitor.current=null;
     voiceGeneration.current++
+    if(closeAfterSave.current)clearTimeout(closeAfterSave.current);
     requestRef.current?.abort()
     if(timerRef.current)clearTimeout(timerRef.current)
     if(recorderRef.current?.state==='recording')recorderRef.current.stop()
@@ -252,13 +254,14 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
     openedDraft.current=draft.id;setAssistantDraftId(draft.id);showAssistant(normalizeAssistantReply(draft.reply));setAssistantHistory([{role:'assistant',content:JSON.stringify(draft.reply)}]);setSaved(false);setOpen(true);
   },[onboarding?.assistant_draft?.id]);
   const finishAssistant=()=>{
-    if(assistantDraftId)void fetch('/api/auth/sync-data',{method:'POST',headers:getClientAuthHeaders(),body:JSON.stringify({clearAssistantDraft:assistantDraftId})});
+    if(assistantDraftId)void fetch('/api/auth/sync-data',{method:'POST',headers:getClientAuthHeaders(),body:JSON.stringify({clearAssistantDraft:assistantDraftId})}).catch(()=>{});
     setSaved(true);setStep('done');
   };
 
   if (!visible) return null
 
   const openModal = () => {
+    if(closeAfterSave.current)clearTimeout(closeAfterSave.current);
     saveId.current='ai_'+crypto.randomUUID();voiceTypeOverride.current=null;setSelectedType('expense');
     setAssistantDraftId(undefined);setAssistantReply(null);setAssistantHistory([]);
     setStep('type')
@@ -272,6 +275,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
 
   const closeModal = () => {
     if(isSaving)return;
+    if(closeAfterSave.current)clearTimeout(closeAfterSave.current);
     stopVoice()
     setOpen(false)
     setRecording(false)
@@ -461,9 +465,9 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
       })().catch(()=>{});
 
       // 2. Database confirmed success: show celebratory card and auto-dismiss
-      if(assistantDraftId)void fetch('/api/auth/sync-data',{method:'POST',headers:getClientAuthHeaders(),body:JSON.stringify({clearAssistantDraft:assistantDraftId})});
+      if(assistantDraftId)void fetch('/api/auth/sync-data',{method:'POST',headers:getClientAuthHeaders(),body:JSON.stringify({clearAssistantDraft:assistantDraftId})}).catch(()=>{});
       setSaved(true)
-      setTimeout(() => {
+      closeAfterSave.current=setTimeout(() => {
         closeModal()
       }, 2400)
     } catch (saveErr: any) {

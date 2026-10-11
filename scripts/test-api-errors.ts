@@ -21,3 +21,6 @@ for(const code of ['BOT_DELIVERY_FAILED','BOT_DRAFT_UNAVAILABLE','PROFILE_STORE_
 assert.match(botAssistantFailure(Error('AI_PROVIDER_LIMIT')).message,/limiti/);
 assert.match(botAssistantFailure(Error('AI_INVALID_RESPONSE')).message,/to‘liq/);
 assert.doesNotMatch(JSON.stringify(botAssistantFailure(Error('private secret'))),/private secret/);
+
+assert.deepEqual(publicFinancialError(Error('DEBT_HAS_PAYMENTS')),{statusCode:409,error:'DEBT_HAS_PAYMENTS'});
+assert.deepEqual(publicFinancialError(Error('USE_DEBT_ACTION')),{statusCode:400,error:'USE_DEBT_ACTION'});

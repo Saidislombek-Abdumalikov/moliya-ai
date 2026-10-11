@@ -1,7 +1,8 @@
+import {readMoneyInput,formatMoneyInput} from '../../shared/moneyInput';
 import ProfileSettings from './ProfileSettings';
 import SwipeSheet from './SwipeSheet';
 import {installCompleted,telegramInstallBlocked} from '../installPrompt'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 import type { OnboardingResult } from './Onboarding'
 import { useFinance, Transaction } from '../FinanceContext'
@@ -525,7 +526,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
   const cards = Array.isArray(rawCards) ? rawCards : []
 
   // Global premium state (authoritative from context or fallback)
-  const isPremium = Boolean(ctxIsPremium || isVip || (onboarding as any)?.isPremium || (onboarding as any)?.isVip || (onboarding?.monthlyIncome === undefined && onboarding?.monthlyGoal === 999999))
+  const isPremium = Boolean(ctxIsPremium || isVip)
 
   const getCardBalance = (cardId: string) => {
     const c = cards.find(x => x.id === cardId)
@@ -581,7 +582,6 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
       try {
         await onUpdateOnboarding({
           name: editName,
-          phone: editPhone,
           telegram: editTelegram
         } as any)
         setToastMessage(lang === 'uz' ? 'Profil muvaffaqiyatli yangilandi!' : lang === 'uz_cyrl' ? 'Профил муваффақиятли янгиланди!' : lang === 'ru' ? 'Профиль успешно обновлен!' : 'Profile updated successfully!')
@@ -598,9 +598,10 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
 
 
   // Handle new card submission
+  const cardSaving=useRef(false);
   const handleAddCardSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!newCardNumber || !newCardBank) return
+    if (cardSaving.current || !newCardNumber || !newCardBank) return
 
     const cleanNum = newCardNumber.replace(/\s/g, '')
     
@@ -609,7 +610,9 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
       return
     }
 
-    const balanceValue = Number(newCardBalance.replace(/\D/g, '') || 0)
+    const balanceValue = !newCardBalance.trim() || /^0+(?:[.,]0{1,2})?$/.test(newCardBalance.trim()) ? 0 : readMoneyInput(newCardBalance)
+    if(balanceValue===null){alert('Summani to‘g‘ri kiriting.');return;}
+    cardSaving.current=true
 
     const adjustments: Transaction[] = []
     try {
@@ -680,13 +683,14 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
     } catch (err) {
       console.error('[ProfileScreen] Error persisting card to database:', err)
       alert(lang === 'uz' ? "Kartani saqlashda xatolik yuz berdi. Iltimos, qayta urinib ko'ring." : "Error saving card to database. Please try again.")
-    }
+    } finally { cardSaving.current=false; }
   }
 
   // Helper to escape CSV values safely for Excel
   const formatCsvField = (val: any): string => {
     if (val === null || val === undefined) return ''
-    const str = String(val)
+    const raw = String(val)
+    const str = /^[\s]*[=+@-]|^[\t\r\n]/.test(raw) ? "'" + raw : raw
     if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
       return `"${str.replace(/"/g, '""')}"`
     }
@@ -695,15 +699,11 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
 
   // Handle report export with real file download in exact required Excel column order:
   // 1. Sana | 2. Turi | 3. Kategoriya | 4. Summa | 5. Tavsif | 6. Karta
+  const exportPending=useRef(false);
   const handleExportStart = () => {
-    setExportProgress(10)
-    const interval = setInterval(() => {
-      setExportProgress((p) => {
-        if (p === null) return null
-        if (p >= 100) {
-          clearInterval(interval)
-          setTimeout(() => {
-            try {
+    if(exportPending.current)return;
+    exportPending.current=true;setExportProgress(10);
+    try {
               const now = new Date()
               let filteredTxs = [...customTransactions]
 
@@ -736,20 +736,20 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                 if (t.date) {
                   const d = new Date(t.date)
                   if (!isNaN(d.getTime())) {
-                    dateStr = d.toISOString().slice(0, 10)
+                    dateStr = /^\d{4}-\d{2}-\d{2}/.test(t.date) ? t.date.slice(0,10) : new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tashkent',year:'numeric',month:'2-digit',day:'2-digit'}).format(d)
                   }
                 }
                 if (!dateStr && t.year && t.month && t.day) {
                   dateStr = `${t.year}-${String(t.month).padStart(2, '0')}-${String(t.day).padStart(2, '0')}`
                 }
                 if (!dateStr) {
-                  dateStr = now.toISOString().slice(0, 10)
+                  dateStr = 'Sana ko‘rsatilmagan'
                 }
 
                 // 2. Turi (Type) -> Kirim / Chiqim
                 const rawAmount = Number(String(t.amount).replace(/\s/g, '').replace(/,/g, '')) || 0
                 const isIncome = t.type === 'income' || (t.type !== 'expense' && rawAmount > 0)
-                const typeStr = isIncome ? 'Kirim' : 'Chiqim'
+                const typeStr = t.debtPaymentFor ? (t.type==='income'?'Qarz qaytdi':'Qarz qaytarildi') : t.type==='debt'?'Qarz olindi':t.type==='lending'?'Qarz berildi':isIncome ? 'Kirim' : 'Chiqim'
 
                 // 3. Kategoriya (Category)
                 const categoryStr = t.category || (isIncome ? 'Daromad' : 'Boshqa')
@@ -761,7 +761,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                 const noteStr = t.note || (t as any).description || ''
 
                 // 6. Karta (Card / Payment Source)
-                let cardStr = 'Asosiy'
+                let cardStr = 'Naqd'
                 if (t.cardId && Array.isArray(cards)) {
                   const matchedCard = cards.find(c => String(c.id) === String(t.cardId))
                   if (matchedCard) {
@@ -791,19 +791,10 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
               link.click()
               document.body.removeChild(link)
               URL.revokeObjectURL(url)
-            } catch (err) {
-              console.error('Export error:', err)
-            }
 
-            setExportProgress(null)
-            setActiveModal(null)
-            setToastMessage(t.exportModal.success)
-          }, 300)
-          return 100
-        }
-        return p + 30
-      })
-    }, 300)
+      setActiveModal(null);setToastMessage(t.exportModal.success);
+    }catch{setToastMessage(lang==='uz'?'Eksport bajarilmadi. Qayta urinib ko‘ring.':'Export failed. Please retry.');}
+    finally{exportPending.current=false;setExportProgress(null);}
   }
 
   // Support chat trigger
@@ -814,16 +805,16 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
       const q = userQuery.toLowerCase()
       if (q.includes('limit') || q.includes('xarajat') || q.includes('лимит')) {
         replyText = (lang === 'uz' || lang === 'uz_cyrl') 
-          ? (lang === 'uz_cyrl' ? 'Лимитларни ўзгартириш учун Бош саҳифага ўтинг ва лимит картасидаги қаламчани ✏️ босинг.' : 'Limitlarni o\'zgartirish uchun Bosh sahifaga o\'ting va limit kartasidagi qalamchani ✏️ bosing.')
+          ? (lang === 'uz_cyrl' ? 'Лимитларни ўзгартириш учун Бош саҳифага ўтинг ва лимит картасидаги қаламчани ✏️ босинг.' : 'Limitlarni o\'zgartirish uchun Bosh sahifaga o\'ting va limit kartasini bosing.')
           : lang === 'ru'
           ? 'Чтобы изменить лимит, перейдите на Главную страницу и нажмите на иконку карандаша ✏️ на карте лимита.'
           : 'To change limits, navigate to the Home screen and press the pencil icon ✏️ on the limit card.'
       } else if (q.includes('premium') || q.includes('премиум')) {
         replyText = (lang === 'uz' || lang === 'uz_cyrl')
-          ? (lang === 'uz_cyrl' ? 'Premium Pro тарифида барча таҳлиллар, PDF/Excel экспорт ва AI маслаҳатчи чексиз тақдим этилади.' : 'Premium Pro tarifida barcha tahlillar, PDF/Excel eksport va AI maslahatchi cheksiz taqdim etiladi.')
+          ? (lang === 'uz_cyrl' ? 'Premium имкониятлари ва AI лимити профилда кўрсатилади. Экспорт CSV файлини юклайди.' : 'Premium imkoniyatlari va AI limiti profilingizdagi joriy tarifda ko‘rsatiladi. Eksport CSV faylini yuklaydi.')
           : lang === 'ru'
-          ? 'С тарифом Премиум Pro вам доступны безлимитный ИИ-советник, детальный экспорт в PDF/Excel и управление лимитами.'
-          : 'Premium Pro unlocks unlimited AI insights, advanced PDF/Excel reports, and flexible custom spend boundaries.'
+          ? 'В профиле указаны возможности Premium и лимит ИИ. Экспорт скачивает CSV-файл.'
+          : 'Your profile shows your current Premium features and AI limit. Export downloads a CSV file.'
       } else if (q.includes('grafik') || q.includes('graf') || q.includes('график')) {
         replyText = (lang === 'uz' || lang === 'uz_cyrl')
           ? (lang === 'uz_cyrl' ? 'Таҳлиллар бўлимидаги графиклар жорий ойдаги транзакциялар асосида автоматик шаклланади.' : 'Tahlillar bo\'limidagi grafiklar joriy oydagi tranzaksiyalar asosida avtomatik shakllanadi.')
@@ -832,10 +823,10 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
           : 'Graphs and visual statistics on the Analytics screen refresh automatically once any new records are updated.'
       } else {
         replyText = (lang === 'uz' || lang === 'uz_cyrl')
-          ? (lang === 'uz_cyrl' ? 'Тушунарли. Саволингиз мутахассисга йўналтирилди. Тез орада жавоб қайтарамиз.' : 'Tushunarli. Savolingiz mutaxassisga yo\'naltirildi. Tez orada javob qaytaramiz.')
+          ? (lang === 'uz_cyrl' ? 'Бу автоматик ёрдам бўлими. Савол операторга юборилмади. Лимит, premium ёки график ҳақида сўранг.' : 'Bu avtomatik yordam bo‘limi. Savol operatorga yuborilmadi. Ilovadagi amal nomini yozing: limit, premium yoki grafik.')
           : lang === 'ru'
-          ? 'Понятно. Ваш запрос передан специалисту техподдержки. Мы свяжемся с вами в ближайшее время.'
-          : 'Understood. Your request has been forwarded to our support specialist. We will get back to you shortly!'
+          ? 'Это автоматическая справка. Сообщение не отправлено оператору. Спросите о лимитах, premium или графиках.'
+          : 'This is automatic help. Your message was not sent to an operator. Ask about limits, premium, or charts.'
       }
 
       setChatMessages((prev) => [...prev, { sender: 'support', text: replyText }])
@@ -1422,7 +1413,8 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                     id="edit_profile_phone_input"
                     type="text" 
                     value={editPhone}
-                    onChange={(e) => setEditPhone(e.target.value)}
+                    readOnly
+                    aria-label="Telegram orqali tasdiqlangan telefon"
                     style={{
                       width: '100%', padding: '12px 14px', borderRadius: 12,
                       border: '1.5px solid #E4E1F4', outline: 'none', fontFamily: 'inherit',
@@ -2093,8 +2085,8 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                         id="add_card_balance_input"
                         type="tel" 
                         placeholder="500 000"
-                        value={newCardBalance ? Number(newCardBalance.replace(/\D/g, '')).toLocaleString('en-US').replace(/,/g, ' ') : ''}
-                        onChange={(e) => setNewCardBalance(e.target.value.replace(/\D/g, ''))}
+                        value={formatMoneyInput(newCardBalance)}
+                        onChange={(e) => setNewCardBalance(formatMoneyInput(e.target.value))}
                         style={{
                           width: '100%', padding: '10px 12px', borderRadius: 10,
                           border: '1.5px solid #E4E1F4', fontSize: 13, fontWeight: 600, outline: 'none'

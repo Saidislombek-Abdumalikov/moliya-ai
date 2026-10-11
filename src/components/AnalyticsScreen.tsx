@@ -1,3 +1,4 @@
+import {debtBalances} from '../../shared/debts';
 import { useState } from 'react'
 import { motion } from 'motion/react'
 import type { OnboardingResult } from './Onboarding'
@@ -179,7 +180,7 @@ export default function AnalyticsScreen({ onboarding }: Props) {
   const lang = (initialLang in translations) ? initialLang : 'uz'
   const t = translations[lang as keyof typeof translations]
 
-  const [period, setPeriod] = useState<'daily' | 'weekly' | 'monthly' | 'all'>('weekly')
+  const [period, setPeriod] = useState<'daily' | 'weekly' | 'monthly' | 'all'>(()=>{const value=new URLSearchParams(location.search).get('period');return value==='daily'||value==='monthly'||value==='all'?value:'weekly';})
 
   const firstExpense = onboarding?.firstExpense
   // Advice uses saved records only; sample/demo transactions never become personal facts.
@@ -191,11 +192,12 @@ export default function AnalyticsScreen({ onboarding }: Props) {
   // Real, signed transaction list: saved transactions + onboarding's declared first expense
   const allTx = [
     ...customTransactions.map((tx) => ({
+      id:tx.id,
       debtPaymentFor: tx.debtPaymentFor,
       amount: parseAmt(tx),
       type: tx.type,
       category: tx.category,
-      date: new Date(tx.date || Date.now()),
+      date: new Date((tx.date||'').slice(0,10)+'T'+(tx.time||'12:00')),
     })),
     ...(firstExpense ? [{
       amount: -Math.abs(firstExpense.amount),
@@ -213,8 +215,8 @@ export default function AnalyticsScreen({ onboarding }: Props) {
 
   const now = new Date()
   const monthlyIncomeBase = onboarding?.monthlyIncome || 0
-  const monthlyGoalBase = onboarding?.monthlyGoal || 3000000
-  const monthlyLimitBase = monthlyIncomeBase > 0 ? (monthlyIncomeBase - monthlyGoalBase) : monthlyGoalBase
+  const monthlyGoalBase = onboarding?.monthlyGoal ?? 0
+  const monthlyLimitBase = monthlyIncomeBase > 0 ? Math.max(0,monthlyIncomeBase - monthlyGoalBase) : monthlyGoalBase
 
   const periodWordDict = {
     daily: { uz: 'bugun', uz_cyrl: 'бугун', ru: 'сегодня', en: 'today' },
@@ -253,7 +255,8 @@ export default function AnalyticsScreen({ onboarding }: Props) {
   const periodTotals = financialTotals(txInRange)
   const summaryIncome = periodTotals.income
   const summaryExpense = periodTotals.expense
-  const summaryDebts = periodTotals.borrowed
+  const balances=debtBalances(customTransactions);
+  const summaryDebts = customTransactions.filter(tx=>tx.type==='debt' && new Date(tx.date.slice(0,10)+'T12:00')>=rangeStart && new Date(tx.date.slice(0,10)+'T12:00')<=rangeEnd).reduce((sum,tx)=>sum+(balances.get(String(tx.id))||0),0)
   const summarySavings = totalLimit - summaryExpense
 
   const subInc = periodWord

@@ -51,6 +51,15 @@ export function debtRemaining(t: DebtRecord, all: DebtRecord[]) {
     ) / 100,
   )
 }
+// Build balances once for list rendering instead of rescanning every repayment
+// for every person/row/summary.
+export function debtBalances(all:DebtRecord[]):Map<string,number>{
+ const paid=new Map<string,number>();
+ for(const t of all)if(t.debtPaymentFor)paid.set(t.debtPaymentFor,(paid.get(t.debtPaymentFor)||0)+Math.abs(Number(t.amount)||0));
+ const result=new Map<string,number>();
+ for(const t of all)if(isDebt(t))result.set(String(t.id),Math.max(0,Math.round((Math.abs(Number(t.amount))-(paid.get(String(t.id))||0))*100)/100));
+ return result;
+}
 export function reminderKind(
   t: DebtRecord,
   today = localDay(),
@@ -71,10 +80,11 @@ export function dueDebts<T extends DebtRecord>(
   all: T[],
   today = localDay(),
 ): T[] {
+  const balances=debtBalances(all);
   return all.filter(
     (t) =>
       isDebt(t) &&
-      debtRemaining(t, all) > 0 &&
+      (balances.get(String(t.id))||0) > 0 &&
       validDay(t.debtDueDate) &&
       (t.debtDueDate <= today || reminderKind(t, today)) &&
       t.debtDismissed !== debtNoticeKey(t, today),

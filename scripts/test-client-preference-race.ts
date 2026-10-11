@@ -20,3 +20,15 @@ get.resolve({ok:true,json:async()=>({user:{id:'user',onboarding:{voice_auto_send
 assert.equal(persisted,0,'An older refresh cannot overwrite the saved toggle');assert.equal(state.voice_auto_send,true);assert.equal(scope.preferenceWrites.current,0);
 post=deferred();const changedSession=api.updateOnboarding({voice_auto_send:false});token='new';state=null;post.resolve({ok:false,status:409});await assert.rejects(changedSession,/Sessiya/);assert.equal(state,null,'Old session must not restore its profile after logout');assert.equal(scope.preferenceWrites.current,0);
 console.log('Client preference race: pending refresh, stale response, session change and guard release passed.');
+
+// A second toggle must not overwrite an in-flight preference snapshot.
+token='stable';post=deferred();const firstSave=api.updateOnboarding({voice_auto_send:true});
+await assert.rejects(api.updateOnboarding({remember_categories:true}),/Oldingi sozlama/);
+post.resolve({ok:true,status:200});await firstSave;assert.equal(scope.preferenceWrites.current,0);
+// Conflict retry can itself fail: restore the pre-save state and release the guard.
+let calls=0;
+const retryScope={...scope,fetchWithTimeout:async()=>{if(++calls===1)return {ok:false,status:409};throw Error('offline');}};
+const retryApi=new Function(...Object.keys(retryScope),code)(...Object.values(retryScope));
+await assert.rejects(retryApi.updateOnboarding({voice_auto_send:true}),/offline/);
+assert.equal(state.voice_auto_send,false);assert.equal(scope.preferenceWrites.current,0);
+console.log('Preference overlap and conflict retry rollback passed.');

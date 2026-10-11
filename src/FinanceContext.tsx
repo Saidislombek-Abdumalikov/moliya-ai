@@ -793,6 +793,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, [userId, isAuthReady, onboarding?.completed]);
 
   const updateOnboarding = async (newData: Partial<OnboardingResult>): Promise<OnboardingResult> => {
+    if(preferenceWrites.current>0)throw Error('Oldingi sozlama saqlanmoqda. Biroz kuting.');
     const targetUserId = getEffectiveUserId();
     const preferenceSession=readSessionToken();
     preferenceWrites.current++;
@@ -837,7 +838,10 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     // Bot and app may edit the same profile at the same instant. The backend
     // reads a fresh snapshot on each request, so one retry resolves that race.
     if(preferenceSession!==readSessionToken())throw Error('Sessiya o‘zgardi. Qayta kiring.');
-    if (response.status === 409 && !newData.planned_payments) response = await savePreferences();
+    if (response.status === 409 && !newData.planned_payments) {
+      try { response = await savePreferences(); }
+      catch(error){if(preferenceSession===readSessionToken()){setOnboarding(onboarding);localStorage.setItem('user_onboarding_v1',JSON.stringify(onboarding));}throw error;}
+    }
     if(preferenceSession!==readSessionToken())throw Error('Sessiya o‘zgardi. Qayta kiring.');
     if(!response.ok) {
       setOnboarding(onboarding);
@@ -857,14 +861,22 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const response=await fetchWithTimeout('/api/auth/sync-data',{method:'POST',headers:getClientAuthHeaders(),body:JSON.stringify({financialAction,payload,expected})});
     if(sessionAtStart!==readSessionToken())throw Error('Sessiya o‘zgardi. Qayta kiring.');
     if(!response.ok){
+      const failure=await response.json().catch(()=>({}));
       await refreshUserData().catch(()=>{});
+      if(failure.error==='DEBT_HAS_PAYMENTS')throw Error('Bu qarzning qaytarish yozuvlari bor. Asosiy summa, hisob yoki yozuvni o‘chirish mumkin emas.');
+      if(failure.error==='USE_DEBT_ACTION')throw Error('Qaytarish yozuvi qarz tarixiga bog‘langan. Qarz / Haqqim bo‘limini oching.');
       throw new Error(response.status===409 ? 'Ma’lumot boshqa qurilmada o‘zgargan. Yangilangan holatni tekshirib, qayta urinib ko‘ring.' : 'O‘zgarish saqlanmadi. Qayta urinib ko‘ring.');
     }
     // The server has committed. Show that confirmed write immediately; sync in the background.
     if(financialAction==='put_transaction'){
       ++refreshSequence.current;
       const committed=payload as Transaction;
-      setCustomTransactions(current=>{const next=[committed,...current.filter(t=>String(t.id)!==String(committed.id))];localStorage.setItem('user_transactions_v1',JSON.stringify(next));return next;});
+      setCustomTransactions(current=>{const next=[committed,...current.filter(t=>String(t.id)!==String(committed.id))];try{localStorage.setItem('user_transactions_v1',JSON.stringify(next));}catch{}return next;});
+      void refreshUserData().catch(()=>{});
+    }else if(financialAction==='delete_transaction'){
+      ++refreshSequence.current;
+      const id=String((payload as {id:string}).id);
+      setCustomTransactions(current=>{const next=current.filter(t=>String(t.id)!==id);try{localStorage.setItem('user_transactions_v1',JSON.stringify(next));}catch{}return next;});
       void refreshUserData().catch(()=>{});
     }else await refreshUserData().catch(()=>{});
   };
@@ -886,8 +898,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const response=await fetchWithTimeout('/api/auth/debts',{method:'POST',headers:getClientAuthHeaders(),body:JSON.stringify({txId:String(tx.id),operation,payload,expected:tx})});
     const data=await response.json();
     if(!response.ok){await refreshUserData().catch(()=>{});throw new Error(response.status===409?'Qarz o‘zgargan. Yangilangan holatni tekshiring.':data.code==='INVALID_PAYMENT_AMOUNT'?'Summa qolgan qarzdan oshmasin.':'Saqlanmadi. Qayta urinib ko‘ring.');}
-    if(token!==readSessionToken() || logoutPending.current)return;
-    if(Array.isArray(data.transactions)){++refreshSequence.current;setCustomTransactions(data.transactions);localStorage.setItem('user_transactions_v1',JSON.stringify(data.transactions));}
+    if(token!==readSessionToken() || logoutPending.current)throw Error('Sessiya o‘zgardi. Qayta kiring.');
+    if(Array.isArray(data.transactions)){++refreshSequence.current;setCustomTransactions(data.transactions);try{localStorage.setItem('user_transactions_v1',JSON.stringify(data.transactions));}catch{}}
   };
 
   const addTransaction = async (tx: Omit<Transaction, 'id' | 'date'> & { id?: string | number; date?: string; messageId?: string | number; day?: number; month?: number; year?: number; time?: string }): Promise<Transaction> => {
@@ -934,7 +946,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       ...previous,
       id: txId,
       type: tx.type || 'expense',
-      amount: Number(tx.amount) || 0,
+      amount: (['income','debt'].includes(tx.type)?1:-1)*Math.abs(Number(tx.amount)||0),
       note: tx.note || tx.title || tx.category || '',
       category: tx.category || 'Boshqa',
       title: tx.title || tx.note || tx.category || '',
@@ -960,8 +972,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const deleteTransaction = async (id: string | number): Promise<boolean> => {
     const idStr = String(id);
 
-    try {await writeFinancial('delete_transaction',{id:idStr},customTransactions.find(t=>String(t.id)===idStr) || null);}
-    catch(error){window.alert((error as Error).message);return false;}
+    await writeFinancial('delete_transaction',{id:idStr},customTransactions.find(t=>String(t.id)===idStr) || null);
 
     return true;
   };

@@ -1,7 +1,7 @@
 import {botAssistantFailure} from "./_apiErrors.js";
 import {botAssistant,resolveAssistantPlan} from './services/_botAssistantService.js';
 import {registrationTrialEnd} from '../shared/registrationTrial.js';
-import {debtPrincipalText,withDebtDetails,debtDueFromText,validDay,reminderPromise} from '../shared/debts.js';
+import {debtBalances,debtPrincipalText,withDebtDetails,debtDueFromText,validDay,reminderPromise} from '../shared/debts.js';
 import {mutateFinancialData} from './services/_financialDataService.js';
 import {parseReceiptImage} from './_receiptParser.js';
 import {audioMime,parseFinancialAudio} from './_audioParser.js';
@@ -1066,7 +1066,8 @@ async function renderPremiumMessage(userId: string) {
 }
 
 async function renderStatsMessage(userId: string, period: 'today' | 'month' | 'all' = 'month', page: number = 1) {
-  const { data: u } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
+  const { data: u, error: statsError } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
+  if(statsError || !u)throw Error('STATS_UNAVAILABLE');
   const txs = Array.isArray(u?.transactions) ? u.transactions : [];
 
   const srv = getServerDateTimeContext();
@@ -1074,7 +1075,7 @@ async function renderStatsMessage(userId: string, period: 'today' | 'month' | 'a
   const [curY, curM, curD] = todayStr.split('-').map(Number);
 
   let filteredTxs = txs;
-  let periodTitle = "Joriy Oy (Sentabr 2026)";
+  let periodTitle = ''; 
 
   if (period === 'today') {
     periodTitle = `Bugun (${todayStr})`;
@@ -1097,7 +1098,13 @@ async function renderStatsMessage(userId: string, period: 'today' | 'month' | 'a
   const totals=financialTotals(filteredTxs);
   const totalExpense=totals.expense,totalIncome=totals.income,balance=totals.cashFlow;
   const netSign=balance>=0?'+':'';
-  const statsText = `📊 <b>${periodTitle}</b>\n\n🔴 Xarajat: ${totalExpense.toLocaleString('uz-UZ')} so‘m\n🟢 Daromad: ${totalIncome.toLocaleString('uz-UZ')} so‘m\n⚖️ Pul oqimi: ${netSign}${balance.toLocaleString('uz-UZ')} so‘m\n\n📈 Batafsil tahlil — quyidagi tugmada.`;
+  const balanceMap=debtBalances(txs);
+  const debtTotal=txs.filter((t:any)=>t.type==='debt').reduce((sum:number,t:any)=>sum+(balanceMap.get(String(t.id))||0),0);
+  const lentTotal=txs.filter((t:any)=>t.type==='lending').reduce((sum:number,t:any)=>sum+(balanceMap.get(String(t.id))||0),0);
+  const safeCategory=(v:string)=>v.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const top=Object.entries(totals.categories).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([name,value])=>`• ${safeCategory(name.slice(0,50))}: ${value.toLocaleString('uz-UZ')} so‘m`).join('\n');
+  const statsText = `📊 <b>Moliyaviy hisobot</b>\n📅 ${periodTitle}\n\n💸 <b>Xarajat:</b> ${totalExpense.toLocaleString('uz-UZ')} so‘m\n💰 <b>Daromad:</b> ${totalIncome.toLocaleString('uz-UZ')} so‘m\n⚖️ <b>Pul oqimi:</b> ${netSign}${balance.toLocaleString('uz-UZ')} so‘m\n🧾 <b>Yozuvlar:</b> ${totals.count}${top?'\n\n🏷 <b>Ko‘p sarflangan</b>\n'+top:''}\n\n🤝 <b>Hozirgi qarzlarim:</b> ${debtTotal.toLocaleString('uz-UZ')} so‘m\n💎 <b>Hozirgi haqqim:</b> ${lentTotal.toLocaleString('uz-UZ')} so‘m`;
+
 
   // Dynamic Navigation & Filter Keyboard
   const periodRow = [
@@ -1108,7 +1115,7 @@ async function renderStatsMessage(userId: string, period: 'today' | 'month' | 'a
 
   const inline_keyboard: any[] = [periodRow];
 
-  const analysisUrl=new URL(appUrl);analysisUrl.searchParams.set('screen','analytics');
+  const analysisUrl=new URL(appUrl);analysisUrl.searchParams.set('screen','analytics');analysisUrl.searchParams.set('period',{today:'daily',month:'monthly',all:'all'}[period]);
   inline_keyboard.push([{text:'📱 Tahlilni ochish',web_app:{url:analysisUrl.href}}],[{text:'🌐 Webda tahlil',url:analysisUrl.href}]);
 
   return { text: statsText, keyboard: { inline_keyboard } };
@@ -1968,6 +1975,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       lowerText === '📈 statistika' ||
       lowerText === '📊 stats' ||
       lowerText === '📊 statistika' ||
+      lowerText === 'stats' ||
+      lowerText === 'stat' ||
       lowerText === 'statistika' ||
       lowerText === 'hisobot'
     ) {

@@ -1,3 +1,4 @@
+import {readMoneyInput,formatMoneyInput} from '../../shared/moneyInput';
 import UpcomingPayments from './UpcomingPayments';
 import DebtsHub from './DebtsHub';
 import SwipeSheet from './SwipeSheet';
@@ -374,6 +375,8 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
 
   const [showWalletsModal, setShowWalletsModal] = useState(false)
   const [showAddCard, setShowAddCard] = useState(false)
+  const mutationPending=useRef(false);
+  const [mutationBusy,setMutationBusy]=useState(false);
   const [deleteConfirmTx, setDeleteConfirmTx] = useState<any>(null)
   const [deleteConfirmCard, setDeleteConfirmCard] = useState<string | null>(null)
   const [editTx, setEditTx] = useState<any>(null)
@@ -401,9 +404,10 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
 
 
 
+  const cardSaving=useRef(false);
   const handleAddCardSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!newCardNumber || !newCardBank) return
+    if (cardSaving.current || !newCardNumber || !newCardBank) return
 
     const cleanNum = newCardNumber.replace(/\s/g, '')
     
@@ -412,7 +416,9 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
       return
     }
 
-    const balanceValue = Number(newCardBalance.replace(/\D/g, '') || 0)
+    const balanceValue = !newCardBalance.trim() || /^0+(?:[.,]0{1,2})?$/.test(newCardBalance.trim()) ? 0 : readMoneyInput(newCardBalance)
+    if(balanceValue===null){alert('Summani to‘g‘ri kiriting.');return;}
+    cardSaving.current=true
 
     const adjustments: Transaction[] = []
     try {
@@ -477,7 +483,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
     } catch (cardErr) {
       console.error('[HomeScreen] Failed to persist card changes:', cardErr)
       alert(lang === 'uz' ? "Kartani saqlashda xatolik yuz berdi. Iltimos, qayta urinib ko'ring." : "Error saving card to database. Please try again.")
-    }
+    } finally { cardSaving.current=false; }
   }
 
   const [showPremium, setShowPremium] = useState(false)
@@ -527,9 +533,10 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
     toastedNotifIdsRef.current.clear()
     loadNotifications()
 
+    let permissionTimer:ReturnType<typeof setTimeout>|undefined;
     // Gracefully ask for Web push notification permission if on Web App
     if (!isTelegramMiniApp() && typeof window !== 'undefined') {
-      setTimeout(() => {
+      permissionTimer=setTimeout(() => {
         requestWebNotificationPermission().catch(() => {})
       }, 3500)
     }
@@ -545,6 +552,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
     return () => {
       notificationRequestRef.current++
       clearInterval(pollInterval)
+      if(permissionTimer)clearTimeout(permissionTimer)
       window.removeEventListener('focus', onFocus)
     }
   }, [userId, isPremium])
@@ -574,13 +582,13 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
   const [showLimitModal, setShowLimitModal] = useState(false)
   const [selectedTx, setSelectedTx] = useState<any>(null)
   const [modalIncome, setModalIncome] = useState(onboarding?.monthlyIncome || 0)
-  const [modalGoal, setModalGoal] = useState(onboarding?.monthlyGoal || 3000000)
+  const [modalGoal, setModalGoal] = useState(onboarding?.monthlyGoal ?? 0)
   const [isDirectLimit, setIsDirectLimit] = useState(!onboarding?.monthlyIncome)
 
   const handleOpenLimitModal = () => {
     const hasIncome = !!onboarding?.monthlyIncome
     setModalIncome(onboarding?.monthlyIncome || 0)
-    setModalGoal(onboarding?.monthlyGoal || 3000000)
+    setModalGoal(onboarding?.monthlyGoal ?? 0)
     setIsDirectLimit(!hasIncome)
     setShowLimitModal(true)
   }
@@ -886,12 +894,13 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
       <div className="home-summary-pair">
         <DebtsHub />
         {(() => {
-          const spendLimit=Math.max(0,onboarding?.monthlyIncome ? onboarding.monthlyIncome-(onboarding.monthlyGoal||0) : onboarding?.monthlyGoal||7000000);
-          const remaining=spendLimit-totalExpense;
-          const pct=Math.min(100,Math.max(0,totalExpense/Math.max(1,spendLimit)*100));
+          const spendLimit=Math.max(0,onboarding?.monthlyIncome ? onboarding.monthlyIncome-(onboarding.monthlyGoal||0) : onboarding?.monthlyGoal??0);
+          const limitSet=Number(onboarding?.monthlyIncome||0)>0||Number(onboarding?.monthlyGoal||0)>0;
+          const remaining=limitSet?spendLimit-totalExpense:0;
+          const pct=limitSet?Math.min(100,Math.max(0,totalExpense/Math.max(1,spendLimit)*100)):0;
           return <motion.button id="home_limit_section" className="home-summary-card limit-summary" whileTap={{scale:0.98}} onClick={handleOpenLimitModal}>
             <span className="summary-title"><span>🎯 {t.goalLabel}</span><span>{Math.round(pct)}%</span></span>
-            <span className="summary-caption">{remaining<0?'Limitdan oshdi':'Qoldiq'}</span>
+            <span className="summary-caption">{!limitSet?'Limit belgilang':remaining<0?'Limitdan oshdi':'Qoldiq'}</span>
             <strong className="summary-money" style={{color:remaining<0?'#BE123C':undefined}}>{fmtFull(Math.abs(remaining))} <small>{t.currency}</small></strong>
             <span className="summary-progress"><span style={{width:pct+'%',background:remaining<0?'#E11D48':'#8B5CF6'}}/></span>
             <span className="summary-caption">{Math.round(pct)}% · {fmtFull(spendLimit)} {t.currency}</span>
@@ -1726,7 +1735,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
                       try {
                         await onUpdateOnboarding(
                           isDirectLimit
-                            ? { monthlyGoal: modalGoal, monthlyIncome: undefined }
+                            ? { monthlyGoal: modalGoal, monthlyIncome: 0 }
                             : { monthlyIncome: modalIncome, monthlyGoal: modalGoal }
                         )
                         setShowLimitModal(false);
@@ -1822,7 +1831,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
                         setNewCardBank(c.bank)
                         setNewCardNumber(c.number)
                         setNewCardHolder(c.name)
-                        setNewCardBalance(c.balance.toString())
+                        setNewCardBalance(String(getCardBalance(c.id)))
                         setShowWalletsModal(false)
                         setShowAddCard(true)
                       }}
@@ -1968,8 +1977,8 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
                       <label style={{ fontSize: 12, fontWeight: 600, color: '#8B82C4', marginBottom: 6, display: 'block' }}>{lang === 'uz' ? 'Balans (so\'m)' : lang === 'uz_cyrl' ? 'Баланс (сўм)' : lang === 'ru' ? 'Баланс (сум)' : 'Balance (som)'}</label>
                       <input
                         type="tel" required
-                        value={newCardBalance ? Number(newCardBalance.replace(/\D/g, '')).toLocaleString('en-US').replace(/,/g, ' ') : ''}
-                        onChange={(e) => setNewCardBalance(e.target.value.replace(/\D/g, ''))}
+                        value={formatMoneyInput(newCardBalance)}
+                        onChange={(e) => setNewCardBalance(formatMoneyInput(e.target.value))}
                         style={{ width: '100%', padding: '14px 16px', borderRadius: 14, border: '1.5px solid #E4E2F0', fontSize: 15, fontWeight: 500, color: '#1E1A3C' }}
                       />
                     </div>
@@ -2123,7 +2132,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                onClick={() => setDeleteConfirmTx(null)}
+                onClick={() => {if(!mutationPending.current)setDeleteConfirmTx(null)}}
                 style={{
                   position: 'absolute', inset: 0,
                   background: 'rgba(0,0,0,0.4)',
@@ -2152,7 +2161,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
                 </p>
                 <div style={{ display: 'flex', gap: 12 }}>
                   <button
-                    onClick={() => setDeleteConfirmTx(null)}
+                    onClick={() => {if(!mutationPending.current)setDeleteConfirmTx(null)}}
                     style={{
                       flex: 1, padding: 14,
                       background: '#F5F4FA', color: '#1E1A3C',
@@ -2163,14 +2172,16 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
                     {lang === 'uz' ? 'Bekor qilish' : lang === 'uz_cyrl' ? 'Бекор қилиш' : lang === 'ru' ? 'Отмена' : 'Cancel'}
                   </button>
                   <button
+                    disabled={mutationBusy}
                     onClick={async () => {
+                      if(mutationPending.current)return;mutationPending.current=true;setMutationBusy(true);
                       try {
-                        await deleteTransaction(deleteConfirmTx.id)
+                        if(!await deleteTransaction(deleteConfirmTx.id))return;
                         setDeleteConfirmTx(null)
                       } catch (e) {
                         console.error('[HomeScreen] Error deleting transaction:', e)
                         alert(lang === 'uz' ? "Operatsiyani o'chirishda xatolik yuz berdi." : "Failed to delete transaction.")
-                      }
+                      } finally {mutationPending.current=false;setMutationBusy(false);}
                     }}
                     style={{
                       flex: 1, padding: 14,
@@ -2195,7 +2206,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                onClick={() => setDeleteConfirmCard(null)}
+                onClick={() => {if(!mutationPending.current)setDeleteConfirmCard(null)}}
                 style={{
                   position: 'absolute', inset: 0,
                   background: 'rgba(0,0,0,0.4)',
@@ -2224,7 +2235,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
                 </p>
                 <div style={{ display: 'flex', gap: 12 }}>
                   <button
-                    onClick={() => setDeleteConfirmCard(null)}
+                    onClick={() => {if(!mutationPending.current)setDeleteConfirmCard(null)}}
                     style={{
                       flex: 1, padding: 14,
                       background: '#F5F4FA', color: '#1E1A3C',
@@ -2235,14 +2246,16 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
                     {lang === 'uz' ? 'Bekor qilish' : lang === 'uz_cyrl' ? 'Бекор қилиш' : lang === 'ru' ? 'Отмена' : 'Cancel'}
                   </button>
                   <button
+                    disabled={mutationBusy}
                     onClick={async () => {
+                      if(mutationPending.current)return;mutationPending.current=true;setMutationBusy(true);
                       try {
                         if (deleteConfirmCard) await deleteCard(deleteConfirmCard)
                         setDeleteConfirmCard(null);
                       } catch (err) {
                         console.error('[HomeScreen] Error deleting card:', err);
                         alert(lang === 'uz' ? "Kartani o'chirishda xatolik yuz berdi." : "Failed to delete card.");
-                      }
+                      } finally {mutationPending.current=false;setMutationBusy(false);}
                     }}
                     style={{
                       flex: 1, padding: 14,
@@ -2267,14 +2280,14 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                onClick={() => setEditTx(null)}
+                onClick={() => {if(!mutationPending.current)setEditTx(null)}}
                 style={{
                   position: 'absolute', inset: 0,
                   background: 'rgba(15, 12, 41, 0.45)',
                   backdropFilter: 'blur(4px)'
                 }}
               />
-              <SwipeSheet onDismiss={() => setEditTx(null)}
+              <SwipeSheet locked={mutationBusy} onDismiss={() => {if(!mutationPending.current)setEditTx(null)}}
                 initial={{ y: '100%' }}
                 animate={{ y: 0 }}
                 exit={{ y: '100%' }}
@@ -2296,7 +2309,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
                   <div style={{ width: 28 }} />
                   <div />
                   <button
-                    onClick={() => setEditTx(null)}
+                    onClick={() => {if(!mutationPending.current)setEditTx(null)}}
                     style={{
                       width: 28, height: 28, borderRadius: '50%',
                       background: '#F5F4FA', border: 'none',
@@ -2330,10 +2343,10 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
                       {lang === 'uz' ? 'Summa' : lang === 'uz_cyrl' ? 'Сумма' : lang === 'ru' ? 'Сумма' : 'Amount'}
                     </label>
                     <input
-                      type="tel"
-                      inputMode="numeric"
-                      value={Math.abs(editTx.amount).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}
-                      onChange={(e) => setEditTx({...editTx, amount: (editTx.amount < 0 ? -1 : 1) * (parseInt(e.target.value.replace(/\D/g, '')) || 0)})}
+                      type="text"
+                      inputMode="decimal"
+                      value={editTx.amountInput ?? formatMoneyInput(String(Math.abs(editTx.amount)))}
+                      onChange={(e) => setEditTx({...editTx, amountInput: formatMoneyInput(e.target.value), amount: (['income','debt'].includes(editTx.type) ? 1 : -1) * (readMoneyInput(e.target.value) || 0)})}
                       style={{
                         width: '100%', padding: '14px 16px',
                         borderRadius: 14, border: '1.5px solid #E4E2F0',
@@ -2369,14 +2382,14 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
                         if (!editTx.date) return fallback;
                         const str = String(editTx.date).trim();
                         if (str.includes('T') && str.length >= 16) return str.slice(0, 16);
-                        if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return `${str}T12:00`;
+                        if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return `${str}T${editTx.time||'12:00'}`;
                         const d = new Date(str);
                         if (!isNaN(d.getTime())) {
                           return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
                         }
                         return fallback;
                       })()}
-                      onChange={(e) => setEditTx({...editTx, date: e.target.value ? new Date(e.target.value).toISOString() : editTx.date})}
+                      onChange={(e) => setEditTx({...editTx, date:e.target.value, time:e.target.value.slice(11,16)})}
                       style={{
                         width: '100%', padding: '14px 16px',
                         borderRadius: 14, border: '1.5px solid #E4E2F0',
@@ -2388,7 +2401,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
 
                 <div style={{ display: 'flex', gap: 12, marginTop: 24 }}>
                   <button
-                    onClick={() => setEditTx(null)}
+                    onClick={() => {if(!mutationPending.current)setEditTx(null)}}
                     style={{
                       flex: 1, padding: 14,
                       background: '#F5F4FA', color: '#1E1A3C',
@@ -2399,8 +2412,11 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
                     {lang === 'uz' ? 'Bekor qilish' : lang === 'uz_cyrl' ? 'Бекор қилиш' : lang === 'ru' ? 'Отмена' : 'Cancel'}
                   </button>
                   <button
+                    disabled={mutationBusy}
                     onClick={async () => {
+                      if(mutationPending.current)return;mutationPending.current=true;setMutationBusy(true);
                       try {
+                        if(!Number.isFinite(Number(editTx.amount)) || Math.abs(Number(editTx.amount))<=0)throw Error('Summani tekshiring.');
                         // Extract only valid Transaction fields before saving
                         await addTransaction({
                           id: editTx.id,
@@ -2409,6 +2425,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
                           note: editTx.note || editTx.category,
                           category: editTx.category,
                           date: editTx.date,
+                          time: editTx.time,
                           cardId: editTx.cardId,
                           title: editTx.title,
                           debtWho: editTx.debtWho,
@@ -2416,8 +2433,8 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
                         setEditTx(null);
                       } catch (err) {
                         console.error('[HomeScreen] Error updating transaction:', err);
-                        alert(lang === 'uz' ? "Operatsiyani saqlashda xatolik yuz berdi." : "Failed to update transaction.");
-                      }
+                        alert(err instanceof Error ? err.message : "Operatsiyani saqlashda xatolik yuz berdi.");
+                      } finally {mutationPending.current=false;setMutationBusy(false);}
                     }}
                     style={{
                       flex: 1, padding: 14,

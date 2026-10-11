@@ -3,7 +3,7 @@ import { telegramBotLink } from './telegramLinks'
 import { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 import Onboarding from './components/Onboarding'
-import HomeScreen from './components/HomeScreen'
+const HomeScreen = lazy(() => import('./components/HomeScreen'))
 import BottomNav from './components/BottomNav'
 import { useFinance, isTelegramMiniApp, isValidPhoneNumber } from './FinanceContext'
 import InstallPromptModal from './components/InstallPromptModal'

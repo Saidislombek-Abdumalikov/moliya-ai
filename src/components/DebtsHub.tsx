@@ -1,13 +1,13 @@
 import {aiPopupStyle,aiPopupTransition} from './aiPopupStyle';
 import {createPortal} from 'react-dom';
 import {debtPersonLabel} from '../../shared/debtPeople';
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { AnimatePresence, motion } from "motion/react"
 import SwipeSheet from "./SwipeSheet"
 import { useFinance, type Transaction } from "../FinanceContext"
 import {
   isDebt,
-  debtRemaining,
+  debtBalances,
   personKey,
   debtRank,
   dueDebts,
@@ -29,7 +29,9 @@ const input = {
   font: "inherit",
 } as const
 export default function DebtsHub() {
-  const { customTransactions: all, userId, debtAction, deleteTransaction } = useFinance()
+  const { customTransactions: all, userId, onboarding, debtAction, deleteTransaction } = useFinance()
+  const balances=useMemo(()=>debtBalances(all),[all]);
+  const remaining=(t:Transaction)=>balances.get(String(t.id))||0;
   const [open, setOpen] = useState(false),
     [tab, setTab] = useState("debt"),
     [closed, setClosed] = useState(false),
@@ -61,7 +63,7 @@ export default function DebtsHub() {
   const debts = all.filter(isDebt),
     reminders = dueDebts(all, today)
   useEffect(() => {
-    if (!userId || !reminders.length) return
+    if (!userId || !reminders.length || onboarding?.notifications?.opt1===false) return
     const key = "moliya_debt_popup_" + userId + "_" + today
     const signature = reminders
       .map((t) => t.id + ":" + t.debtDueDate)
@@ -75,6 +77,7 @@ export default function DebtsHub() {
   }, [
     userId,
     today,
+    onboarding?.notifications?.opt1,
     reminders.map((t) => t.id + ":" + t.debtDueDate).join("|"),
   ])
   useEffect(() => {
@@ -105,7 +108,7 @@ export default function DebtsHub() {
     .filter(
       (t) =>
         t.type === tab &&
-        (closed ? debtRemaining(t, all) === 0 : debtRemaining(t, all) > 0) &&
+        (closed ? remaining(t) === 0 : remaining(t) > 0) &&
         `${t.debtWho || ""} ${t.note || ""} ${t.title || ""}`
           .toLowerCase()
           .includes(search.toLowerCase()),
@@ -116,11 +119,12 @@ export default function DebtsHub() {
     items: filtered.filter((t) => personKey(t) === key),
   }))
   const close = () => {
-    if (!busy) {
+    if (!busyRef.current) {
       setOpen(false)
       setPerson(null)
       setSelected(null)
       setError("")
+      setDeleting(false);setEditing(false);setSearch("");setSearching(false);
     }
   }
   const run = async (fn: () => Promise<void>, message = "Saqlandi") => {
@@ -166,17 +170,17 @@ export default function DebtsHub() {
       for (const t of reminders) await debtAction(t, "dismiss")
       setNotice(false)
     }, "")
-  const back=()=>{if(busyRef.current)return;if(editing){setEditing(false);return;}if(selected){setSelected(null);return;}if(person){setPerson(null);return;}close();};
+  const back=()=>{if(busyRef.current)return;if(deleting){setDeleting(false);return;}if(editing){setEditing(false);return;}if(selected){if(person&&filtered.filter(t=>personKey(t)===person).length<=1)setPerson(null);setSelected(null);return;}if(person){setPerson(null);return;}close();};
 
   return <>
     <motion.button className="home-summary-card debt-summary" whileTap={{scale:.98}} onClick={()=>setOpen(true)}>
       <span className="summary-title">Qarz / Haqqim <span>↗</span></span>
-      {(['debt','lending'] as const).map(kind=><span key={kind} className="debt-summary-line"><span className="summary-caption">{kind==='debt'?'Qarzlarim':'Haqqim'}</span><strong className="summary-money">{money(debts.filter(t=>t.type===kind).reduce((sum,t)=>sum+debtRemaining(t,all),0))} <small>so‘m</small></strong></span>)}
+      {(['debt','lending'] as const).map(kind=><span key={kind} className="debt-summary-line"><span className="summary-caption">{kind==='debt'?'Qarzlarim':'Haqqim'}</span><strong className="summary-money">{money(debts.filter(t=>t.type===kind).reduce((sum,t)=>sum+remaining(t),0))} <small>so‘m</small></strong></span>)}
     </motion.button>
     {createPortal(<><AnimatePresence>{notice&&!open&&reminders.length>0&&<motion.div className="finance-popup-overlay" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} onClick={dismissNotices}>
       <SwipeSheet className="ai-restored-sheet ai-debt-fields" scrollBody onDismiss={dismissNotices} locked={busy} style={aiPopupStyle} transition={aiPopupTransition} onClick={e=>e.stopPropagation()} initial={{y:'100%'}} animate={{y:0}} exit={{y:'100%'}}>
         <h3 className="calm-heading">🔔 Qarz eslatmasi</h3>
-        {reminders.map(t=><button className="calm-row" key={t.id} onClick={()=>{setSelected(String(t.id));setTab(t.type);setOpen(true);setNotice(false);}}><span><strong>{t.debtWho||'Nomsiz'}</strong><small>{status(t)}</small></span><b>{money(debtRemaining(t,all))} so‘m</b></button>)}
+        {reminders.map(t=><button className="calm-row" key={t.id} onClick={()=>{setSelected(String(t.id));setTab(t.type);setOpen(true);setNotice(false);}}><span><strong>{t.debtWho||'Nomsiz'}</strong><small>{status(t)}</small></span><b>{money(remaining(t))} so‘m</b></button>)}
         <button className="calm-action" disabled={busy} onClick={dismissNotices}>Keyinroq</button>
       </SwipeSheet>
     </motion.div>}</AnimatePresence>
@@ -186,22 +190,22 @@ export default function DebtsHub() {
         <div className="calm-header"><h3>{tx?tx.debtWho||'Nomsiz':person?filtered.find(t=>personKey(t)===person)?.debtWho:'Qarz / Haqqim'}</h3>{!tx&&!person&&<button className="calm-icon" aria-label="Qidirish" aria-expanded={searching} onClick={()=>{setSearching(v=>!v);setSearch('');}}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg></button>}</div>
         {error&&<p role="alert" className="calm-error">{error}</p>}{success&&<p role="status" className="calm-success">{success}</p>}
         {tx?<>
-          <div className="calm-hero"><small>{tx.type==='debt'?'Qarz qoldig‘i':'Olinadigan summa'}</small><h2>{money(debtRemaining(tx,all))} <small>so‘m</small></h2><p>{status(tx)}</p></div>
+          <div className="calm-hero"><small>{tx.type==='debt'?'Qarz qoldig‘i':'Olinadigan summa'}</small><h2>{money(remaining(tx))} <small>so‘m</small></h2><p>{status(tx)}</p></div>
           {editing?<>
             <div className="finance-fields-row"><label>Ism<input style={input} value={name} maxLength={100} onChange={e=>setName(e.target.value)}/></label><label>Qaytarish sanasi<input style={input} type="date" value={due} onChange={e=>setDue(e.target.value)}/></label></div>
             <button className="calm-action" aria-pressed={!due} onClick={()=>setDue('')}>Hali kelishilmagan {!due?'✓':''}</button>
-            {debtRemaining(tx,all)>0&&<div className="calm-subsection"><label>Qaytarilgan summa<input style={input} inputMode="decimal" value={amount} onChange={e=>setAmount(formatMoneyInput(e.target.value))}/></label><div className="calm-actions"><button className="calm-action" disabled={busy||readMoneyInput(amount)===null} onClick={()=>pay(readMoneyInput(amount)!)}>Qisman qaytarildi</button><button className="calm-action" disabled={busy} onClick={()=>pay(debtRemaining(tx,all))}>To‘liq qaytarildi</button></div></div>}
+            {remaining(tx)>0&&<div className="calm-subsection"><label>Qaytarilgan summa<input style={input} inputMode="decimal" value={amount} onChange={e=>setAmount(formatMoneyInput(e.target.value))}/></label><div className="calm-actions"><button className="calm-action" disabled={busy||readMoneyInput(amount)===null} onClick={()=>pay(readMoneyInput(amount)!)}>Qisman qaytarildi</button><button className="calm-action" disabled={busy} onClick={()=>pay(remaining(tx))}>To‘liq qaytarildi</button></div></div>}
           </>:<>
             {tx.note&&<p className="calm-note">{tx.note}</p>}
             <small className="calm-muted">{String(tx.date).slice(0,10)} · Boshlang‘ich {money(Math.abs(Number(tx.amount)))} so‘m</small>
-            <div className="calm-actions"><button className="calm-action" onClick={()=>setEditing(true)}>Tahrirlash</button><button className="calm-action calm-danger" onClick={()=>setDeleting(true)}>O‘chirish</button></div>
-            {deleting&&<div className="calm-subsection"><p>Bu yozuv o‘chirilsinmi?</p><div className="calm-actions"><button className="calm-action" disabled={busy} onClick={()=>setDeleting(false)}>Bekor qilish</button><button className="calm-action calm-danger" disabled={busy} onClick={()=>void run(async()=>{if(all.some(p=>p.debtPaymentFor===String(tx.id)))throw Error('To‘lovlari bor qarzni o‘chirib bo‘lmaydi.');if(!await deleteTransaction(tx.id))throw Error('O‘chirilmadi');setSelected(null);},'')}>O‘chirish</button></div></div>}
+            <div className="calm-actions">{!deleting&&<><button className="calm-action" disabled={busy} onClick={()=>setEditing(true)}>Tahrirlash</button><button className="calm-action calm-danger" disabled={busy||all.some(p=>p.debtPaymentFor===String(tx.id))} onClick={()=>setDeleting(true)}>O‘chirish</button></>}</div>{!deleting&&all.some(p=>p.debtPaymentFor===String(tx.id))&&<p className="calm-muted">Qaytarish yozuvlari bor qarzni o‘chirib bo‘lmaydi. To‘lovlar tarixi quyida saqlanadi.</p>}
+            {deleting&&<div className="calm-subsection"><p>Bu yozuv o‘chirilsinmi?</p><div className="calm-actions"><button className="calm-action" disabled={busy} onClick={()=>setDeleting(false)}>Bekor qilish</button><button className="calm-action calm-danger" disabled={busy} onClick={()=>void run(async()=>{if(all.some(p=>p.debtPaymentFor===String(tx.id)))throw Error('To‘lovlari bor qarzni o‘chirib bo‘lmaydi.');if(!await deleteTransaction(tx.id))throw Error('O‘chirilmadi');setSelected(null);setPerson(null);setDeleting(false);},'')}>O‘chirish</button></div></div>}
             {all.some(p=>p.debtPaymentFor===String(tx.id))&&<details className="calm-subsection"><summary>To‘lovlar tarixi</summary>{all.filter(p=>p.debtPaymentFor===String(tx.id)).map(p=><p key={p.id}>{String(p.date).slice(0,10)} · {money(Math.abs(Number(p.amount)))} so‘m</p>)}</details>}
           </>}
         </>:<>
           {!person&&<><div className="calm-segments">{['debt','lending'].map(t=><button key={t} aria-pressed={tab===t} onClick={()=>setTab(t)}>{t==='debt'?'Qarzlarim':'Haqqim'}</button>)}</div>{searching&&<input aria-label="Qarz qidirish" autoFocus style={input} placeholder="Ism yoki izoh" value={search} onChange={e=>setSearch(e.target.value)}/>}<button className="calm-text" aria-pressed={closed} onClick={()=>setClosed(v=>!v)}>{closed?'Faol qarzlar':'Yopilganlar tarixi'}</button></>}
           {!filtered.length&&<p className="calm-empty">Hozircha yozuv yo‘q</p>}
-          {person?filtered.filter(t=>personKey(t)===person).map(t=><motion.button whileTap={{scale:.98}} className="calm-row" key={t.id} onClick={()=>setSelected(String(t.id))}><span><strong>{t.title||'Qarz'}</strong><small>{status(t)}</small></span><b>{money(debtRemaining(t,all))} so‘m</b></motion.button>):groups.map(g=><motion.button whileTap={{scale:.98}} className="calm-row" key={g.key} onClick={()=>{setPerson(g.key);if(g.items.length===1)setSelected(String(g.items[0].id));}}><span><strong>{debtPersonLabel(g.items[0].debtWho,g.items[0].debtRelationship)}</strong><small>{g.items.length} ta · {status(g.items[0])}</small></span><b>{money(g.items.reduce((sum,t)=>sum+debtRemaining(t,all),0))} so‘m</b></motion.button>)}
+          {person?filtered.filter(t=>personKey(t)===person).map(t=><motion.button whileTap={{scale:.98}} className="calm-row" key={t.id} onClick={()=>setSelected(String(t.id))}><span><strong>{t.title||'Qarz'}</strong><small>{status(t)}</small></span><b>{money(remaining(t))} so‘m</b></motion.button>):groups.map(g=><motion.button whileTap={{scale:.98}} className="calm-row" key={g.key} onClick={()=>{setPerson(g.key);if(g.items.length===1)setSelected(String(g.items[0].id));}}><span><strong>{debtPersonLabel(g.items[0].debtWho,g.items[0].debtRelationship)}</strong><small>{g.items.length} ta · {status(g.items[0])}</small></span><b>{money(g.items.reduce((sum,t)=>sum+remaining(t),0))} so‘m</b></motion.button>)}
         </>}
       </SwipeSheet>
     </motion.div>}</AnimatePresence></>,document.body)}

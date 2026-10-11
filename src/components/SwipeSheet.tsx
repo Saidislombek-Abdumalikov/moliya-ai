@@ -2,9 +2,28 @@ import { useState, useRef, useEffect, type ReactNode } from 'react';
 import { motion, useDragControls, useReducedMotion, type HTMLMotionProps } from 'motion/react';
 
 type Props = Omit<HTMLMotionProps<'div'>,'children'> & { children?:ReactNode; footer?:ReactNode; scrollBody?:boolean; onDismiss: () => void; locked?: boolean };
+let openSheetCount=0;
+let previousBodyOverflow='';
 // Drag starts only on the handle; forms and content keep native scrolling.
 export default function SwipeSheet({onDismiss,locked=false,children,footer,scrollBody=false,style,...props}:Props) {
   const sheetRef=useRef<HTMLDivElement>(null);
+  useEffect(()=>{
+    const previousFocus=document.activeElement instanceof HTMLElement?document.activeElement:null;
+    if(openSheetCount++===0){previousBodyOverflow=document.body.style.overflow;document.body.style.overflow='hidden';}
+    const sheet=sheetRef.current;
+    const top=()=>{const nodes=document.querySelectorAll('[data-finance-sheet]');return nodes[nodes.length-1]===sheet;};
+    const focusables=()=>Array.from(sheet?.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),a[href],[tabindex="0"]')||[]).filter(el=>el.getClientRects().length>0);
+    const frame=requestAnimationFrame(()=>{if(top()&&!sheet?.contains(document.activeElement))sheet?.focus({preventScroll:true});});
+    const trap=(event:KeyboardEvent)=>{
+      if(event.key!=='Tab'||!top())return;
+      const nodes=focusables(),first=nodes[0],last=nodes[nodes.length-1];
+      if(!first){event.preventDefault();sheet?.focus();return;}
+      if(event.shiftKey&&(document.activeElement===first||document.activeElement===sheet)){event.preventDefault();last.focus();}
+      else if(!event.shiftKey&&(document.activeElement===last||!sheet?.contains(document.activeElement))){event.preventDefault();first.focus();}
+    };
+    window.addEventListener('keydown',trap);
+    return()=>{cancelAnimationFrame(frame);window.removeEventListener('keydown',trap);if(--openSheetCount===0)document.body.style.overflow=previousBodyOverflow;if(previousFocus?.isConnected)previousFocus.focus({preventScroll:true});};
+  },[]);
   const dragged=useRef(false);
   useEffect(()=>{const key=(e:KeyboardEvent)=>{const sheets=document.querySelectorAll('[data-finance-sheet]');if(e.key==='Escape'&&!locked&&sheets[sheets.length-1]===sheetRef.current){e.preventDefault();onDismiss();}};window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key);},[locked,onDismiss]);
   const [dragging,setDragging]=useState(false);
@@ -23,7 +42,7 @@ export default function SwipeSheet({onDismiss,locked=false,children,footer,scrol
     return()=>{viewport?.removeEventListener('scroll',update);viewport?.removeEventListener('resize',update);window.removeEventListener('resize',update);};
   },[]);
 
-  return <motion.div {...props} ref={sheetRef} data-finance-sheet role="dialog" aria-modal="true" drag={locked?false:'y'} dragControls={controls} dragListener={false}
+  return <motion.div {...props} ref={sheetRef} data-finance-sheet tabIndex={-1} role="dialog" aria-modal="true" drag={locked?false:'y'} dragControls={controls} dragListener={false}
     dragConstraints={{top:0,bottom:0}} dragElastic={{top:0.12,bottom:0.65}} dragSnapToOrigin
     onDragStart={()=>{dragged.current=true;setDragging(true);}}
     onDragEnd={(_,info)=>{
