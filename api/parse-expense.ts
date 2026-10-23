@@ -129,15 +129,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const prompt = buildUzbekFinancialPrompt(cleanText, undefined, await loadAiParserGuidance());
 
     // Try each key with fastest active Gemini models first
-    const activeModels = ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.5-flash'];
+    const activeModels = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash'];
 
     const aiDeadline=Date.now()+25000;
     for (const key of candidateKeys) {
       if (key.provider !== 'google' && (key.provider as string) !== 'gemini') continue;
       
-      let primary = key.model || 'gemini-3.5-flash-lite';
-      if (primary === 'gemini-flash-latest' || primary.includes('2.0-flash') || primary.includes('3.1-flash')) {
-        primary = 'gemini-3.5-flash-lite';
+      let primary = String(key.model || '').trim() || 'gemini-2.5-flash';
+      if (primary === 'gemini-flash-latest' || /^gemini-3\./i.test(primary)) {
+        primary = 'gemini-2.5-flash';
       }
       const keyModels = [...new Set([primary, ...activeModels])];
 

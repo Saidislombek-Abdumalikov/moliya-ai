@@ -104,7 +104,7 @@ export default function UpcomingPayments(){
  useEffect(()=>{const url=new URL(location.href);const id=url.searchParams.get('paymentId');if(id){setSelected(id);url.searchParams.delete('paymentId');history.replaceState({},'',url.pathname+url.search+url.hash);}},[]);
  useEffect(()=>{
    if(open||!userId||onboarding?.notifications?.opt1===false)return;
-   const noticeKey=(p:PlannedPayment)=>`moliya_plan_notice_${userId}_${today}_${p.id}_${p.dueDate}`;
+   const noticeKey=(p:PlannedPayment)=>`moliya_plan_notice_${userId}_${paymentReminderKind(p,today,customTransactions)==='early'?'early':today}_${p.id}_${p.dueDate}`;
    const due=nextUnseenPaymentReminder(plans,today,customTransactions,p=>{try{return sessionStorage.getItem(noticeKey(p))==='1';}catch{return seenNotices.current.has(noticeKey(p));}});
    if(!due)return;
    seenNotices.current.add(noticeKey(due));
@@ -146,7 +146,7 @@ export default function UpcomingPayments(){
        </form>:plan?<>
          <div className="calm-hero"><span className="payment-glyph">{paymentIcons[paymentIconKey(plan.icon)]}</span><h2>{plan.amount.toLocaleString()} <small>so‘m</small></h2><p>{plan.dueDate}{plan.time?' · '+plan.time:''}</p></div>
          {paying?<><p className="calm-note">{words[10]}</p><select aria-label="Hisob" value={cardId} onChange={e=>setCardId(e.target.value)}><option value="cash">Naqd</option>{cards.map(c=><option key={c.id} value={c.id}>{c.bank} · {c.number.slice(-4)}</option>)}</select></>:<>
-           {!deleting&&plan.dueDate<=today&&!occurrencePaid?<div className="calm-subsection"><p>To‘lov amalga oshdimi?</p><div className="calm-actions"><button className="calm-action" disabled={busy} onClick={()=>{setCardId('cash');setPaying(true);}}>✅ To‘ladim</button><button className="calm-action" disabled={busy} onClick={()=>void run(notPaid)}>Hali to‘lamadim</button></div></div>:notice&&<p className="calm-note">🔔 To‘lov kuni yaqinlashmoqda</p>}
+           {!deleting&&(plan.dueDate<=today||notice)&&!occurrencePaid?<div className="calm-subsection"><p>{plan.dueDate<=today?'To‘lov amalga oshdimi?':'🔔 To‘lov kuni yaqinlashmoqda. To‘lov amalga oshdimi?'}</p><div className="calm-actions"><button className="calm-action" disabled={busy} onClick={()=>{setCardId('cash');setPaying(true);}}>✅ To‘ladim</button><button className="calm-action" disabled={busy} onClick={()=>void run(notPaid)}>Hali to‘lamadim</button></div></div>:null}
            {!deleting&&<div className="calm-actions">{occurrencePaid?<button className="calm-action" disabled={busy} onClick={()=>void run(paid)}>✅ To‘lov saqlangan — rejani yangilash</button>:<button className="calm-action" disabled={busy} onClick={()=>edit(plan)}>Tahrirlash</button>}<button className="calm-action calm-danger" disabled={busy} onClick={()=>setDeleting(true)}>{words[15]}</button></div>}
            {deleting&&<div className="calm-subsection"><p>Reja o‘chirilsinmi?</p><div className="calm-actions"><button className="calm-action" disabled={busy} onClick={()=>setDeleting(false)}>{words[12]}</button><button className="calm-action calm-danger" disabled={busy} onClick={()=>void run(async()=>{await save(plans.filter(p=>p.id!==plan.id));setSelected(null);setDeleting(false);})}>{words[15]}</button></div></div>}
          </>}

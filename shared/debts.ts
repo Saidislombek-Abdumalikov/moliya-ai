@@ -14,12 +14,14 @@ export type DebtRecord = {
 export const isDebt = (t: DebtRecord) =>
   t.type === "debt" || t.type === "lending"
 export function localDay(now = new Date()) {
-  return new Intl.DateTimeFormat("en-CA", {
+  const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "Asia/Tashkent",
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-  }).format(now)
+  }).formatToParts(now)
+  const value = (key: string) => parts.find((part) => part.type === key)?.value || ""
+  return `${value("year")}-${value("month")}-${value("day")}`
 }
 export function validDay(s: unknown): s is string {
   return (

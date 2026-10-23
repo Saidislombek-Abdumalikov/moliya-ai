@@ -13,6 +13,7 @@ import { safeWarn, safeError } from './_logger.js';
 import { executeAiQuery } from './_aiRouter.js';
 import { supabase } from './_supabaseClient.js';
 import { financialAmount, financialKind, financialTotals } from '../shared/financialTotals.js';
+import { tashkentDay, transactionDay } from '../shared/reminderPolicy.js';
 
 export interface ReportMetrics {
   totalIncome: number;
@@ -69,8 +70,12 @@ export function calculateFinancialMetrics(
 ): ReportMetrics {
   const startMs = startDate.getTime();
   const endMs = endDate.getTime();
+  const startDay = tashkentDay(startDate);
+  const endDay = tashkentDay(endDate);
 
   const periodTx = transactions.filter(tx => {
+    const day = transactionDay(tx?.date);
+    if (day) return day >= startDay && day <= endDay;
     const ms = tx?.date ? new Date(tx.date).getTime() : NaN;
     return Number.isFinite(ms) && ms >= startMs && ms <= endMs;
   });

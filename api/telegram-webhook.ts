@@ -736,13 +736,12 @@ function buildTransactionSuccessCard(tx: {
   const randomHook = MARKETING_HOOKS[Math.floor(Math.random() * MARKETING_HOOKS.length)];
   const label = tx.title || tx.name || tx.note || cat;
 
+  const kindEmoji = ({income:'💰',expense:'💸',debt:'📥',lending:'📤'} as Record<string,string>)[tx.type || 'expense'] || '💸';
   const text =
-    `✨ <b>Muvaffaqiyatli saqlandi!</b>\n\n` +
-    `${escapeBotHtml(({income:'💰 Daromad',expense:'💸 Xarajat',debt:'📥 Qarz olish',lending:'📤 Qarz berish'} as Record<string,string>)[tx.type || 'expense'])}\n` +
-    `${emoji} <b>Kategoriya:</b> ${escapeBotHtml(cat)}\n` +
-    `💰 <b>Summa:</b> ${formattedAmount} so'm\n` +
-    `📝 <b>Izoh:</b> ${escapeBotHtml(label)}\n` +
-    `📅 <b>Sana:</b> ${escapeBotHtml(tx.date || 'Bugun')}${tx.time ? ` | ${escapeBotHtml(tx.time)}` : ''}`;
+    `✅ <b>Muvaffaqiyatli saqlandi!</b>\n` +
+    `<blockquote>${kindEmoji} <b>${formattedAmount} so'm</b> · ${emoji} ${escapeBotHtml(cat)}\n` +
+    `📝 ${escapeBotHtml(label)}\n` +
+    `📅 ${escapeBotHtml(tx.date || 'Bugun')}${tx.time ? ` · ⏰ ${escapeBotHtml(tx.time)}` : ''}</blockquote>`;
 
   const keyboard = {inline_keyboard:[[
     {text:'✏️ Tahrirlash',web_app:{url:transactionEditUrl(txId)}},
@@ -824,21 +823,21 @@ async function parseTextWithAi(text: string) {
   const envKey = process.env.GEMINI_API_KEY;
   const keysToTry = candidateKeys.length > 0
     ? candidateKeys
-    : (envKey ? [{ id: 'env_gemini', api_key: envKey, name: 'ENV Key', model: 'gemini-3.5-flash-lite' }] : []);
+    : (envKey ? [{ id: 'env_gemini', api_key: envKey, name: 'ENV Key', model: 'gemini-2.5-flash' }] : []);
 
   if (keysToTry.length === 0) throw new Error('AI_NOT_CONFIGURED');
 
   const prompt = buildUzbekFinancialAiPrompt(text, undefined, await loadAiParserGuidance());
   const aiDeadline=Date.now()+25000;
-  const activeModels = ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.5-flash'];
+  const activeModels = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash'];
 
   for (const keyObj of keysToTry) {
     const rawApiKey = (keyObj.api_key || '').trim();
     if (!rawApiKey) continue;
 
-    let primary = keyObj.model || 'gemini-3.5-flash-lite';
-    if (primary === 'gemini-flash-latest' || primary.includes('2.0-flash') || primary.includes('3.1-flash')) {
-      primary = 'gemini-3.5-flash-lite';
+    let primary = String(keyObj.model || '').trim() || 'gemini-2.5-flash';
+    if (primary === 'gemini-flash-latest' || /^gemini-3\./i.test(primary)) {
+      primary = 'gemini-2.5-flash';
     }
     const modelsToTry = [...new Set([primary, ...activeModels])];
 
@@ -2061,8 +2060,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const statusMsg = await sendTelegramMessage(
         chatId,
         isVoice
-          ? `🎙️ <b>Ovozli xabar qabul qilindi!</b>\n<i>Tahlil qilinmoqda…</i>`
-          : `🎵 <b>Audio qabul qilindi!</b>\n<i>Tahlil qilinmoqda…</i>`,
+          ? `🎙 <b>Eshitilmoqda…</b>`
+          : `🎵 <b>Tahlil qilinmoqda…</b>`,
         undefined,
         userId
       );
@@ -2175,7 +2174,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       sendChatAction(chatId, 'upload_photo').catch(() => {});
       const statusMsg = await sendTelegramMessage(
         chatId,
-        `📸 <b>Chek qabul qilindi...</b>\n🔍 <i>Chek matni skanerlanmoqda (OCR)...</i>`,
+        `📸 <b>Chek o‘qilmoqda…</b>`,
         undefined,
         userId
       );
@@ -2190,16 +2189,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const arrayBuffer = await imgRes.arrayBuffer();
           if(arrayBuffer.byteLength>10*1024*1024)throw new Error('IMAGE_TOO_LARGE');
           const base64Img = Buffer.from(arrayBuffer).toString('base64');
-
-          if (statusMsgId) {
-            await editTelegramMessage(
-              chatId,
-              statusMsgId,
-              `🧠 <b>AI tahlil qilmoqda...</b>\n⚡ <i>Jami summa va mahsulotlar hisoblanmoqda</i>`,
-              undefined,
-              userId
-            );
-          }
 
           const parsed=await parseReceiptImage(base64Img,'image/jpeg');
             if (parsed) {
@@ -2222,16 +2211,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               };
 
               try {
-                if (statusMsgId) {
-                  await editTelegramMessage(
-                    chatId,
-                    statusMsgId,
-                    `📝 <b>Yozuv saqlanmoqda…</b>`,
-                    undefined,
-                    userId
-                  );
-                }
-
                 await saveAndShowTransaction(userId,chatId,message.message_id,[newTx],statusMsgId,newTx.note);
                 return res.status(200).json({ status: 'ok' });
               } catch (saveErr) {

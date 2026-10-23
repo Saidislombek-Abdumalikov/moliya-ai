@@ -205,7 +205,8 @@ export default function CalendarScreen({ onboarding, embedded = false }: Props) 
 
     // Load custom transactions from context
     customTransactions.forEach((t: any, idx: number) => {
-      const cleanAmt = Number(String(t.amount).replace(/\s/g, '').replace(/,/g, '')) || 0
+      const rawAmt = Number(String(t.amount).replace(/\s/g, '').replace(/,/g, '')) || 0
+      const cleanAmt = t.type === 'expense' || t.type === 'lending' ? -Math.abs(rawAmt) : t.type === 'income' || t.type === 'debt' ? Math.abs(rawAmt) : rawAmt
       const isNegative = cleanAmt < 0
       let d = t.day
       let m = t.month

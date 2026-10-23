@@ -2,6 +2,7 @@ import {effectiveTrialEnd} from '../shared/registrationTrial.js';
 import {effectiveAccess} from './_accessHelper.js';
 import {accountDenied,eligibleUser,verifiedPhone,acceptedConsent,publicOnboarding} from './_userPolicy.js';
 import {financialTotals} from '../shared/financialTotals.js';
+import {tashkentDay,transactionDay} from '../shared/reminderPolicy.js';
 
 // Same server policies as user auth; no browser inference from a phone number.
 export function adminUserView(u:any,restricted=false,defaultAiQuota=20){
@@ -15,8 +16,8 @@ export function adminUserView(u:any,restricted=false,defaultAiQuota=20){
  const transactions=Array.isArray(u.transactions) && u.transactions.length ? u.transactions :
    Array.isArray(u.onboarding?.transactions)?u.onboarding.transactions:[];
  const financialSummary=financialTotals(transactions);
- const today=new Date().toISOString().slice(0,10);
- const todaySummary=financialTotals(transactions.filter((tx:any)=>String(tx?.date||'').slice(0,10)===today));
+ const now=new Date(),todayUtc=now.toISOString().slice(0,10),todayLocal=tashkentDay(now);
+ const todaySummary=financialTotals(transactions.filter((tx:any)=>{const d=transactionDay(tx?.date)||String(tx?.date||'').slice(0,10);return d===todayLocal||d===todayUtc;}));
  return {
   id:u.id,name:u.name,phone:u.phone,telegram:u.telegram,telegramId:String(u.telegram_id),
   isPremium:access.isPremium,premiumExpiresAt:u.premium_expires_at,trialEndsAt:effectiveTrialEnd(u),

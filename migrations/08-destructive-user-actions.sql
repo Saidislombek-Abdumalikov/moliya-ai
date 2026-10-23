@@ -130,10 +130,10 @@ BEGIN
      IF coalesce(nullif(regexp_replace(previous->>'balance','[ ,[:space:]]','','g'),''),'0')::numeric <> 0 THEN
        IF EXISTS (SELECT 1 FROM jsonb_array_elements(txs) t WHERE t->>'id'='card_removed_' || tx_id) THEN RETURN conflict; END IF;
        item:=jsonb_build_object('id','card_removed_' || tx_id,'cardId','cash',
-         'amount',abs(regexp_replace(previous->>'balance','[ ,[:space:]]','','g')::numeric),
+         'amount',regexp_replace(previous->>'balance','[ ,[:space:]]','','g')::numeric,
          'type',CASE WHEN regexp_replace(previous->>'balance','[ ,[:space:]]','','g')::numeric>0 THEN 'income' ELSE 'expense' END,
          'note','Karta o‘chirildi (boshlang‘ich balans saqlandi)', 'category','Boshqa',
-         'date',to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD'));
+         'date',to_char(clock_timestamp() AT TIME ZONE 'Asia/Tashkent','YYYY-MM-DD'));
        txs:=jsonb_build_array(item) || txs;
      END IF;
      SELECT coalesce(jsonb_agg(value ORDER BY ord),'[]') INTO card_list

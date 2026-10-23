@@ -38,7 +38,9 @@ export async function parseFinancialAudio(buffer:Buffer) {
   const audio={inlineData:{mimeType,data:buffer.toString('base64')}};
   const deadline=Date.now()+30000;
   for(const key of keys){
-    for(const model of [...new Set([key.model || 'gemini-3.6-flash','gemini-3.6-flash','gemini-3.5-flash-lite'])]){
+    const rawModel = String(key.model || '').trim();
+    const primaryModel = !rawModel || rawModel === 'gemini-flash-latest' || /^gemini-3\./i.test(rawModel) ? 'gemini-2.5-flash' : rawModel;
+    for(const model of [...new Set([primaryModel,'gemini-2.5-flash','gemini-2.5-flash-lite','gemini-2.0-flash'])]){
       if(Date.now()>=deadline)break;
       try{
         const ai=new GoogleGenAI({apiKey:key.api_key.trim()});

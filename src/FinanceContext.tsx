@@ -942,6 +942,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     const txId = tx.id ? String(tx.id) : (`tx_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`);
     const previous=customTransactions.find(t=>String(t.id)===txId) || null;
+    const isLoanType = tx.type === 'debt' || tx.type === 'lending';
     const newTx: Transaction = {
       ...previous,
       id: txId,
@@ -950,11 +951,11 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       note: tx.note || tx.title || tx.category || '',
       category: tx.category || 'Boshqa',
       title: tx.title || tx.note || tx.category || '',
-      debtWho: tx.debtWho,
-      debtRelationship:tx.debtRelationship ?? previous?.debtRelationship,
-      debtPersonId:tx.debtPersonId ?? previous?.debtPersonId,
-      debtDueDate:tx.debtDueDate===undefined?previous?.debtDueDate:tx.debtDueDate,
-      debtDateConfirmed:tx.debtDateConfirmed ?? previous?.debtDateConfirmed,
+      debtWho: isLoanType ? (tx.debtWho ?? previous?.debtWho) : undefined,
+      debtRelationship: isLoanType ? (tx.debtRelationship ?? previous?.debtRelationship) : undefined,
+      debtPersonId: isLoanType ? (tx.debtPersonId ?? previous?.debtPersonId) : undefined,
+      debtDueDate: isLoanType ? (tx.debtDueDate===undefined?previous?.debtDueDate:tx.debtDueDate) : undefined,
+      debtDateConfirmed: isLoanType ? (tx.debtDateConfirmed ?? previous?.debtDateConfirmed) : undefined,
       messageId: tx.messageId,
       cardId: tx.cardId || 'cash',
       date: finalDate,

@@ -964,7 +964,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               name: 'Default Environment Gemini Key',
               provider: 'google',
               api_key: envKey,
-              model: 'gemini-3.5-flash-lite',
+              model: 'gemini-2.5-flash',
               priority: 1,
               status: 'active',
               total_requests: 0,
@@ -977,9 +977,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         const { data: aiLogs } = await supabase.from('ai_logs').select('id, timestamp').limit(1000);
-        const todayStr = new Date().toISOString().slice(0, 10);
-        const curMonth = new Date().getMonth();
-        const curYear = new Date().getFullYear();
+        const now = new Date();
+        const todayStr = tashkentDay(now);
+        const curMonthPrefix = todayStr.slice(0, 7);
 
         let requestsToday = 0;
         let requestsMonth = 0;
@@ -987,22 +987,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         (aiLogs || []).forEach((l: any) => {
           if (l.timestamp) {
             const d = new Date(l.timestamp);
-            if (l.timestamp.startsWith(todayStr)) requestsToday++;
-            if (d.getMonth() === curMonth && d.getFullYear() === curYear) requestsMonth++;
+            const logDay = !isNaN(d.getTime()) ? tashkentDay(d) : String(l.timestamp).slice(0, 10);
+            if (logDay === todayStr) requestsToday++;
+            if (logDay.startsWith(curMonthPrefix)) requestsMonth++;
           }
         });
 
         const safeKeys = keys.map((k: any) => {
           const lastUsed = k.last_used_at ? new Date(k.last_used_at) : null;
-          const now = new Date();
-          const isSameDay = lastUsed &&
-            lastUsed.getUTCFullYear() === now.getUTCFullYear() &&
-            lastUsed.getUTCMonth() === now.getUTCMonth() &&
-            lastUsed.getUTCDate() === now.getUTCDate();
+          const isSameDay = lastUsed && !isNaN(lastUsed.getTime()) &&
+            tashkentDay(lastUsed) === todayStr;
 
-          let effectiveModel = k.model || 'gemini-3.5-flash-lite';
-          if (effectiveModel === 'gemini-flash-latest' || effectiveModel.includes('2.0-flash') || effectiveModel.includes('3.1-flash')) {
-            effectiveModel = 'gemini-3.5-flash-lite';
+          let effectiveModel = String(k.model || '').trim() || 'gemini-2.5-flash';
+          if (effectiveModel === 'gemini-flash-latest' || /^gemini-3\./i.test(effectiveModel)) {
+            effectiveModel = 'gemini-2.5-flash';
           }
 
           return {
@@ -1060,7 +1058,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             provider: provider === 'google' ? 'gemini' : (provider || 'gemini'),
             api_key: trimmedKey,
             key_preview: keyPreview,
-            model: model || (provider === 'google' || provider === 'gemini' ? 'gemini-3.5-flash-lite' : 'gpt-4o-mini'),
+            model: model || (provider === 'google' || provider === 'gemini' ? 'gemini-2.5-flash' : 'gpt-4o-mini'),
             priority: Number(priority) || 1,
             is_active: true,
             health_status: 'healthy',

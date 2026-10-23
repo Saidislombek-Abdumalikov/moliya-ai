@@ -7,7 +7,13 @@ export async function generateBounded(ai:Pick<GoogleGenAI,'models'>,params:Gener
   const timeout=Math.min(perAttemptMs,deadline-Date.now());
   if(timeout<=0)throw new Error('AI_TIMEOUT');
   const response=await ai.models.generateContent({...params,config:{...params.config,
-    ...(/^gemini-3\.(?:5|6)-flash(?:-lite)?$/.test(params.model) && !params.config?.thinkingConfig ? {thinkingConfig:{thinkingLevel:ThinkingLevel.MINIMAL}} : {}),
+    ...(!params.config?.thinkingConfig
+      ? /^gemini-2\.5-flash(?:-lite)?$/i.test(String(params.model || ''))
+        ? {thinkingConfig:{thinkingBudget:0}}
+        : /^gemini-3\.(?:5|6)-flash(?:-lite)?$/.test(params.model)
+        ? {thinkingConfig:{thinkingLevel:ThinkingLevel.MINIMAL}}
+        : {}
+      : {}),
     maxOutputTokens:Math.max(params.config?.maxOutputTokens||0,2048),
     abortSignal:AbortSignal.timeout(timeout),
     httpOptions:{...params.config?.httpOptions,timeout}

@@ -197,7 +197,7 @@ export default function AnalyticsScreen({ onboarding }: Props) {
       amount: parseAmt(tx),
       type: tx.type,
       category: tx.category,
-      date: new Date((tx.date||'').slice(0,10)+'T'+(tx.time||'12:00')),
+      date: new Date((tx.date||'').slice(0,10)+'T'+(tx.time||(typeof tx.date==='string'&&tx.date.includes('T')?tx.date.slice(11,16):'')||'12:00')),
     })),
     ...(firstExpense ? [{
       amount: -Math.abs(firstExpense.amount),
@@ -256,7 +256,7 @@ export default function AnalyticsScreen({ onboarding }: Props) {
   const summaryIncome = periodTotals.income
   const summaryExpense = periodTotals.expense
   const balances=debtBalances(customTransactions);
-  const summaryDebts = customTransactions.filter(tx=>tx.type==='debt' && new Date(tx.date.slice(0,10)+'T12:00')>=rangeStart && new Date(tx.date.slice(0,10)+'T12:00')<=rangeEnd).reduce((sum,tx)=>sum+(balances.get(String(tx.id))||0),0)
+  const summaryDebts = customTransactions.filter(tx=>tx.type==='debt' && tx.date && new Date(String(tx.date).slice(0,10)+'T12:00')>=rangeStart && new Date(String(tx.date).slice(0,10)+'T12:00')<=rangeEnd).reduce((sum,tx)=>sum+(balances.get(String(tx.id))||0),0)
   const summarySavings = totalLimit - summaryExpense
 
   const subInc = periodWord
@@ -532,7 +532,7 @@ export default function AnalyticsScreen({ onboarding }: Props) {
             <span style={{ fontSize: 13, fontWeight: 600, color: '#5B21B6' }}>{t.aiInsightTitle}</span>
           </div>
           <p style={{ fontSize: 13, color: '#5B21B6', lineHeight: 1.65, opacity: 0.85 }}>
-            {financialInsight(realRecords, lang as 'uz' | 'uz_cyrl' | 'ru' | 'en', new Date(), 'week')}
+            {financialInsight(realRecords, lang as 'uz' | 'uz_cyrl' | 'ru' | 'en', new Date(), period === 'monthly' || period === 'all' ? 'month' : 'week')}
           </p>
 
         </div>

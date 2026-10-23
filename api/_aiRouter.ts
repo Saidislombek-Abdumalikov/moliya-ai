@@ -1,6 +1,7 @@
 import { safeLog, safeWarn } from './_logger.js';
 import { GoogleGenAI, Type } from "@google/genai";
 import { supabase } from './_supabaseClient.js';
+import { tashkentDay } from '../shared/reminderPolicy.js';
 
 export interface AiKeyRecord {
   id: string;
@@ -81,15 +82,13 @@ export async function getCandidateAiKeys(forceRefresh = false): Promise<AiKeyRec
         .map((k: any) => {
           const lastUsed = k.last_used_at ? new Date(k.last_used_at) : null;
           const now = new Date();
-          const isSameDay = lastUsed &&
-            lastUsed.getUTCFullYear() === now.getUTCFullYear() &&
-            lastUsed.getUTCMonth() === now.getUTCMonth() &&
-            lastUsed.getUTCDate() === now.getUTCDate();
+          const isSameDay = lastUsed && !isNaN(lastUsed.getTime()) &&
+            tashkentDay(lastUsed) === tashkentDay(now);
 
-          // Auto-migrate legacy slow models to gemini-3.5-flash-lite
-          let effectiveModel = k.model || 'gemini-3.5-flash-lite';
-          if (effectiveModel === 'gemini-flash-latest' || effectiveModel.includes('2.0-flash') || effectiveModel.includes('3.1-flash')) {
-            effectiveModel = 'gemini-3.5-flash-lite';
+          // Auto-migrate legacy or non-existent 3.x models to gemini-2.5-flash
+          let effectiveModel = String(k.model || '').trim() || 'gemini-2.5-flash';
+          if (effectiveModel === 'gemini-flash-latest' || /^gemini-3\./i.test(effectiveModel)) {
+            effectiveModel = 'gemini-2.5-flash';
           }
 
           return {
@@ -141,7 +140,7 @@ export async function getCandidateAiKeys(forceRefresh = false): Promise<AiKeyRec
         name: 'Default Environment Key',
         provider: 'google',
         api_key: envKey,
-        model: 'gemini-3.5-flash-lite',
+        model: 'gemini-2.5-flash',
         priority: 1,
         status: 'active',
         total_requests: 0,
@@ -247,11 +246,11 @@ export async function recordKeyResult(
  */
 async function callGoogleGenAi(key: AiKeyRecord, prompt: string): Promise<any> {
   const cleanKey = (key.api_key || '').trim();
-  let primaryModel = (key.model || 'gemini-3.5-flash-lite').trim();
-  if (primaryModel === 'gemini-flash-latest' || primaryModel.includes('2.0-flash') || primaryModel.includes('3.1-flash')) {
-    primaryModel = 'gemini-3.5-flash-lite';
+  let primaryModel = (key.model || 'gemini-2.5-flash').trim();
+  if (primaryModel === 'gemini-flash-latest' || /^gemini-3\./i.test(primaryModel)) {
+    primaryModel = 'gemini-2.5-flash';
   }
-  const candidateModels = [primaryModel, 'gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.5-flash'];
+  const candidateModels = [primaryModel, 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash'];
   const models = [...new Set(candidateModels)];
 
   let lastError: any = null;
@@ -418,9 +417,9 @@ export async function testSpecificAiKey(keyData: {
   try {
     const isGoogle = keyData.provider === 'google' || (keyData.provider as string) === 'gemini';
     if (isGoogle) {
-      let targetModel = keyData.model || 'gemini-3.5-flash-lite';
-      if (targetModel === 'gemini-flash-latest' || targetModel.includes('2.0-flash') || targetModel.includes('3.1-flash')) {
-        targetModel = 'gemini-3.5-flash-lite';
+      let targetModel = (keyData.model || 'gemini-2.5-flash').trim();
+      if (targetModel === 'gemini-flash-latest' || /^gemini-3\./i.test(targetModel)) {
+        targetModel = 'gemini-2.5-flash';
       }
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${cleanKey}`;
       const res = await fetch(url, {
@@ -486,7 +485,8 @@ export async function executeAiQuery(
       const isGoogle = key.provider === 'google' || (key.provider as string) === 'gemini';
       if (isGoogle) {
         const ai = new GoogleGenAI({ apiKey: cleanKey });
-        const modelName = (key.model || 'gemini-3.5-flash-lite').trim();
+        const rawModel = (key.model || 'gemini-2.5-flash').trim();
+        const modelName = rawModel === 'gemini-flash-latest' || /^gemini-3\./i.test(rawModel) ? 'gemini-2.5-flash' : rawModel;
         const response = await ai.models.generateContent({
           model: modelName,
           contents: userPrompt,

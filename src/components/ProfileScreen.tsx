@@ -633,7 +633,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
           adjustments.push({
             id: crypto.randomUUID(),
             type: difference > 0 ? 'income' : 'expense',
-            amount: Math.abs(difference),
+            amount: difference,
             category: difference > 0 ? 'Daromad' : 'Boshqa',
             note: "Karta balansi to'g'irlandi",
             date: new Date().toISOString(),
@@ -736,7 +736,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
                 if (t.date) {
                   const d = new Date(t.date)
                   if (!isNaN(d.getTime())) {
-                    dateStr = /^\d{4}-\d{2}-\d{2}/.test(t.date) ? t.date.slice(0,10) : new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tashkent',year:'numeric',month:'2-digit',day:'2-digit'}).format(d)
+                    dateStr = /^\d{4}-\d{2}-\d{2}/.test(t.date) ? t.date.slice(0,10) : localDay(d)
                   }
                 }
                 if (!dateStr && t.year && t.month && t.day) {

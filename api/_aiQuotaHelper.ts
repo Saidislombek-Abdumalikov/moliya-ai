@@ -32,11 +32,13 @@ export async function checkAndRecordAiUsage(userId:string|undefined,queryType:'t
     return result;
   }
   try {
-    const {error}=await supabase.from('ai_logs').insert([{
+    const pendingInsert = supabase.from('ai_logs').insert([{
       user_id:userId,query_type:queryType,prompt_summary:promptSummary.slice(0,300),
       is_premium:result.isPremium,raw_payload:{source,phase:'reserved'},timestamp:new Date().toISOString()
     }]);
-    if(error) safeWarn('[AI_QUOTA] Reservation audit write failed');
+    Promise.resolve(pendingInsert)
+      .then((res: any) => { if (res?.error) safeWarn('[AI_QUOTA] Reservation audit write failed'); })
+      .catch(() => { safeWarn('[AI_QUOTA] Reservation audit write failed'); });
   } catch {safeWarn('[AI_QUOTA] Reservation audit write failed');}
   return result;
 }

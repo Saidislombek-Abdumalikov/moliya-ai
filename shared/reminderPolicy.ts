@@ -13,8 +13,11 @@ export function tashkentDay(date: Date): string {
 
 export function transactionDay(raw: unknown): string {
   if (typeof raw !== 'string' || !raw) return '';
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
-  const date = new Date(raw);
+  const trimmed = raw.trim();
+  if (/^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?)?$/.test(trimmed)) {
+    return trimmed.slice(0, 10);
+  }
+  const date = new Date(trimmed);
   return Number.isFinite(date.getTime()) ? tashkentDay(date) : '';
 }
 

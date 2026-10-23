@@ -384,7 +384,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
     const url=new URL(window.location.href);
     const id=url.searchParams.get('editTransaction');
     if(!id || !userId) return;
-    const tx=customTransactions.find(item=>item.id===id);
+    const tx=customTransactions.find(item=>String(item.id)===String(id));
     if(!tx)return;
     setEditTx({...tx});
     url.searchParams.delete('editTransaction');
@@ -439,7 +439,7 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
           adjustments.push({
             id: crypto.randomUUID(),
             type: difference > 0 ? 'income' : 'expense',
-            amount: Math.abs(difference),
+            amount: difference,
             category: difference > 0 ? 'Daromad' : 'Boshqa',
             note: lang === 'uz' ? "Karta balansi to'g'irlandi" : lang === 'uz_cyrl' ? "Карта баланси тўғирланди" : lang === 'ru' ? "Баланс карты скорректирован" : "Card balance adjusted",
             date: new Date().toISOString(),
@@ -655,8 +655,15 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
   ].filter(t => !deletedTxIds?.includes(String(t.id)))
 
   const now = new Date()
-  const upcomingTransactions = transactions.filter(t => t.date && new Date(t.date) > now).sort((a, b) => new Date(a.date || 0).getTime() - new Date(b.date || 0).getTime())
-  const pastTransactions = transactions.filter(t => !t.date || new Date(t.date) <= now)
+  const todayLocalPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  const isFutureTx = (t: typeof transactions[0]) => {
+    if (!t.date) return false
+    const s = String(t.date).trim()
+    if (/^\d{4}-\d{2}-\d{2}(?:T12:00(?::00)?)?$/.test(s) && s.slice(0, 10) <= todayLocalPrefix) return false
+    return new Date(s) > now
+  }
+  const upcomingTransactions = transactions.filter(isFutureTx).sort((a, b) => new Date(a.date || 0).getTime() - new Date(b.date || 0).getTime())
+  const pastTransactions = transactions.filter(t => !isFutureTx(t))
 
   const getTxTime = (tx: typeof transactions[0]) => {
     if (tx.date) {
@@ -2397,6 +2404,41 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
                       }}
                     />
                   </div>
+                  {(editTx.type === 'debt' || editTx.type === 'lending') && (
+                    <>
+                      <div>
+                        <label style={{ fontSize: 12, fontWeight: 600, color: '#8B82C4', marginBottom: 6, display: 'block' }}>
+                          {lang === 'ru' ? 'С кем долг' : lang === 'en' ? 'Person' : lang === 'uz_cyrl' ? 'Ким билан қарз' : 'Kim bilan qarz'}
+                        </label>
+                        <input
+                          type="text"
+                          maxLength={100}
+                          value={editTx.debtWho || ''}
+                          onChange={(e) => setEditTx({ ...editTx, debtWho: e.target.value })}
+                          style={{
+                            width: '100%', padding: '14px 16px',
+                            borderRadius: 14, border: '1.5px solid #E4E2F0',
+                            fontSize: 16, fontWeight: 500, color: '#1E1A3C'
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 12, fontWeight: 600, color: '#8B82C4', marginBottom: 6, display: 'block' }}>
+                          {lang === 'ru' ? 'Срок возврата' : lang === 'en' ? 'Return due date' : lang === 'uz_cyrl' ? 'Қайтариш санаси' : 'Qaytarish sanasi'}
+                        </label>
+                        <input
+                          type="date"
+                          value={editTx.debtDueDate ? String(editTx.debtDueDate).slice(0, 10) : ''}
+                          onChange={(e) => setEditTx({ ...editTx, debtDueDate: e.target.value || null, debtDateConfirmed: true })}
+                          style={{
+                            width: '100%', padding: '14px 16px',
+                            borderRadius: 14, border: '1.5px solid #E4E2F0',
+                            fontSize: 16, fontWeight: 500, color: '#1E1A3C'
+                          }}
+                        />
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 <div style={{ display: 'flex', gap: 12, marginTop: 24 }}>
@@ -2428,7 +2470,9 @@ export default function HomeScreen({ onboarding, onUpdateOnboarding, historyOnly
                           time: editTx.time,
                           cardId: editTx.cardId,
                           title: editTx.title,
-                          debtWho: editTx.debtWho,
+                          debtWho: editTx.type === 'debt' || editTx.type === 'lending' ? editTx.debtWho : undefined,
+                          debtDueDate: editTx.type === 'debt' || editTx.type === 'lending' ? (editTx.debtDueDate ?? null) : null,
+                          debtDateConfirmed: editTx.type === 'debt' || editTx.type === 'lending' ? editTx.debtDateConfirmed : undefined,
                         });
                         setEditTx(null);
                       } catch (err) {

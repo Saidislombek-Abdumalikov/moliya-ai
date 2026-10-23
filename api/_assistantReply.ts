@@ -25,8 +25,14 @@ export function prepareAssistantReply(raw:any, language:keyof typeof copy, audio
   let data={...raw,actions:raw.actions.map((a:any)=>({...a}))};
   const reject=(message:string)=>normalizeAssistantReply({...data,actions:[],message,question:''});
   const currentSource=String(audio?data.transcription||'':source.split('\n').at(-1)||'');
-  const pricedClauses=currentSource.split(/(?:\s+(?:plyus|plus|va|hamda)\s+|\s*\+\s*)/i).map(amountIn).filter(v=>v!==null);
-  if(pricedClauses.length>data.actions.length && data.actions.length>0)return reject(c.multiple);
+  const pricedClauses=currentSource.split(/(?:\s+(?:plyus|plus|va|hamda)\s+|\s*\+\s*)/i).map(amountIn).filter((v):v is number=>v!==null);
+  const pricedSum=pricedClauses.length>1?pricedClauses.reduce((s,v)=>s+Math.round(v*100),0)/100:null;
+  const combinedSingleEvent=data.actions.length===1 && pricedSum!==null &&
+    ['expense','income'].includes(data.actions[0]?.kind) &&
+    typeof data.actions[0]?.amount==='number' &&
+    Math.abs(data.actions[0].amount-pricedSum)<0.001 &&
+    !/\b(?:karta\w*|plastik\w*|taksi\w*|yo'?lkira\w*|avtobus\w*|metro\w*|maosh\w*|oylik\w*|qarz\w*)\b/i.test(currentSource);
+  if(pricedClauses.length>data.actions.length && data.actions.length>0 && !combinedSingleEvent)return reject(c.multiple);
   if(data.actions.length>1){
     const a=data.actions[0];
     const sameEvent = typeof a.group==='string' && a.group.trim() &&
@@ -42,8 +48,10 @@ export function prepareAssistantReply(raw:any, language:keyof typeof copy, audio
   for(const a of data.actions){
     const evidence = typeof a.amountEvidence==='string' ? a.amountEvidence : '';
     const transcript=String(audio?data.transcription||'':source);
-    if(evidence && !normalize(transcript).includes(normalize(evidence)))return reject(c.amount);
-    const observed=amountIn(evidence || (data.actions.length===1?transcript:''));
+    const transcriptAmt = data.actions.length===1 ? (amountIn(transcript) ?? (combinedSingleEvent ? pricedSum : null)) : null;
+    const evidenceAmt = evidence ? amountIn(evidence) : null;
+    if(evidence && !normalize(transcript).includes(normalize(evidence)) && !(transcriptAmt!==null && evidenceAmt!==null && transcriptAmt===evidenceAmt))return reject(c.amount);
+    const observed=combinedSingleEvent ? pricedSum : (evidenceAmt ?? transcriptAmt);
     if(observed!==null && a.amount!==null && observed!==a.amount)return reject(c.amount);
   }
   if(data.actions.length>1){
@@ -53,7 +61,7 @@ export function prepareAssistantReply(raw:any, language:keyof typeof copy, audio
   }
   for(const a of data.actions){
     if(typeof a.account==='string' && a.account.startsWith('card:') && cards.some(c=>String(c.id)===a.account.slice(5)))a.cardId=a.account.slice(5);
-    else if(a.account && a.account!=='cash') { a.cardId=''; data.clarification='account'; }
+    else if(cards.length>0 && a.account && a.account!=='cash') { a.cardId=''; data.clarification='account'; }
     else a.cardId='cash';
   }
   let key=String(data.clarification||'');

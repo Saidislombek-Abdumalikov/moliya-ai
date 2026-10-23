@@ -70,7 +70,7 @@ BEGIN
    ELSE v_limit:=v_default; END IF;
  END IF;
  IF nullif(j->>'last_ai_query_at','') IS NOT NULL
-    AND ((j->>'last_ai_query_at')::timestamptz AT TIME ZONE 'UTC')::date = (v_now AT TIME ZONE 'UTC')::date THEN
+    AND ((j->>'last_ai_query_at')::timestamptz AT TIME ZONE 'Asia/Tashkent')::date = (v_now AT TIME ZONE 'Asia/Tashkent')::date THEN
    v_used:=greatest(0,coalesce((j->>'ai_query_count')::integer,0));
  END IF;
  v_allowed:=v_limit IS NULL OR v_used<v_limit;

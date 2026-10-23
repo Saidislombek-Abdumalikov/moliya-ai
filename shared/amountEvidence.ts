@@ -10,7 +10,9 @@ export function explicitAmount(source:string):number|null{
  .replace(/\b(?:iphone|samsung|macbook|redmi|model|modeli)\s*\d+[a-z]*\b/g,' ')
  .replace(/(?:telefon\s+raqam\w*|raqamim|tel:)\s*[+\d ()-]+/g,' ')
  .replace(/\+?998[\d ()-]{9,}/g,' ')
- .replace(/\b\d+(?:[.,]\d+)?\s*(?:ta|kg|km|litr|dona|yosh|yil|kun|oy|foiz|%)\b/g,' ');
+ .replace(/\bsoat\s+\d{1,2}(?:\s*da)?\b/g,' ')
+ .replace(/\b\d{1,2}\s*-\s*(?:sana\w*|kun\w*|oy\w*|marta|sinf|kurs)\b/g,' ')
+ .replace(/\b\d+(?:[.,]\d+)?\s*(?:ta|kg|gr|gramm|km|litr|dona|porsiya|pachka|kishi|odam\s+bilan|marta|para|quti|shisha|yosh|yil|kun|oy|soat|daqiqa|minut|foiz|%)\b/g,' ');
  if(/\d\s*[-–]\s*\d/.test(text))return null;
  text=text.replace(/(\d+)\s+yarim\s+(mln|million|ming)\b/g,(_,n,unit)=>`${Number(n)+0.5} ${unit}`);
  text=text.replace(/(\d+)\s*(?:mln|million)\s+(\d+)\s*ming\b/g,(_,a,b)=>String(Number(a)*1e6+Number(b)*1e3));

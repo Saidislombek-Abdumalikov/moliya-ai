@@ -52,10 +52,33 @@ export async function botAssistant(
     payment: "Rejali to‘lov",
     repayment: "Qarz qaytarish",
   }
+  const typeIcons: Record<string, string> = {
+    expense: "💸",
+    income: "💰",
+    debt: "📥",
+    lending: "📤",
+    payment: "🗓",
+    repayment: "🔄",
+  }
+  const catIcons: Record<string, string> = {
+    "Oziq-ovqat": "🍔",
+    Transport: "🚕",
+    Kiyim: "👕",
+    Kommunal: "💡",
+    "Sog'liq": "💊",
+    "Ta'lim": "📚",
+    "Ko'ngil ochar": "🎮",
+    Maosh: "💼",
+    Freelance: "💻",
+    Biznes: "📈",
+    "Sovg'a": "🎁",
+    Investitsiya: "📊",
+    Boshqa: "📦",
+  }
   const preview = reply.actions
     .map(
       (a) =>
-        `${labels[a.kind]}: ${a.title.slice(0, 40)} — ${a.amount ?? "?"} ${a.currency}${
+        `${typeIcons[a.kind] || "📌"} ${labels[a.kind]}: ${a.title.slice(0, 40)} — ${a.amount ?? "?"} ${a.currency}${
           a.kind === "payment"
             ? ` · ${
                 a.repeat === "monthly"
@@ -102,28 +125,45 @@ export async function botAssistant(
       })),
     )
     // Clear only the conversation that produced this draft; profile conflicts remain visible.
-    try{
-      const fresh = await userFor(userId);
-      await updateProfileSnapshot(userId, fresh, {onboarding: {...fresh.onboarding,assistant_pending:null}});
-    }catch{/* The financial write has already committed. */}
+    if (previous) {
+      try{
+        const fresh = await userFor(userId);
+        await updateProfileSnapshot(userId, fresh, {onboarding: {...fresh.onboarding,assistant_pending:null}});
+      }catch{/* The financial write has already committed. */}
+    }
     const savedId=staged.transactions?.[0]?.id;
     const link=new URL(appUrl);if(savedId)link.searchParams.set('editTransaction',savedId);
     const saved=staged.transactions?.[0];
-    const receipt=staged.replayed ? '✅ Bu xabar avval saqlangan.' : saved ?
-      `✨ <b>Muvaffaqiyatli saqlandi!</b>\n\n💸 ${escape(labels[saved.type] || saved.type)}\n🏷 <b>Kategoriya:</b> ${escape(saved.category || 'Boshqa')}\n💰 <b>Summa:</b> ${Math.abs(Number(saved.amount)).toLocaleString('uz-UZ')} so‘m\n📝 <b>Izoh:</b> ${escape(String(saved.note || saved.title || '').slice(0,600))}\n📅 <b>Sana:</b> ${escape(saved.date || '')}${saved.time?' | '+escape(saved.time):''}` : '✅ Saqlandi';
-    return {text:receipt,keyboard:{inline_keyboard:[[{text:'✏️ Ko‘rish / tahrirlash',web_app:{url:link.href}}],[{text:'🌐 Webda ochish',url:link.href}]]}};
+    const catName=saved?.category || 'Boshqa';
+    const catEmoji=catIcons[catName] || '🏷';
+    const kindEmoji=typeIcons[saved?.type] || '💸';
+    const noteText=String(saved?.title || saved?.note || '').slice(0,140);
+    const loanLine=(saved?.type==='debt'||saved?.type==='lending')&&saved?.debtWho
+      ? `\n🤝 <b>${escape(saved.debtWho)}</b>${saved.debtDueDate ? ` · ⏳ ${escape(saved.debtDueDate)}` : ''}`
+      : '';
+    const receipt=staged.replayed ? '✅ <b>Bu xabar avval saqlangan.</b>' : saved ?
+      `✅ <b>Muvaffaqiyatli saqlandi!</b>\n<blockquote>${kindEmoji} <b>${Math.abs(Number(saved.amount)).toLocaleString('uz-UZ')} so‘m</b> · ${catEmoji} ${escape(catName)}\n📝 ${escape(noteText)}${loanLine}\n📅 ${escape(saved.date || '')}${saved.time?' · ⏰ '+escape(saved.time):''}</blockquote>` : '✅ <b>Saqlandi!</b>';
+    return {text:receipt,keyboard:{inline_keyboard:[[{text:'✏️ Tahrirlash',web_app:{url:link.href}},{text:'🌐 Web',url:link.href}]]}};
   }
   if(complete && reply.actions.every(a=>a.kind==='payment')){
-    const fresh=await userFor(userId);
-    const plans=cleanPlannedPayments(fresh.onboarding?.planned_payments);
-    const a=reply.actions[0],planId=`assistant_${id}_0`;
-    if(!plans.some(p=>p.id===planId)){
-      if(plans.length>=100)throw Error('PLAN_LIMIT');
-      plans.push({id:planId,title:a.title,amount:a.amount!,dueDate:a.date!,time:a.time||undefined,icon:a.icon,repeat:a.repeat,anchorDay:Number(a.date!.slice(8)),createdDay:tashkentDay(new Date())});
+    const applyPlan = async (snap: any) => {
+      const plans=cleanPlannedPayments(snap.onboarding?.planned_payments);
+      const a=reply.actions[0],planId=`assistant_${id}_0`;
+      if(!plans.some(p=>p.id===planId)){
+        if(plans.length>=100)throw Error('PLAN_LIMIT');
+        plans.push({id:planId,title:a.title,amount:a.amount!,dueDate:a.date!,time:a.time||undefined,icon:a.icon,repeat:a.repeat,anchorDay:Number(a.date!.slice(8)),createdDay:tashkentDay(new Date())});
+      }
+      await updateProfileSnapshot(userId,snap,{onboarding:{...snap.onboarding,planned_payments:plans,assistant_pending:null}});
+      return a;
+    };
+    let a;
+    try { a = await applyPlan(user); } catch (err: any) {
+      if (err?.message === 'PROFILE_CHANGED') a = await applyPlan(await userFor(userId));
+      else throw err;
     }
-    await updateProfileSnapshot(userId,fresh,{onboarding:{...fresh.onboarding,planned_payments:plans,assistant_pending:null}});
+    const planId=`assistant_${id}_0`;
     const link=new URL(appUrl);link.searchParams.set('paymentId',planId);
-    return {text:`🗓 Reja saqlandi\n${escape(a.title)} · ${a.amount} so‘m\n📅 ${a.date}${a.time?' · '+a.time:''}\n🔔 Eslataman. Balans o‘zgarmadi.`,keyboard:{inline_keyboard:[[{text:'📱 Rejani ochish',web_app:{url:link.href}}],[{text:'🌐 Webda ochish',url:link.href}]]}};
+    return {text:`🗓 <b>Reja saqlandi!</b>\n<blockquote>📌 <b>${escape(a.title)}</b> — <b>${a.amount} so‘m</b>\n📅 ${a.date}${a.time?' · ⏰ '+a.time:''} · 🔔 Eslataman</blockquote>`,keyboard:{inline_keyboard:[[{text:'📱 Rejani ochish',web_app:{url:link.href}},{text:'🌐 Web',url:link.href}]]}};
   }
 
   const pending = {
@@ -137,10 +177,18 @@ export async function botAssistant(
     waiting: !!reply.question,
     expires: Date.now() + 30 * 60 * 1000,
   }
-  const fresh = await userFor(userId)
-  await updateProfileSnapshot(userId, fresh, {
-    onboarding: { ...fresh.onboarding, assistant_pending: pending },
-  })
+  try {
+    await updateProfileSnapshot(userId, user, {
+      onboarding: { ...user.onboarding, assistant_pending: pending },
+    })
+  } catch (err: any) {
+    if (err?.message === "PROFILE_CHANGED") {
+      const fresh = await userFor(userId)
+      await updateProfileSnapshot(userId, fresh, {
+        onboarding: { ...fresh.onboarding, assistant_pending: pending },
+      })
+    } else throw err
+  }
   const link = new URL(appUrl)
   link.searchParams.set("assistant", id)
   const buttons: any[][] = []
@@ -159,21 +207,24 @@ export async function botAssistant(
       ],
       [{ text: "🌐 Webda ochish", url: link.toString() }],
     )
+  const rawMsg = /saqla(?:dim|ndi|b)|kirit(?:dim|ildi)|yozib\s+qo|qayd\s+(?:qil|et)|\b(?:saved|recorded|logged)\b|сохран|записал/i.test(reply.message)
+    ? '⚠️ Hozircha hech narsa saqlanmadi.'
+    : reply.message ? `💬 ${reply.message}` : '';
+  const questionLine = reply.question || (reply.actions.length ? reply.actions.map(assistantActionIssue).find(Boolean) : "");
   const message = [
-    /saqla(?:dim|ndi|b)|kirit(?:dim|ildi)|yozib\s+qo|qayd\s+(?:qil|et)|\b(?:saved|recorded|logged)\b|сохран|записал/i.test(reply.message)
-      ? 'Hozircha hech narsa saqlanmadi.' : reply.message,
-    preview,
-    reply.question || (reply.actions.length ? reply.actions.map(assistantActionIssue).find(Boolean) : ""),
+    rawMsg,
+    preview ? `📋 ${preview}` : "",
+    questionLine ? `❓ ${questionLine}` : "",
     reply.actions.some((a) => a.currency !== "UZS")
-      ? "Valyuta kursini ilovada kiriting va tasdiqlang."
+      ? "💱 Valyuta kursini ilovada kiriting va tasdiqlang."
       : reply.actions.some((a) => a.kind === "repayment")
-        ? "Qarzni ilovada tekshiring va tasdiqlang."
+        ? "🤝 Qarzni ilovada tekshiring va tasdiqlang."
         : "",
   ]
     .filter(Boolean)
     .join("\n\n")
   return {
-    text: escape(message || "Nimani qayd qilmoqchisiz?"),
+    text: escape(message || "💬 Nimani qayd qilmoqchisiz?"),
     keyboard: buttons.length ? { inline_keyboard: buttons } : undefined,
   }
 }
