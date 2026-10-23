@@ -56,7 +56,6 @@ export async function parseAssistant(
     !input.audio &&
     text &&
     !history.length &&
-    !preferences.length &&
     !/\b(?:karta\w*|uzcard\w*|humo\w*|visa\w*|mastercard\w*|plastik\w*|soat|\d{1,2}:\d{2})\b/i.test(text)
   ) {
     const today = tashkentDay(new Date())
@@ -68,6 +67,8 @@ export async function parseAssistant(
       if (!tx.originalCurrency && (!isLoan || tx.counterparty)) {
         const debtMeta = isLoan ? withDebtDetails({ type: tx.type }, text) : null
         const dueDate = debtMeta?.debtDueDate || null
+        const lowerText = text.toLowerCase()
+        const matchedPref = preferences.find((p) => lowerText.includes(p.phrase))
         return prepareAssistantReply(
           {
             intent: "transaction",
@@ -84,7 +85,7 @@ export async function parseAssistant(
                 note: text,
                 time: tx.time || null,
                 icon: "other",
-                category: tx.category || "Boshqa",
+                category: matchedPref?.category || tx.category || "Boshqa",
                 date: tx.date || today,
                 person: tx.counterparty || "",
                 dueDate,
@@ -153,7 +154,7 @@ DATA: ${JSON.stringify({ history, text, debts, preferences, cards: (Array.isArra
               responseMimeType: "application/json",
               responseJsonSchema: assistantResponseSchema,
               temperature: 0,
-              maxOutputTokens: 4096,
+              maxOutputTokens: 2048,
             },
           },
           deadline,

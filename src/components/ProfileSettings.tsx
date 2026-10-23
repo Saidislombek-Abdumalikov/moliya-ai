@@ -27,12 +27,12 @@ export default function ProfileSettings({onboarding, onSave, onClose}: {
   }
   return createPortal(<motion.div className="finance-popup-overlay" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} onClick={()=>{if(!busy)onClose()}}>
     <SwipeSheet className="ai-restored-sheet" onDismiss={onClose} locked={busy} scrollBody initial={{y:'100%'}} animate={{y:0}} exit={{y:'100%'}} transition={aiPopupTransition} onClick={e=>e.stopPropagation()} style={aiPopupStyle}>
-      <div className="finance-popup-heading"><h3>⚙️ {t[0]}</h3></div>
-      {(['voice_auto_send','remember_categories'] as const).map((key,i)=><label key={key} className="profile-setting-row">
+      <div className="finance-popup-heading"><h3>⚙️ {t[0]}</h3><button type="button" className="finance-popup-close" aria-label={t[6]} onClick={()=>{if(!busy)onClose()}}>✕</button></div>
+      {(['voice_auto_send','remember_categories'] as const).map((key,i)=><label key={key} className="profile-setting-row" style={{cursor:busy?'wait':'pointer'}}>
         <span><strong>{t[1+i*2]}</strong><small>{t[2+i*2]}</small></span>
         <span className="voice-auto-switch" style={{position:'relative',display:'inline-flex',flexShrink:0,width:52,height:30}}>
           <input type="checkbox" role="switch" aria-label={t[1+i*2]} disabled={busy || !onSave} checked={onboarding?.[key]===true} onChange={()=>void change(key)} style={{position:'absolute',inset:0,width:'100%',height:'100%',margin:0,opacity:0,zIndex:1,cursor:busy?'wait':'pointer'}}/>
-          <span aria-hidden="true" style={{width:52,height:30,borderRadius:30,background:onboarding?.[key]?'#7C3AED':'#DCD7EA',transition:'background 180ms',opacity:busy?.6:1}}><span style={{display:'block',width:24,height:24,margin:3,borderRadius:'50%',background:'#fff',boxShadow:'0 2px 5px #00000020',transform:onboarding?.[key]?'translateX(22px)':'translateX(0)',transition:'transform 180ms'}}/></span>
+          <span aria-hidden="true" style={{width:52,height:30,borderRadius:30,background:onboarding?.[key]?'#7C3AED':'#DCD7EA',transition:'background 180ms'}}><span style={{display:'block',width:24,height:24,margin:3,borderRadius:'50%',background:'#fff',boxShadow:'0 2px 5px #00000020',transform:onboarding?.[key]?'translateX(22px)':'translateX(0)',transition:'transform 180ms'}}/></span>
         </span>
       </label>)}
       {error&&<p role="alert" style={{fontSize:13,color:'#DC2626',marginTop:12}}>{error}</p>}

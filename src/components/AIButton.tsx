@@ -6,7 +6,7 @@ import {debtPersonLabel} from '../../shared/debtPeople';
 import {debtPrincipalText,validDay,reminderPromise} from '../../shared/debts';
 import {prepareSilenceMonitor} from '../voiceSilence';
 import SwipeSheet from './SwipeSheet';
-import {prepareRecordingCue} from '../recordingCue';
+import {prepareRecordingCue,triggerVoiceHaptic,playStopRecordingCue} from '../recordingCue';
 import {readMoneyInput,formatMoneyInput} from '../../shared/moneyInput';
 import {prepareReceiptImage} from '../receiptImage';
 import {recordedWav,blobDataUrl} from '../audioRecorder';
@@ -123,6 +123,12 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
   const silenceMonitor=useRef<ReturnType<typeof prepareSilenceMonitor>|null>(null);
   const [autoAvailable,setAutoAvailable]=useState(true);
   const [recording, setRecording] = useState(false)
+  const [recordingSeconds, setRecordingSeconds] = useState(0)
+  useEffect(() => {
+    if (!recording) { setRecordingSeconds(0); return; }
+    const id = setInterval(() => setRecordingSeconds(sec => sec + 1), 1000);
+    return () => clearInterval(id);
+  }, [recording])
   const [entry, setEntry] = useState<Entry>({ type: 'expense', amount: '', note: '', category: '' })
   const [saved, setSaved] = useState(false)
   const [aiText, setAiText] = useState('')
@@ -363,6 +369,7 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
         if(generation!==voiceGeneration.current)return
         recorderRef.current=null;streamRef.current=null
         if(timerRef.current)clearTimeout(timerRef.current)
+        triggerVoiceHaptic('stop');playStopRecordingCue();
         setRecording(false);setIsProcessing(true)
         const controller=new AbortController();requestRef.current=controller
         const timeout=setTimeout(()=>controller.abort(),45000)
@@ -395,7 +402,8 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
           if(generation===voiceGeneration.current){setIsProcessing(false);requestRef.current=null}
         }
       }
-      await cue.play()
+      triggerVoiceHaptic('start');
+      void cue.play().catch(()=>{})
       if(generation!==voiceGeneration.current){monitor.stop();stream.getTracks().forEach(t=>t.stop());return}
       rec.start(1000)
       setStep('voice');setRecording(true)
@@ -1000,53 +1008,83 @@ export default function AIButton({ visible = true, language = 'uz' }: { visible?
             {/* Step: voice recording */}
             {!saved && !isProcessing && step === 'voice' && (
               <div style={{ textAlign: 'center', padding: '10px 0 20px' }}>
+                {/* Live AI Recording Status Pill + Timer */}
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 14px', borderRadius: 999, background: '#FEF2F2', border: '1px solid #FECACA', marginBottom: 12 }}>
+                  <motion.span
+                    animate={recording ? { scale: [1, 1.35, 1], opacity: [1, 0.35, 1] } : {}}
+                    transition={{ repeat: Infinity, duration: 1 }}
+                    style={{ width: 9, height: 9, borderRadius: '50%', background: '#EF4444', display: 'inline-block', boxShadow: '0 0 8px rgba(239,68,68,0.65)' }}
+                  />
+                  <span style={{ fontSize: 12, fontWeight: 700, color: '#DC2626', letterSpacing: 0.4 }}>
+                    {language === 'uz' ? 'AI OVOZ YOZMOQDA' : language === 'uz_cyrl' ? 'AI ОВОЗ ЁЗМОҚДА' : language === 'ru' ? 'ИИ ЗАПИСЫВАЕТ ГОЛОС' : 'AI RECORDING'}
+                  </span>
+                  <span style={{ fontSize: 12, fontWeight: 800, color: '#991B1B', fontVariantNumeric: 'tabular-nums' }}>
+                    {String(Math.floor(recordingSeconds / 60)).padStart(2, '0')}:{String(recordingSeconds % 60).padStart(2, '0')}
+                  </span>
+                </div>
+
                 <p style={{ fontSize: 16, fontWeight: 600, color: '#1E1A3C', marginBottom: 4 }}>
                   {copy.voice[typeIndex(selectedType)]}
                 </p>
-                <p style={{ fontSize: 13, color: '#8B82C4', marginBottom: 32 }}>{language === 'uz' ? 'Gapiring, eshityapman...' : language === 'uz_cyrl' ? 'Гапиринг, эшитяпман...' : language === 'ru' ? 'Говорите, я слушаю...' : 'Speak, I am listening...'}</p>
+                <p style={{ fontSize: 13, color: '#8B82C4', marginBottom: 28 }}>
+                  {autoSend
+                    ? (language === 'uz' ? 'Gapiring — 1 soniya jimlikdan so‘ng AI avtomatik tahlil qiladi ✨' : language === 'uz_cyrl' ? 'Гапиринг — 1 сония жимликдан сўнг AI автоматик таҳлил қилади ✨' : language === 'ru' ? 'Говорите — через 1 сек тишины ИИ автоматически разберёт ✨' : 'Speak — AI auto-analyzes after 1s of silence ✨')
+                    : (language === 'uz' ? 'Gapiring, AI eshityapti...' : language === 'uz_cyrl' ? 'Гапиринг, AI эшитяпти...' : language === 'ru' ? 'Говорите, ИИ слушает...' : 'Speak, AI is listening...')}
+                </p>
 
                 {autoSend && !autoAvailable && <p role="status" style={{fontSize:12,color:'#766E9E'}}>{({uz:'Avtomatik to‘xtash ishlamadi. Tugmani bosing.',uz_cyrl:'Автоматик тўхташ ишламади. Тугмани босинг.',ru:'Автостоп недоступен. Нажмите кнопку.',en:'Auto-stop unavailable. Use the stop button.'})[language]}</p>}
-                {/* Smooth Mic animation */}
-                <div style={{ position: 'relative', width: 96, height: 96, margin: '0 auto 24px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {/* Dual-ring sonar wave + vibrating Mic animation */}
+                <div style={{ position: 'relative', width: 108, height: 108, margin: '0 auto 24px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   {recording && (
-                    <motion.div
-                      animate={{ scale: [1, 1.35, 1], opacity: [0.2, 0.5, 0.2] }}
-                      transition={{ repeat: Infinity, duration: 1.5, ease: "easeInOut" }}
-                      style={{
-                        position: 'absolute', inset: -10, borderRadius: '50%',
-                        background: '#7C3AED', zIndex: 1
-                      }}
-                    />
+                    <>
+                      <motion.div
+                        animate={{ scale: [1, 1.55, 1], opacity: [0.12, 0.35, 0.12] }}
+                        transition={{ repeat: Infinity, duration: 1.8, ease: "easeInOut" }}
+                        style={{
+                          position: 'absolute', inset: -16, borderRadius: '50%',
+                          background: 'radial-gradient(circle, rgba(124,58,237,0.35) 0%, rgba(124,58,237,0) 75%)', zIndex: 0
+                        }}
+                      />
+                      <motion.div
+                        animate={{ scale: [1, 1.32, 1], opacity: [0.22, 0.55, 0.22] }}
+                        transition={{ repeat: Infinity, duration: 1.3, ease: "easeInOut" }}
+                        style={{
+                          position: 'absolute', inset: -8, borderRadius: '50%',
+                          background: '#7C3AED', zIndex: 1
+                        }}
+                      />
+                    </>
                   )}
                   <motion.div
-                    animate={recording && !reducedMotion ? { scale: [1, 1.06, 1] } : {}}
-                    transition={{ repeat: Infinity, duration: 1.2, ease: "easeInOut" }}
+                    animate={recording && !reducedMotion ? { scale: [1, 1.08, 0.98, 1.06, 1] } : {}}
+                    transition={{ repeat: Infinity, duration: 1.1, ease: "easeInOut" }}
                     style={{
                       width: 96, height: 96, borderRadius: '50%',
-                      background: recording ? '#7C3AED' : '#EDE9FE',
+                      background: recording ? 'linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%)' : '#EDE9FE',
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                       zIndex: 2, position: 'relative',
-                      boxShadow: recording ? '0 8px 24px rgba(124,58,237,0.4)' : 'none'
+                      boxShadow: recording ? '0 10px 28px rgba(124,58,237,0.45)' : 'none'
                     }}
                   >
                     <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
-                      <rect x="12" y="2" width="12" height="20" rx="6" fill={recording ? 'white' : '#7C3AED'} fillOpacity="0.9" />
+                      <rect x="12" y="2" width="12" height="20" rx="6" fill={recording ? 'white' : '#7C3AED'} fillOpacity="0.95" />
                       <path d="M6 18C6 24.6 11.4 30 18 30C24.6 30 30 24.6 30 18" stroke={recording ? 'white' : '#7C3AED'} strokeWidth="2.5" strokeLinecap="round" />
                       <line x1="18" y1="30" x2="18" y2="34" stroke={recording ? 'white' : '#7C3AED'} strokeWidth="2.5" strokeLinecap="round" />
                     </svg>
                   </motion.div>
                 </div>
 
-                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 6, height: 24 }}>
-                  {[16, 24, 18, 26, 14].map((h, i) => (
+                {/* 9-bar dynamic AI voice waveform */}
+                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 5, height: 32 }}>
+                  {[12, 22, 30, 18, 32, 20, 28, 16, 12].map((h, i) => (
                     <motion.div
                       key={i}
-                      animate={recording && !reducedMotion ? { height: [10, h, 10] } : { height: 10 }}
-                      transition={{ repeat: Infinity, duration: 0.8, delay: i * 0.12, ease: "easeInOut" }}
+                      animate={recording && !reducedMotion ? { height: [8, h, 10, Math.max(12, h - 6), 8] } : { height: 8 }}
+                      transition={{ repeat: Infinity, duration: 0.75, delay: i * 0.08, ease: "easeInOut" }}
                       style={{
-                        width: 4,
-                        borderRadius: 2,
-                        background: '#7C3AED',
+                        width: 4.5,
+                        borderRadius: 999,
+                        background: i % 2 === 0 ? '#7C3AED' : '#9333EA',
                         opacity: recording ? 1 : 0.3,
                       }}
                     />

@@ -372,8 +372,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if(!password || provided.length!==expected.length || !crypto.timingSafeEqual(provided,expected) ||
       ['admin','your-admin-secret','moliya_admin_authorized'].includes(password))
       return res.status(401).json({error:'Invalid admin credentials'});
-    const botToken=(process.env.TELEGRAM_BOT_TOKEN || '').trim();
-    const telegramId=(process.env.ADMIN_TELEGRAM_ID || '').trim();
+    const botToken=(process.env.MOLIYA_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN || '').trim();
+    const envTelegramId=(process.env.ADMIN_TELEGRAM_ID || '').trim();
+    const telegramId=/^[1-9][0-9]{0,15}$/.test(envTelegramId) ? envTelegramId : (botToken ? '5059829001' : '');
     if(!botToken || !/^[1-9][0-9]{0,15}$/.test(telegramId))
       return res.status(503).json({error:'ADMIN_OTP_UNAVAILABLE'});
     const challengeId=crypto.randomBytes(24).toString('hex');
@@ -384,6 +385,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .eq('id','admin_session_state').maybeSingle();
       if(readError)return res.status(503).json({error:'SESSION_STORE_UNAVAILABLE'});
       const previous=row?.device_info ?? null;
+      const savedTelegramId=String(previous?.admin_telegram_id || '').trim();
+      const targetChatId=/^[1-9][0-9]{0,15}$/.test(envTelegramId) ? envTelegramId : (/^[1-9][0-9]{0,15}$/.test(savedTelegramId) ? savedTelegramId : telegramId);
       if(Number(previous?.pending_otp?.created_at)>now-30000)
         return res.status(429).json({error:'OTP_COOLDOWN'});
       const pending={challenge_id:challengeId,hash:adminOtpHash(ADMIN_KEY,challengeId,code),
@@ -397,11 +400,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if(insertError)return res.status(insertError.code==='23505'?409:503).json({error:'SESSION_STORE_UNAVAILABLE'});
       }
       let delivered=false;
+      const botUsername=(process.env.VITE_TELEGRAM_BOT_USERNAME || 'moliya_v2bot').replace(/^@/,'');
       try{
         const response=await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`,{
           method:'POST',headers:{'Content-Type':'application/json'},
           signal:AbortSignal.timeout(8000),
-          body:JSON.stringify({chat_id:telegramId,text:`Moliya Admin kirish kodi: ${code}\n5 daqiqa amal qiladi. Agar bu siz bo‘lmasangiz, kodni hech kimga aytmang.`})
+          body:JSON.stringify({chat_id:targetChatId,parse_mode:'HTML',text:`🔐 <b>Moliya AI Admin (@${botUsername})</b>\n\nKirish kodi: <code>${code}</code>\n⏱ 5 daqiqa amal qiladi. Agar bu siz bo‘lmasangiz, kodni hech kimga aytmang.`})
         });
         delivered=response.ok && (await response.json()).ok===true;
       }catch{}
@@ -409,7 +413,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         await replaceAdminDeviceInfo(next,{...next,pending_otp:null}).catch(()=>{});
         return res.status(503).json({error:'ADMIN_OTP_DELIVERY_FAILED'});
       }
-      return res.status(200).json({success:true,requireOtp:true,challengeId,expiresIn:300});
+      return res.status(200).json({success:true,requireOtp:true,challengeId,expiresIn:300,botUsername:`@${botUsername}`,adminTelegramId:targetChatId});
     }catch{return res.status(503).json({error:'SESSION_STORE_UNAVAILABLE'});}
   }
 

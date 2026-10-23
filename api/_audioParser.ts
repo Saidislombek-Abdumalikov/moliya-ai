@@ -52,7 +52,7 @@ Infer transaction type and category from meaning. Received salary is income; bor
 For debt/lending, date is when money changed hands; debtDueDate is the promised return date, resolved relative to today. A future return promise after actual borrowing/lending is valid, not a future-only transaction. Missing return date must be null, not grounds for rejecting the loan. Never invent a return date.
 Use the spoken transaction date, or today's date if none. If there is no completed transaction, the amount or direction is genuinely unclear, or there are multiple transactions, return needs_clarification:true. Otherwise return needs_clarification:false. Do not treat questions, negations or future plans as completed transactions.`}]}],config:{responseMimeType:'application/json',temperature:0}},deadline,20000);
         const parsed=JSON.parse(result.text || '{}');
-        await recordKeyResult(key.id,true);
+        recordKeyResult(key.id,true).catch(()=>{});
         return normalizeAudioResult(parsed);
       }catch(error:any){
         await recordKeyResult(key.id,false,error?.message,'temporary');

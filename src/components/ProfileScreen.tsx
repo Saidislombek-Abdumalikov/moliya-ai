@@ -1337,7 +1337,7 @@ export default function ProfileScreen({ onLogout, onboarding, onUpdateOnboarding
       {/* ================= MODALS & BOTTOM SHEETS ================= */}
 
       {/* Backdrop */}
-      {activeModal && (
+      {activeModal && activeModal !== 'settings' && activeModal !== 'privacy_policy' && (
         <div 
           onClick={() => {
             if (activeModal === 'help') {

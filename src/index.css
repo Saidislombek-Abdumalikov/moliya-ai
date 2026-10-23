@@ -114,7 +114,7 @@ button:active {
 .finance-fields-row>*,.assistant-fields-grid>*{min-width:0}
 .finance-span,.assistant-fields-grid legend{grid-column:1/-1}
 .finance-fields-row input,.finance-fields-row select{padding-left:10px!important;padding-right:10px!important}
-.finance-popup-overlay{position:fixed;inset:0;z-index:400;display:flex;align-items:flex-end;justify-content:center;background:rgba(15,12,41,.45);backdrop-filter:blur(4px);overscroll-behavior:contain}
+.finance-popup-overlay{position:fixed;inset:0;z-index:1100;display:flex;align-items:flex-end;justify-content:center;background:rgba(15,12,41,.45);backdrop-filter:blur(4px);overscroll-behavior:contain}
 .finance-popup-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
 .finance-popup-heading h3{font-size:18px;font-weight:700;color:#1E1A3C}
 .finance-popup-close{width:28px;height:28px;border:0;border-radius:50%;background:#F5F4FA;color:#5C548A;font-size:14px;font-weight:700;cursor:pointer;flex-shrink:0}

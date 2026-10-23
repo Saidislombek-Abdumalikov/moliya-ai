@@ -66,7 +66,7 @@ export function hasTransactionIntent(source:string):boolean {
  if(/\b(?:sarfladim|ishlatdim|to'ladim|toladim|berdim|oldim|tushdi|topdim|spent|paid|earned|received)\b/.test(text))return true;
  // Shorthand is accepted only when every non-amount word is a known label.
  const tokens=text.replace(/\b(?:men|bugun|kecha|kechagi|uchun)\b/g,' ').replace(/[.,!]/g,' ').split(/\s+/).filter(Boolean);
- const labels=new Set(['taksi','taksiga','taxi','bozor','bozorlik','bozorlikka','non','nonga','ovqat','ovqatga','maosh','oylik','ijara','ijaraga','benzin','benzinga','internet','internetga','kommunal','transport','kafe','kafega','kurs','kursga','kontrakt','kontraktga','kitob','kitobga','dori','doriga','kiyim','kiyimga','telefon','telefonga','ovqatlandim']);
+ const labels=new Set(['taksi','taksiga','taxi','bozor','bozorlik','bozorlikka','bozorga','non','nonga','ovqat','ovqatga','tushlik','tushlikka','obed','obedga','abet','abetga','nonushta','nonushtaga','kechki','choy','choyga','kofe','kofega','somsa','somsaga','osh','oshga','shashlik','lavash','korzinka','korzinkaga','makro','restoran','restoranga','maosh','oylik','avans','ijara','ijaraga','kvartira','kvartiraga','benzin','benzinga','metan','propan','avtobus','avtobusga','metro','metroga','yandex','yandeks','yolkira',"yo'lkira",'internet','internetga','wifi','wifiga','svet','svetga','gaz','gazga','kommunal','transport','kafe','kafega','kurs','kursga','kontrakt','kontraktga','kitob','kitobga','maktab','maktabga','dori','doriga','apteka','aptekaga','kiyim','kiyimga','kino','kinoga','fitnes','telefon','telefonga','ovqatlandim']);
  let labelCount=0;
  for(const token of tokens){
   if(labels.has(token)){labelCount++;continue;}

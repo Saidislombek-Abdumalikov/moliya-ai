@@ -204,9 +204,9 @@ export default function WebLoginScreen() {
               Botda <span className="font-semibold text-[#7C3AED]">"Boshlash" (Start)</span> tugmasini bosing va shu oynaga qayting.
             </p>
 
-            {/* QR Code for Desktop Users */}
+            {/* QR Code for Desktop & Web Users */}
             {qrCodeDataUrl && (
-              <div className="hidden sm:flex flex-col items-center bg-white p-4 rounded-2xl border border-[#ECE7F6] shadow-sm mb-5">
+              <div className="flex flex-col items-center bg-white p-4 rounded-2xl border border-[#ECE7F6] shadow-sm mb-5">
                 <img
                   src={qrCodeDataUrl}
                   alt="Telegram Login QR Code"

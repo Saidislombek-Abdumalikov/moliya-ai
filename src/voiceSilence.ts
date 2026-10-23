@@ -27,7 +27,8 @@ export function prepareSilenceMonitor() {
     if(context && context.state!=='closed')void context.close().catch(()=>{});
   };
   return {stop,start:(stream:MediaStream,enabled:()=>boolean,onPause:()=>void)=>{
-    if(!context || context.state!=='running'){stop();return false;}
+    if(!context || context.state==='closed'){stop();return false;}
+    if(context.state==='suspended')void context.resume().catch(()=>{});
     try {
       source=context.createMediaStreamSource(stream);analyser=context.createAnalyser();
       analyser.fftSize=2048;source.connect(analyser);
