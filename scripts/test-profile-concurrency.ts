@@ -5,6 +5,7 @@ process.env.ADMIN_SECRET_KEY='offline-admin-profile-secret';
 globalThis.fetch=async()=>{throw Error('NETWORK_FORBIDDEN')};
 const {default:admin}=await import('../api/admin');
 const {supabase}=await import('../api/_supabaseClient');
+const {installFakeBotMessages}=await import('./_fakeBotMessages.js');const botStore=installFakeBotMessages(supabase);
 const {updateProfileSnapshot}=await import('../api/services/_profileWriteService');
 const {logBotMessage,deleteTelegramMessageHistory}=await import('../api/services/_telegramMessageService');
 const {blockUser}=await import('../api/services/_userAccountService');
@@ -40,8 +41,8 @@ await test('parallel profile writes admit only one old snapshot',async()=>{const
 await test('missing snapshot fails without writing',async()=>{await assert.rejects(updateProfileSnapshot(uid,null,{onboarding:{}}),/PROFILE_SNAPSHOT_REQUIRED/);assert.deepEqual(await row(),base)});
 await test('missing selected JSON column is rejected',async()=>await assert.rejects(updateProfileSnapshot(uid,{id:uid,onboarding:base.onboarding},{device_info:{}}),/PROFILE_SNAPSHOT_REQUIRED/));
 await test('wrong-account snapshot rejected',async()=>await assert.rejects(updateProfileSnapshot('moliya_user_tg_456',await row(),{onboarding:{}}),/PROFILE_SNAPSHOT_REQUIRED/));
-await test('normal message update preserves original snapshot',async()=>{const entry:any={id:'m',message_id:1,chat_id:123,direction:'user_to_bot',sender:'user',type:'text',text:'old',timestamp:'2026-09-24'};await set({onboarding:{...base.onboarding,bot_messages:[entry]}});await logBotMessage(uid,{...entry,text:'edited'});assert.equal((await row()).onboarding.bot_messages[0].text,'edited');assert.equal((await row()).onboarding.session_token,base.onboarding.session_token)});
-await test('message logging racing logout cannot restore session',async()=>{beforeUpdate=async()=>set({onboarding:{bot_messages:[]}});await logBotMessage(uid,{id:'m',message_id:1,chat_id:123,direction:'user_to_bot',sender:'user',type:'text',timestamp:'2026-09-24'});assert.equal((await row()).onboarding.session_token,undefined)});
+await test('message edit merges in the history table without touching the profile',async()=>{const entry:any={id:'m',message_id:1,chat_id:123,direction:'user_to_bot',sender:'user',type:'text',text:'old',timestamp:'2026-09-24'};botStore.set(uid,[entry]);const before=await row();await logBotMessage(uid,{...entry,text:'edited'});assert.equal(botStore.of(uid).length,1);assert.equal(botStore.of(uid)[0].text,'edited');assert.deepEqual(await row(),before)});
+await test('message logging after logout cannot restore session',async()=>{await set({onboarding:{}});await logBotMessage(uid,{id:'m2',message_id:2,chat_id:123,direction:'user_to_bot',sender:'user',type:'text',timestamp:'2026-09-24'});assert.equal((await row()).onboarding.session_token,undefined)});
 await test('admin block does not silently undo a newer logout',async()=>{beforeUpdate=async()=>set({onboarding:{bot_messages:[]}});await assert.rejects(blockUser(uid),/PROFILE_CHANGED/);assert.equal((await row()).onboarding.session_token,undefined)});
 await test('premium revocation preserves current session',async()=>{await revokePremium(uid);assert.equal((await row()).is_premium,false);assert.equal((await row()).onboarding.session_token,base.onboarding.session_token)});
 await test('history deletion preserves blocked state and financial data',async()=>{await set({onboarding:{...base.onboarding,is_blocked:true}});await deleteTelegramMessageHistory(uid);assert.equal((await row()).onboarding.is_blocked,true);assert.deepEqual((await row()).transactions,base.transactions)});

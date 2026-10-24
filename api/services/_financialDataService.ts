@@ -161,7 +161,7 @@ export async function saveCards(userId: string, cards: FinancialCard[], expected
  *   - Telegram identity (telegram_id, telegram handle)
  *   - Premium status (is_premium, premium_expires_at)
  *   - AI query counts / quota (ai_query_count, ai_limit)
- *   - Telegram bot message history (onboarding.bot_messages)
+ *   - Telegram bot message history (moliya_bot_messages)
  *   - Account block status (is_blocked)
  *   - Other users' data
  */

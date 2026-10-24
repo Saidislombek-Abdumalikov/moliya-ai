@@ -314,7 +314,7 @@ export async function generateAndSaveUserReport(
     // 1. Fetch user data
     const { data: user, error: fetchErr } = await supabase
       .from('users')
-      .select('id, name, telegram, telegram_id, transactions, onboarding')
+      .select('id, name, telegram, telegram_id, transactions, onboarding, profile_version')
       .eq('id', userId)
       .maybeSingle();
 

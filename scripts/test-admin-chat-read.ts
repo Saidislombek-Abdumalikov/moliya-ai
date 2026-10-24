@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import {existsSync} from 'node:fs';
 process.env.SUPABASE_URL='http://127.0.0.1:54321';process.env.SUPABASE_SERVICE_ROLE_KEY='offline';process.env.ADMIN_SECRET_KEY='offline-chat-admin-key';
 const {supabase}=await import('../api/_supabaseClient.js');const {default:handler}=await import('../api/admin.js');
+const {installFakeBotMessages}=await import('./_fakeBotMessages.js');const store=installFakeBotMessages(supabase);
 let failure=false;const uid='moliya_user_tg_123';
-(supabase as any).from=()=>{let id='';const q:any={select(){return q},eq(_k:string,v:string){id=v;return q},async maybeSingle(){return {data:id===uid?{id,telegram_id:'123',onboarding:{session_token:'never-expose',bot_messages:[{message_id:7,type:'voice',direction:'user_to_bot',metadata:{file_id:'file'},timestamp:'2026-09-25'}]}}:null,error:failure?{message:'private SQL'}:null}}};return q};
+store.set(uid,[{id:'msg_123_7',message_id:7,type:'voice',direction:'user_to_bot',metadata:{file_id:'file'},timestamp:'2026-09-25'}]);
+(supabase as any).from=()=>{let id='';const q:any={select(){return q},eq(_k:string,v:string){id=v;return q},async maybeSingle(){return {data:id===uid?{id,telegram_id:'123',onboarding:{session_token:'never-expose'}}:null,error:failure?{message:'private SQL'}:null}}};return q};
 async function api(id:string,key='offline-chat-admin-key'){const req:any={method:'POST',query:{route:'bot-messages'},body:{userId:id},headers:key?{'x-admin-key':key}:{},socket:{remoteAddress:'127.0.0.1'}};const res:any={statusCode:200,headers:{},setHeader(k:string,v:any){this.headers[k]=v},status(n:number){this.statusCode=n;return this},json(v:any){this.body=v;return this}};await handler(req,res);return res;}
 assert.equal((await api(uid,'')).statusCode,401);
 assert.equal((await api('admin_session_state')).statusCode,400);

@@ -2,6 +2,7 @@ import {normalizeTelegramKeyboard,hasTelegramLinkButton} from '../_telegramKeybo
 import {supabase} from '../_supabaseClient.js';
 import {accountDenied} from '../_userPolicy.js';
 import {updateProfileSnapshot} from './_profileWriteService.js';
+import {listBotMessages,saveBotMessageEntry} from './_telegramMessageService.js';
 const methods=new Set(['getMe','sendMessage','sendPhoto','sendVideo','editMessageText','editMessageCaption','editMessageReplyMarkup','deleteMessage','deleteMessages']);
 export async function adminTelegram(input:any) {
  const method=input?.method;
@@ -58,7 +59,6 @@ export async function adminTelegram(input:any) {
   try{
    const {data:current,error}=await supabase.from('users').select('*').eq('id',user.id).maybeSingle();
    if(error||!current)throw Error();
-   let messages=Array.isArray(current.onboarding?.bot_messages)?current.onboarding.bot_messages:[];
    const now=new Date().toISOString();
    if(method.startsWith('send')){
     adminEntry={id:'admin_'+messageId,message_id:messageId,messageId,chat_id:payload.chat_id,chatId:payload.chat_id,direction:'bot_to_user',sender:input.adminDirect===true?'admin':'bot',type:'admin_direct',text:input.text||'',timestamp:now};
@@ -67,16 +67,15 @@ export async function adminTelegram(input:any) {
      adminEntry.linkButtonText=String(input.linkButtonText||'').slice(0,100);
      adminEntry.linkButtonUrl=payload.reply_markup.inline_keyboard[0]?.[0]?.url || payload.reply_markup.inline_keyboard[0]?.[0]?.web_app?.url || null;
     }
-    messages=[...messages,adminEntry].slice(-500);
+    await saveBotMessageEntry(user.id,adminEntry);
+    if(adminEntry.hasLinkButton)await updateProfileSnapshot(user.id,current,{onboarding:{...current.onboarding,last_link_message_id:messageId}});
    }
-   else messages=messages.map((m:any)=>{
+   else for(const m of await listBotMessages(user.id)){
     const matches=method==='deleteMessages'?payload.message_ids.includes(Number(m.message_id)):Number(m.message_id)===payload.message_id;
-    if(!matches)return m;
-    if(method.startsWith('delete'))return {...m,tg_deleted:true,tg_deleted_at:now};
-    if(method==='editMessageText'||method==='editMessageCaption')return {...m,text:input.text,edited:true,edited_at:now};return m;
-   });
-   await updateProfileSnapshot(user.id,current,{onboarding:{...current.onboarding,bot_messages:messages,
-    ...(adminEntry?.hasLinkButton?{last_link_message_id:messageId}:{})}});
+    if(!matches)continue;
+    if(method.startsWith('delete'))await saveBotMessageEntry(user.id,{...m,tg_deleted:true,tg_deleted_at:now});
+    else if(method==='editMessageText'||method==='editMessageCaption')await saveBotMessageEntry(user.id,{...m,text:input.text,edited:true,edited_at:now});
+   }
   }catch{historySaved=false;}
   return {status:200,body:{success:true,result:messageId?{message_id:messageId}:true,historySaved,
    adminEntry:historySaved?adminEntry:null}};

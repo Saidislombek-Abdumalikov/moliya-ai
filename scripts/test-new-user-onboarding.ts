@@ -4,6 +4,7 @@ process.env.SUPABASE_SERVICE_ROLE_KEY='offline';
 process.env.TELEGRAM_BOT_TOKEN='offline-token';
 process.env.TELEGRAM_WEBHOOK_SECRET='offline-secret';
 const {supabase}=await import('../api/_supabaseClient.js');
+const {installFakeBotMessages:__ifb}=await import('./_fakeBotMessages.js');const botStore=__ifb(supabase);
 const {default:webhook}=await import('../api/telegram-webhook.js');
 const rows=new Map<string,any>();
 let conflicts=0,deliveryFails=false;
@@ -43,7 +44,7 @@ assert.equal(conflicts,0,'Incoming history must not invalidate the pending-login
 const user=rows.get('moliya_user_tg_123');
 assert.equal(user.onboarding.pending_login_request_id,'1234567890abcdef');
 assert.equal(user.device_info.pending_login_request_id,'1234567890abcdef');
-assert.equal(user.onboarding.bot_messages.length,1);
+assert.equal(botStore.of('moliya_user_tg_123').length,1);
 assert.equal(user.bot_verification,null);assert.equal(user.phone,null);
 assert.equal(sent.filter(x=>x==='sendDocument').length,1);
 assert.equal(sent.filter(x=>x==='sendMessage').length,0);

@@ -46,6 +46,7 @@ import {
   deleteTransaction,
   wipeBotFinancialData,
   logBotMessage,
+  findBotMessage,
   type BotMessageEntry
 } from './services/index.js';
 
@@ -98,14 +99,16 @@ async function sendOrReplaceSystemMessage(chatId: number | string, text: string,
     // the webhook is acknowledged so Vercel cannot discard it.
     const messageId=result.result.message_id;
     try {
-      const {data:current,error}=await supabase.from('users').select('onboarding').eq('id',userId).maybeSingle();
+      const {data:current,error}=await supabase.from('users').select('onboarding, profile_version').eq('id',userId).maybeSingle();
       if(error || !current) return result;
       const ob=current.onboarding || {};
-      const messages=Array.isArray(ob.bot_messages)?ob.bot_messages:[];
-      const previous=messages.find((m:any)=>Number(m.message_id)===Number(ob.last_system_message_id));
-      await updateProfileSnapshot(userId,current,{onboarding:{...ob,last_system_message_id:messageId,last_message_id:Math.max(Number(ob.last_message_id)||0,messageId),
-        bot_messages:[...messages,{id:`bot_${chatId}_${messageId}`,chat_id:chatId,message_id:messageId,
-          direction:'bot_to_user',sender:'bot',type:customType,text,timestamp:new Date().toISOString()}].slice(-500)}});
+      // Independent round trips: look up the previous card while saving the new pointer.
+      const [previous]=await Promise.all([
+        findBotMessage(userId,Number(ob.last_system_message_id)),
+        updateProfileSnapshot(userId,current,{onboarding:{...ob,last_system_message_id:messageId}}),
+      ]);
+      await logBotMessage(userId,{id:`bot_${chatId}_${messageId}`,chat_id:chatId,message_id:messageId,
+        direction:'bot_to_user',sender:'bot',type:customType,text,timestamp:new Date().toISOString()});
       if(previous?.sender==='bot' && ['welcome_card','phone_request','lang_request','bot_response'].includes(previous.type)) {
         await deleteTelegramMessage(chatId,previous.message_id);
       }
@@ -237,7 +240,7 @@ async function deleteTelegramMessage(chatId: number | string, messageId: number 
 async function setLastTempMsgId(userId: string, msgId: number | string | undefined) {
   if (!userId || !msgId) return;
   try {
-    const { data: u } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
+    const { data: u } = await supabase.from('users').select('onboarding, profile_version').eq('id', userId).maybeSingle();
     const updatedOb = { ...(u?.onboarding || {}), last_temp_msg_id: Number(msgId) };
     await updateProfileSnapshot(userId, u, { onboarding: updatedOb });
   } catch {}
@@ -1633,7 +1636,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       userMsgText = `📍 Joylashuv: ${message.location.latitude}, ${message.location.longitude}`;
     }
 
-    // Persist incoming user message to onboarding.bot_messages (Awaited for serverless guarantee)
+    // Persist incoming user message to the bot message history (Awaited for serverless guarantee)
     incomingHistory.push({userId,entry:{
       id: `msg_${chatId}_${message.message_id}`,
       update_id: update.update_id,
@@ -1859,6 +1862,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // Check user plan & trial for plain /start
+      // Independent round trips: create the web login code while the quota is read.
+      const quickCodePromise = createQuickExchangeCode(fromUser.id);
       const quota = await checkAiQuota(userId);
       const planLabel = quota.isTrial
         ? '💎 1-Kunlik Cheksiz Premium Sinovi'
@@ -1877,7 +1882,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         `Saqlangan yozuvni tahrirlash yoki o‘chirish mumkin.\n\n` +
         `👇 <b>Moliya AI</b>ni oching:`;
 
-      const quickCode = await createQuickExchangeCode(fromUser.id);
+      const quickCode = await quickCodePromise;
       const quickWebUrl = quickCode ? `${appUrl}?code=${quickCode}` : appUrl;
       // Authoritative replacement so at most 1 welcome card stays in chat
       await sendOrReplaceSystemMessage(chatId, welcomeText, getMainAppKeyboard(appUrl, quickWebUrl), userId, 'welcome_card');

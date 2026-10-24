@@ -10,6 +10,7 @@ import BankCard from './BankCard'
 import { PremiumCountdownBanner, PremiumCountdownTimer } from './PremiumCountdown'
 import PrivacyPolicyModal from './PrivacyPolicyModal'
 import { financialTotals } from '../../shared/financialTotals'
+import { localDay } from '../../shared/debts'
 import { telegramBotLink } from '../telegramLinks'
 
 interface Props {

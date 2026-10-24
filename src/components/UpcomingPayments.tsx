@@ -5,7 +5,7 @@ import {AnimatePresence,motion} from 'motion/react';
 import {useEffect,useState,useRef} from 'react';
 import {useFinance} from '../FinanceContext';
 import SwipeSheet from './SwipeSheet';
-import {cleanPlannedPayments,editedPaymentAnchor,nextPayment,paymentIcons,paymentIconKey,paymentRecordId,nextUnseenPaymentReminder,tomorrowDay,type PlannedPayment} from '../../shared/plannedPayments';
+import {cleanPlannedPayments,editedPaymentAnchor,nextPayment,paymentIcons,paymentIconKey,paymentRecordId,nextUnseenPaymentReminder,paymentReminderKind,tomorrowDay,type PlannedPayment} from '../../shared/plannedPayments';
 import {tashkentDay} from '../../shared/reminderPolicy';
 export default function UpcomingPayments(){
  const {onboarding,updateOnboarding,addTransaction,customTransactions,cards,userId}=useFinance();
