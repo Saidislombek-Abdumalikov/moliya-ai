@@ -117,7 +117,7 @@ export async function grantFullPremium(
   const nowIso = new Date().toISOString();
 
   // Fetch existing onboarding to preserve other fields
-  const { data: user } = await supabase.from('users').select('onboarding, profile_version').eq('id', userId).maybeSingle();
+  const { data: user } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
   const existingOb = user?.onboarding || {};
   const updatedOb = {
     ...existingOb,
@@ -157,7 +157,7 @@ export async function revokePremium(
 
   const nowIso = new Date().toISOString();
 
-  const { data: user } = await supabase.from('users').select('onboarding, profile_version').eq('id', userId).maybeSingle();
+  const { data: user } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
   const existingOb = user?.onboarding || {};
   const updatedOb = {
     ...existingOb,

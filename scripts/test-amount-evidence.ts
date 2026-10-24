@@ -64,7 +64,7 @@ const {supabase}=await import('../api/_supabaseClient.js');
 const {default:handler}=await import('../api/parse-expense.js');
 const token='sess_'+'a'.repeat(48);let quotaCalls=0,networkCalls=0;
 globalThis.fetch=async()=>{networkCalls++;throw new Error('NETWORK_FORBIDDEN')};
-(supabase as any).rpc=async(n?:string)=>{if(n==='moliya_session_lookup')return {data:null,error:{code:'PGRST202',message:'not deployed in this test'}};quotaCalls++;return {data:{allowed:true},error:null}};
+(supabase as any).rpc=async()=>{quotaCalls++;return {data:{allowed:true},error:null}};
 (supabase as any).from=()=>{let restricted=false;const q:any={select(){return q},eq(k:string,v:any){if(k==='id'&&String(v).startsWith('restricted_'))restricted=true;return q},like(){return q},async maybeSingle(){return {error:null,data:restricted?null:{id:'moliya_user_tg_123',telegram_id:'123',phone:'+998901234567',onboarding:{session_token:token,session_expires_at:'2099-01-01'},bot_verification:{telegram_id:'123',phone:'+998901234567',phone_source:'telegram_own_contact',phone_verified_at:'2026-01-01',consent_source:'telegram_button',consent_version:'1',consent_accepted_at:'2026-01-01'}}}}};return q};
 for(const text of ['taksiga pul berdim','taksi 30 yoki 50 ming','50k taksi va bozorlik','2026-09-24','x'.repeat(1001)+' 50 ming',...nonTransactions]){
  const req:any={method:'POST',body:{text},headers:{authorization:'Bearer '+token},socket:{remoteAddress:'127.0.0.1'}};

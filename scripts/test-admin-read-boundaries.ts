@@ -5,11 +5,9 @@ process.env.SUPABASE_SERVICE_ROLE_KEY='offline';
 process.env.ADMIN_SECRET_KEY='offline-read-admin-key';
 const {supabase}=await import('../api/_supabaseClient.js');
 const {default:handler}=await import('../api/admin.js');
-const {installFakeBotMessages}=await import('./_fakeBotMessages.js');const store=installFakeBotMessages(supabase);
 const uid='moliya_user_tg_123';
-store.set(uid,[{id:'voice_1',message_id:1,type:'voice',direction:'user_to_bot',metadata:{file_id:'file_1',duration:4},timestamp:'2026-09-25'}]);
 const rows:any[]=[
-  {id:uid,telegram_id:'123',name:'Ali',phone:'+998901234567',updated_at:'2026-09-25',onboarding:{session_token:'NEVER_SHOW_SESSION',ai_reports:[{id:'report_1',generatedAt:'2026-09-25'}]},device_info:{secret:'NEVER_SHOW_DEVICE'},transactions:[{amount:4500}]},
+  {id:uid,telegram_id:'123',name:'Ali',phone:'+998901234567',updated_at:'2026-09-25',onboarding:{session_token:'NEVER_SHOW_SESSION',bot_messages:[{id:'voice_1',message_id:1,type:'voice',direction:'user_to_bot',metadata:{file_id:'file_1',duration:4},timestamp:'2026-09-25'}],ai_reports:[{id:'report_1',generatedAt:'2026-09-25'}]},device_info:{secret:'NEVER_SHOW_DEVICE'},transactions:[{amount:4500}]},
   {id:'exchange_safe1',updated_at:'2026-09-24',device_info:{token:'NEVER_SHOW_EXCHANGE'}},
   {id:'admin_session_state',updated_at:'2026-09-24',device_info:{active_sid:'NEVER_SHOW_ADMIN'}}
 ];

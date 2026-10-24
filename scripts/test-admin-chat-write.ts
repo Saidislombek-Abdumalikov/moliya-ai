@@ -6,14 +6,11 @@ process.env.ADMIN_SECRET_KEY='offline-chat-write-key';
 process.env.TELEGRAM_BOT_TOKEN='offline-bot';
 const { supabase } = await import('../api/_supabaseClient.js');
 const { default: handler } = await import('../api/admin.js');
-const { installFakeBotMessages } = await import('./_fakeBotMessages.js');
-const store = installFakeBotMessages(supabase);
 const id='moliya_user_tg_123';
-let row: any={id,telegram_id:'123',onboarding:{}};
-store.set(id,[
+let row: any={id,telegram_id:'123',onboarding:{bot_messages:[
   {id:'admin_8',message_id:8,direction:'bot_to_user',text:'old'},
   {id:'u_7',message_id:7,direction:'user_to_bot',sender:'user',text:'user'}
-]);
+]}};
 let telegramCalls=0,failHistory=false,nextMessageId=77,removedMarkup=0;
 (supabase as any).from=(table:string)=>{
   let target='',patch:any,filters:any[]=[];
@@ -57,16 +54,16 @@ assert.equal(telegramCalls,0);
 
 const sent=await client.sendAdminDirectMessage(id,'123','hello',{linkButtonText:'Open',linkButtonUrl:'https://example.invalid'});
 assert.equal(sent.historySaved,true);assert.equal(sent.adminEntry?.id,'admin_77');
-assert.equal(store.of(id).filter((m:any)=>m.message_id===77).length,1);
-assert.equal(store.of(id).at(-1).linkButtonText,'Open');
+assert.equal(row.onboarding.bot_messages.filter((m:any)=>m.message_id===77).length,1);
+assert.equal(row.onboarding.bot_messages.at(-1).linkButtonText,'Open');
 assert.equal(row.onboarding.last_link_message_id,77);
 assert.equal(telegramCalls,1);assert.equal(apiCalls,1);
 const edited=await client.editSingleChatMessage(id,'admin_77','edited','123',77);
-assert.equal(edited.dbUpdated,true);assert.equal(store.of(id).at(-1).text,'edited');
+assert.equal(edited.dbUpdated,true);assert.equal(row.onboarding.bot_messages.at(-1).text,'edited');
 const deleted=await client.deleteSingleChatMessage(id,'admin_77','123',77);
-assert.equal(deleted.dbDeleted,true);assert.equal(store.of(id).at(-1).tg_deleted,true);
+assert.equal(deleted.dbDeleted,true);assert.equal(row.onboarding.bot_messages.at(-1).tg_deleted,true);
 const purged=await client.deleteSingleChatMessage(id,'admin_77','123',77,{purgeFromDb:true});
-assert.equal(purged.dbDeleted,true);assert.ok(!store.of(id).some((m:any)=>m.message_id===77));
+assert.equal(purged.dbDeleted,true);assert.ok(!row.onboarding.bot_messages.some((m:any)=>m.message_id===77));
 assert.equal(row.onboarding.last_link_message_id,null);
 row.onboarding.last_link_message_id=8;
 const replacement=await client.sendAdminDirectMessage(id,'123','new link',{linkButtonText:'New',linkButtonUrl:'https://example.invalid'});
@@ -74,7 +71,7 @@ assert.equal(replacement.messageId,78);
 assert.equal(removedMarkup,0); // Earlier admin buttons must stay usable.
 assert.equal(row.onboarding.last_link_message_id,78);
 await assert.rejects(client.sendAdminDirectMessage(id,'456','wrong'),/RECIPIENT_MISMATCH/);
-failHistory=true;store.fail=true;
+failHistory=true;
 const partial=await client.sendAdminDirectMessage(id,'123','only Telegram');
 assert.equal(partial.historySaved,false);assert.equal(partial.adminEntry,null);
 assert.equal(telegramCalls,6); // No old-button removal, retry, or browser DB fallback.

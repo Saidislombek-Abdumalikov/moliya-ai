@@ -878,17 +878,6 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const id=String((payload as {id:string}).id);
       setCustomTransactions(current=>{const next=current.filter(t=>String(t.id)!==id);try{localStorage.setItem('user_transactions_v1',JSON.stringify(next));}catch{}return next;});
       void refreshUserData().catch(()=>{});
-    }else if(financialAction==='save_cards_atomic'){
-      ++refreshSequence.current;
-      const {cards:savedCards,transactions:adjustments}=payload as {cards:Card[];transactions:Transaction[]};
-      setCards(savedCards);
-      if(adjustments?.length){const ids=new Set(adjustments.map(t=>String(t.id)));setCustomTransactions(current=>[...adjustments,...current.filter(t=>!ids.has(String(t.id)))]);}
-      void refreshUserData().catch(()=>{});
-    }else if(financialAction==='delete_card_atomic'){
-      ++refreshSequence.current;
-      const id=String((payload as {id:string}).id);
-      setCards(current=>current.filter(c=>String(c.id)!==id));
-      void refreshUserData().catch(()=>{});
     }else await refreshUserData().catch(()=>{});
   };
   const saveCards = async (updatedCards: Card[], adjustments: Transaction[] = []): Promise<boolean> => {

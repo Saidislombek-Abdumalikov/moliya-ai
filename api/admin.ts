@@ -1,10 +1,9 @@
 import {adminTelegram} from './services/_adminTelegramService.js';
-import {listBotMessages,saveBotMessageEntry,deleteBotMessageEntry,markBotMessagesDeleted} from './services/_telegramMessageService.js';
 import {notificationPayload} from './services/_notificationService.js';
 import {adminUserView} from './_adminUserView.js';
 import {eligibleUser} from './_userPolicy.js';
 import { shouldRemind, tashkentDay, reminderSlots, type ReminderSlot } from '../shared/reminderPolicy.js';
-import { updateProfileSnapshot, matchProfileSnapshot } from './services/_profileWriteService.js';
+import { updateProfileSnapshot } from './services/_profileWriteService.js';
 import { safeError, safeLog, safeWarn } from './_logger.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import crypto from 'crypto';
@@ -135,7 +134,8 @@ async function notifyUserVipGrantedTelegram(telegramId: string | number, expires
     const newMsgId = result?.result?.message_id;
 
     if (userId) {
-      const { data: curr } = await supabase.from('users').select('onboarding, profile_version').eq('id', userId).maybeSingle();
+      const { data: curr } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
+      const existingMsgs = Array.isArray(curr?.onboarding?.bot_messages) ? curr.onboarding.bot_messages : [];
       const newMsg = {
         id: 'msg_vip_' + Date.now(),
         sender: 'bot',
@@ -147,11 +147,11 @@ async function notifyUserVipGrantedTelegram(telegramId: string | number, expires
         onboarding: {
           ...(curr?.onboarding || {}),
           last_system_message_id: newMsgId || curr?.onboarding?.last_system_message_id,
-          last_link_message_id: newMsgId || curr?.onboarding?.last_link_message_id
+          last_link_message_id: newMsgId || curr?.onboarding?.last_link_message_id,
+          bot_messages: [...existingMsgs, newMsg]
         },
         updated_at: new Date().toISOString()
       });
-      await saveBotMessageEntry(userId, newMsg);
     }
 
     return result;
@@ -215,7 +215,8 @@ async function notifyUserUnlimitedAiGrantedTelegram(telegramId: string | number,
     const newMsgId = result?.result?.message_id;
 
     if (userId) {
-      const { data: curr } = await supabase.from('users').select('onboarding, profile_version').eq('id', userId).maybeSingle();
+      const { data: curr } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
+      const existingMsgs = Array.isArray(curr?.onboarding?.bot_messages) ? curr.onboarding.bot_messages : [];
       const newMsg = {
         id: 'msg_unlimited_' + Date.now(),
         sender: 'bot',
@@ -227,11 +228,11 @@ async function notifyUserUnlimitedAiGrantedTelegram(telegramId: string | number,
         onboarding: {
           ...(curr?.onboarding || {}),
           last_system_message_id: newMsgId || curr?.onboarding?.last_system_message_id,
-          last_link_message_id: newMsgId || curr?.onboarding?.last_link_message_id
+          last_link_message_id: newMsgId || curr?.onboarding?.last_link_message_id,
+          bot_messages: [...existingMsgs, newMsg]
         },
         updated_at: new Date().toISOString()
       });
-      await saveBotMessageEntry(userId, newMsg);
     }
 
     return result;
@@ -648,14 +649,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const restrictions=new Set((suUsers||[]).filter(u=>String(u.id).startsWith('restricted_tg_') && u.onboarding?.is_blocked!==false).map(u=>String(u.id).replace('restricted_tg_','')));
         const defaultQuota=defaultAiQuotaFromOnboarding((suUsers||[]).find(u=>u.id==='system_app_settings')?.onboarding);
         const formatted=(suUsers||[]).filter(u=>/^moliya_user_tg_[0-9]+$/.test(u.id)).map(u=>adminUserView(u,restrictions.has(String(u.telegram_id)),defaultQuota));
-        // Latest stored bot message per user, for the dashboard chat list (preview + sort).
-        const latest=new Map<string,any>();
-        try{
-          // Best effort: the roster must still load if the history store is unavailable.
-          const {data:recent}=await supabase.from('moliya_bot_messages').select('user_id,entry').order('created_at',{ascending:false}).limit(5000);
-          for(const row of recent||[])if(!latest.has(row.user_id))latest.set(row.user_id,row.entry);
-        }catch{}
-        return res.status(200).json({ success: true, users: formatted.map(u=>({...u,lastBotMessage:latest.get(u.id)??null})), source: 'supabase' });
+        return res.status(200).json({ success: true, users: formatted, source: 'supabase' });
       } catch (e: any) {
         return res.status(500).json({ error: 'Failed to fetch users' });
       }
@@ -1539,7 +1533,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
         for (const u of allMatchedUsers) {
           if (!/^moliya_user_tg_[0-9]+$/.test(u.id)) continue;
-          const bMsgs: any[] = await listBotMessages(u.id);
+          const bMsgs: any[] = Array.isArray(u.onboarding?.bot_messages) ? u.onboarding.bot_messages : [];
           for (const m of bMsgs) {
             const numId = Number(m.message_id || m.messageId || (typeof m.id === 'string' && m.id.split('_').pop()));
             if (Number.isInteger(numId) && numId > 0) {
@@ -1561,9 +1555,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const nowIso = new Date().toISOString();
         for (const u of allMatchedUsers) {
           if (!/^moliya_user_tg_[0-9]+$/.test(u.id)) continue;
-          clearedDbRecords += await markBotMessagesDeleted(u.id, nowIso);
+          const bMsgs: any[] = Array.isArray(u.onboarding?.bot_messages) ? u.onboarding.bot_messages : [];
+          clearedDbRecords += bMsgs.length;
+          const markedMsgs = bMsgs.map((m: any) => ({ ...m, tg_deleted: true, tg_deleted_at: nowIso }));
           const updatedOnboarding = {
             ...(u.onboarding || {}),
+            bot_messages: markedMsgs,
             last_link_message_id: null,
             chat_cleared_at: nowIso
           };
@@ -1586,7 +1583,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // Case B: Global message wipe for all users
       if (allUsers) {
-        const { data: allUserRows, error: usersError } = await supabase.from('users').select('id, telegram_id, onboarding, profile_version');
+        const { data: allUserRows, error: usersError } = await supabase.from('users').select('id, telegram_id, onboarding');
         if (usersError) return res.status(503).json({ error: 'RECIPIENT_STORE_UNAVAILABLE' });
         let totalAttempted = 0;
         let totalDeleted = 0;
@@ -1601,7 +1598,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const uTgId = String(u.telegram_id || '');
           if (uTgId !== u.id.slice('moliya_user_tg_'.length)) continue;
 
-          const uMsgs: any[] = await listBotMessages(u.id);
+          const uMsgs: any[] = Array.isArray(u.onboarding?.bot_messages) ? u.onboarding.bot_messages : [];
           const uMsgIds: number[] = uMsgs
             .map(m => Number(m.message_id))
             .filter(id => Number.isInteger(id) && id > 0);
@@ -1617,9 +1614,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             safeLog(`[TelegramDelete] Global user=${u.id} tgId=${uTgId} deleted=${sum.deleted} absent=${sum.alreadyAbsent} notDeletable=${sum.notDeletable}`);
           }
 
-          // Mark stored messages as tg_deleted (preserved for Admin audit)
-          totalDbCleared += await markBotMessagesDeleted(u.id, new Date().toISOString());
-          const updatedOb = { ...(u.onboarding || {}), last_link_message_id: null, chat_cleared_at: new Date().toISOString() };
+          // Mark bot_messages as tg_deleted in onboarding (preserve for Admin audit)
+          totalDbCleared += uMsgs.length;
+          const markedObMsgs = uMsgs.map((m: any) => ({ ...m, tg_deleted: true, tg_deleted_at: new Date().toISOString() }));
+          const updatedOb = { ...(u.onboarding || {}), bot_messages: markedObMsgs, last_link_message_id: null, chat_cleared_at: new Date().toISOString() };
           await updateProfileSnapshot(u.id, u, { onboarding: updatedOb, updated_at: new Date().toISOString() });
           usersPurged++;
 
@@ -1667,7 +1665,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if(!userRow || String(userRow.telegram_id)!==userId.replace('moliya_user_tg_',''))return res.status(404).json({error:'USER_NOT_FOUND'});
 
-      const rawMessages = await listBotMessages(userId);
+      const rawMessages = Array.isArray(userRow?.onboarding?.bot_messages) ? userRow.onboarding.bot_messages : [];
       const messages = rawMessages.map((m: any) => {
         const fileId = m.metadata?.file_id;
         return {
@@ -1699,22 +1697,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (String(messageId).length > 100 || !['edit','delete','purge'].includes(action)) return res.status(400).json({ error: 'INVALID_MESSAGE_ACTION' });
     if (action === 'edit' && (typeof text !== 'string' || !text.trim() || text.length > 4096)) return res.status(400).json({ error: 'INVALID_MESSAGE_TEXT' });
     try {
-      const { data: user, error } = await supabase.from('users').select('id,telegram_id,onboarding, profile_version').eq('id', userId).maybeSingle();
+      const { data: user, error } = await supabase.from('users').select('id,telegram_id,onboarding').eq('id', userId).maybeSingle();
       if (error) return res.status(503).json({ error: 'USER_STORE_UNAVAILABLE' });
       if (!user || String(user.telegram_id) !== userId.slice('moliya_user_tg_'.length)) return res.status(404).json({ error: 'USER_NOT_FOUND' });
-      const old = await listBotMessages(userId);
+      const old = Array.isArray(user.onboarding?.bot_messages) ? user.onboarding.bot_messages : [];
       const target = old.find((m:any) => (m.id != null && String(m.id) === String(messageId)) ||
         (m.message_id != null && String(m.message_id) === String(messageId)) ||
         (m.messageId != null && String(m.messageId) === String(messageId)));
       if (!target) return res.status(404).json({ error: 'MESSAGE_NOT_FOUND' });
       if (action === 'edit' && (target.direction === 'user_to_bot' || target.sender === 'user')) return res.status(403).json({ error: 'MESSAGE_EDIT_DENIED' });
+      const matches = (m:any) => m === target;
       const timestamp = new Date().toISOString();
-      if (action === 'purge') await deleteBotMessageEntry(userId, String(target.id));
-      else await saveBotMessageEntry(userId, action === 'edit'
-        ? { ...target, text: text.trim(), edited: true, edited_at: timestamp }
-        : { ...target, tg_deleted: true, tg_deleted_at: timestamp });
-      if (action === 'purge' && Number(user.onboarding?.last_link_message_id) === Number(target.message_id))
-        await updateProfileSnapshot(userId, user, { onboarding: { ...user.onboarding, last_link_message_id: null } });
+      const messages = action === 'purge' ? old.filter((m:any) => !matches(m)) : old.map((m:any) => !matches(m) ? m :
+        action === 'edit' ? { ...m, text: text.trim(), edited: true, edited_at: timestamp } :
+        { ...m, tg_deleted: true, tg_deleted_at: timestamp });
+      await updateProfileSnapshot(userId, user, { onboarding: { ...user.onboarding, bot_messages: messages,
+        ...(action === 'purge' && Number(user.onboarding?.last_link_message_id) === Number(target.message_id) ? { last_link_message_id: null } : {}) } });
       await logAdminAction('bot_message_'+action, userId, undefined, { messageId: String(messageId) });
       return res.status(200).json({ success: true, changed: true });
     } catch {
@@ -2324,8 +2322,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .select('*').eq('target_user_id', userId)
         .order('created_at', { ascending: false }).limit(30);
 
-      // Extract files from the bot message history
-      const botMessages = await listBotMessages(userId);
+      // Extract files from bot_messages
+      const botMessages = user.onboarding?.bot_messages || [];
       const files = botMessages.filter((m: any) =>
         m.metadata?.file_id || ['photo', 'document', 'voice', 'audio', 'video'].includes(m.type)
       ).map((m: any) => ({
@@ -2396,7 +2394,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if(action==='save'&&(!record||typeof record.id!=='string'||record.id.length>150||JSON.stringify(record).length>500000))return res.status(400).json({error:'INVALID_HISTORY'});
     const id='moliya_system_broadcast_history';
     for(let attempt=0;attempt<3;attempt++){
-      const {data:row,error}=await supabase.from('users').select('onboarding, profile_version').eq('id',id).maybeSingle();
+      const {data:row,error}=await supabase.from('users').select('onboarding').eq('id',id).maybeSingle();
       if(error)return res.status(503).json({error:'HISTORY_UNAVAILABLE'});
       const records=Array.isArray(row?.onboarding?.broadcasts)?row.onboarding.broadcasts:[];
       if(action==='read')return res.status(200).json({records});
@@ -2407,7 +2405,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if(insertError.code!=='23505')return res.status(503).json({error:'HISTORY_UNAVAILABLE'});
       }else{
         let query=supabase.from('users').update({onboarding,updated_at:new Date().toISOString()}).eq('id',id);
-        query=matchProfileSnapshot(query,row,['onboarding']);
+        query=row.onboarding==null?query.is('onboarding',null):query.eq('onboarding',JSON.stringify(row.onboarding));
         const {data:changed,error:writeError}=await query.select('id').maybeSingle();
         if(writeError)return res.status(503).json({error:'HISTORY_UNAVAILABLE'});
         if(changed)return res.status(200).json({success:true});

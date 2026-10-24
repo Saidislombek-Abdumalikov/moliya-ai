@@ -2,8 +2,7 @@ import { effectiveAccess } from './_accessHelper.js';
 import { cleanPlannedPayments } from '../shared/plannedPayments.js';
 import { effectiveTrialEnd } from '../shared/registrationTrial.js';
 import {userNotifications} from './services/_notificationService.js';
-import { updateProfileSnapshot, matchProfileSnapshot } from './services/_profileWriteService.js';
-import { listBotMessages } from './services/_telegramMessageService.js';
+import { updateProfileSnapshot } from './services/_profileWriteService.js';
 import { activeSessionToken } from './_sessionChoice.js';
 import { publicFinancialError } from './_apiErrors.js';
 import { safeWarn, safeError } from './_logger.js';
@@ -98,23 +97,10 @@ export function verifyTelegramInitData(
   }
 }
 
-function callerToken(req: any): string {
-  const raw = req.headers?.authorization || req.headers?.['x-session-token'];
-  return req.body?.sessionToken || (typeof raw === 'string' ? raw.replace(/^Bearer /, '').trim() : '');
-}
-
-/** Session callers are memoized per request so the handler can start the lookup
- * while the rate limiter runs, and later calls reuse the same result. */
-export function authenticateCaller(req: any, botToken: string): Promise<any> {
-  const token = callerToken(req);
-  if (!token || typeof token !== 'string') return authenticateCallerUncached(req, botToken);
-  if (req.__moliyaAuth?.token !== token) req.__moliyaAuth = {token, result: authenticateCallerUncached(req, botToken)};
-  return req.__moliyaAuth.result;
-}
-
-async function authenticateCallerUncached(req: any, botToken: string): Promise<any> {
+export async function authenticateCaller(req: any, botToken: string): Promise<any> {
   const fail = (statusCode: number, error: string) => ({authenticated:false,statusCode,error});
-  const token = callerToken(req);
+  const raw = req.headers?.authorization || req.headers?.['x-session-token'];
+  const token = req.body?.sessionToken || (typeof raw === 'string' ? raw.replace(/^Bearer /, '').trim() : '');
   const initData = req.body?.initData || req.headers?.['x-telegram-init-data'];
   try {
     let userDoc: any = null;
@@ -122,22 +108,6 @@ async function authenticateCallerUncached(req: any, botToken: string): Promise<a
       if (typeof token !== 'string' || !/^sess_[a-zA-Z0-9_-]{16,128}$/.test(token)) return fail(401,'INVALID_SESSION');
       // The current canonical token is the sole credential. Legacy device_info
       // copies must not keep an old login valid after a newer session is issued.
-      // One round trip (migration 24): indexed user lookup + restricted_tg_ check.
-      let lookup: any;
-      try { lookup = await supabase.rpc('moliya_session_lookup', {p_session_token: token}); }
-      catch { lookup = {error: {message: 'SESSION_LOOKUP_THREW'}}; }
-      // Trust only the documented shape; anything else uses the old checked path.
-      if (!lookup.error && lookup.data && typeof lookup.data === 'object' && Object.hasOwn(lookup.data,'user')) {
-        userDoc = lookup.data?.user ?? null;
-        if(!userDoc) return fail(401,'INVALID_SESSION');
-        const expiry=Date.parse(userDoc.onboarding?.session_expires_at || '');
-        if(!Number.isFinite(expiry) || expiry<=Date.now()) return fail(401,'SESSION_EXPIRED');
-        if(accountDenied(userDoc) || lookup.data.restricted === true) return fail(403,'ACCOUNT_RESTRICTED');
-        return {authenticated:true,statusCode:200,userId:userDoc.id,telegramId:String(userDoc.telegram_id),userDoc,sessionToken:token};
-      }
-      // PGRST202 (function not deployed yet) or a transport error without a database
-      // code -> old two-query path. Database errors fail closed.
-      if (lookup.error?.code && lookup.error.code !== 'PGRST202') return fail(503,'AUTH_STORE_UNAVAILABLE');
       const {data,error} = await supabase.from('users').select('*')
         .eq('onboarding->>session_token',token).like('id','moliya_user_tg_%').maybeSingle();
       if(error) return fail(503,'AUTH_STORE_UNAVAILABLE');
@@ -185,8 +155,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const tier = action === 'check-login-request' ? 'auth_poll' : ['sync-data','logout','wipe-data','notifications','legal','debts'].includes(action) ? 'general' : 'auth_exchange';
-  // Start the session lookup while the rate limiter runs (both are network round trips).
-  if (callerToken(req)) void authenticateCaller(req,(process.env.TELEGRAM_BOT_TOKEN || '').trim());
   if (!(await applyRateLimit(req,res,tier))) return;
 
   const BOT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
@@ -741,8 +709,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       delete onboarding.session_expires_at;
       for (const key of ['session_token','sessionToken','session_expires_at','sessionExpiresAt']) delete deviceInfo[key];
       let query = supabase.from('users').update({onboarding,device_info:deviceInfo,updated_at:new Date().toISOString()})
-        .eq('id',caller.userId);
-      query = matchProfileSnapshot(query,userDoc,['onboarding','device_info']);
+        .eq('id',caller.userId).eq('onboarding',JSON.stringify(userDoc.onboarding));
+      query = userDoc.device_info == null ? query.is('device_info',null) : query.eq('device_info',JSON.stringify(userDoc.device_info));
       const {data,error} = await query.select('id').maybeSingle();
       if (error) return res.status(503).json({error:'SESSION_STORE_UNAVAILABLE'});
       if (!data) return res.status(409).json({error:'SESSION_CHANGED'});
@@ -770,8 +738,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // Commit session-checked deletion before any irreversible external cleanup.
       await mutateSessionFinancialData(canonicalUserId,caller.sessionToken,'delete_account',{});
 
-      // Collect any message IDs stored in the bot message history
-      const botMessages: any[] = await listBotMessages(userDoc.id).catch(() => []);
+      // Collect any message IDs stored in onboarding.bot_messages
+      const botMessages: any[] = Array.isArray(userDoc?.onboarding?.bot_messages) ? userDoc.onboarding.bot_messages : [];
       const storedIds: number[] = [];
       for (const m of botMessages) {
         const numId = Number(m.message_id || m.messageId);
@@ -1017,10 +985,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         // Perform update via service role (bypassing RLS safely on server)
-        const { data: updatedDoc, error: updateErr } = await matchProfileSnapshot(supabase
+        const { data: updatedDoc, error: updateErr } = await supabase
           .from('users')
           .update(updatePayload)
-          .eq('id', targetUserId), auth.userDoc, ['onboarding'])
+          .eq('id', targetUserId)
+          .eq('onboarding', JSON.stringify(auth.userDoc.onboarding))
           .select('id, name, phone, telegram, telegram_id, language, is_premium, premium_expires_at, cards, transactions, onboarding, updated_at')
           .maybeSingle();
 

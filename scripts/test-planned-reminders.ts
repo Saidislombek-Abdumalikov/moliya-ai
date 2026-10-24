@@ -6,7 +6,6 @@ import {normalizeAssistantReply,assistantActionIssue} from '../shared/assistant.
 import {withBotAppLinks} from '../api/_telegramKeyboard.js';
 process.env.SUPABASE_URL='http://127.0.0.1:54321';process.env.SUPABASE_SERVICE_ROLE_KEY='offline';process.env.TELEGRAM_BOT_TOKEN='offline';
 const {supabase}=await import('../api/_supabaseClient.js');
-const {installFakeBotMessages:__ifb}=await import('./_fakeBotMessages.js');const botStore=__ifb(supabase);
 const {deliverPlannedReminder}=await import('../api/services/_plannedReminderService.js');
 const db=new PGlite();await db.exec('CREATE ROLE anon;CREATE ROLE authenticated;CREATE ROLE service_role;CREATE TABLE users(id text PRIMARY KEY);');
 await db.exec(fs.readFileSync(new URL('../migrations/22-planned-reminders.sql',import.meta.url),'utf8'));

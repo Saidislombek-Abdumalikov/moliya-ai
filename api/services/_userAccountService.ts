@@ -1,6 +1,5 @@
-import { updateProfileSnapshot, matchProfileSnapshot } from './_profileWriteService.js';
-import { listBotMessages, clearBotMessages } from './_telegramMessageService.js';
-import { safeError, safeWarn } from '../_logger.js';
+import { updateProfileSnapshot } from './_profileWriteService.js';
+import { safeError } from '../_logger.js';
 import { supabase } from '../_supabaseClient.js';
 
 export interface UserAccount {
@@ -65,7 +64,7 @@ export async function blockUser(userId: string, reason: string = 'Blocked by adm
   const nowIso = new Date().toISOString();
 
   // Fetch current onboarding to preserve other fields
-  const { data: user } = await supabase.from('users').select('onboarding, profile_version').eq('id', userId).maybeSingle();
+  const { data: user } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
   const updatedOb = {
     ...(user?.onboarding || {}),
     is_blocked: true,
@@ -97,7 +96,7 @@ export async function unblockUser(userId: string): Promise<{ success: boolean; u
 
   const nowIso = new Date().toISOString();
 
-  const { data: user } = await supabase.from('users').select('onboarding, profile_version').eq('id', userId).maybeSingle();
+  const { data: user } = await supabase.from('users').select('onboarding').eq('id', userId).maybeSingle();
   const updatedOb = {
     ...(user?.onboarding || {}),
     is_blocked: false,
@@ -180,7 +179,7 @@ export async function deleteUserAccount(
   if(readError) throw new Error('ACCOUNT_STORE_UNAVAILABLE');
   if(!user || user.id!==userId || userId!=='moliya_user_tg_'+String(user.telegram_id)) throw new Error('USER_NOT_FOUND');
   const targetTgId = user?.telegram_id || user?.onboarding?.telegramId || (userId.startsWith('moliya_user_tg_') ? userId.replace('moliya_user_tg_', '') : null);
-  const botMessages: any[] = await listBotMessages(userId).catch(() => []);
+  const botMessages: any[] = Array.isArray(user?.onboarding?.bot_messages) ? user.onboarding.bot_messages : [];
   const messageIds = [...botMessages.map((m: any) => Number(m.message_id || m.messageId)), ...['last_message_id','last_temp_msg_id','last_system_message_id','last_link_message_id'].map(key=>Number(user.onboarding?.[key]))].filter((id: number) => Number.isSafeInteger(id) && id > 0);
 
   // External chat cleanup starts only after a successful database mutation.
@@ -190,7 +189,8 @@ export async function deleteUserAccount(
   if (options.hardDelete) {
     // Compare the identity/session snapshot; do not delete a refreshed account.
     let query=supabase.from('users').delete().eq('id',userId).eq('telegram_id',user.telegram_id);
-    query=matchProfileSnapshot(query,user,['onboarding','device_info']);
+    query=user.onboarding==null?query.is('onboarding',null):query.eq('onboarding',JSON.stringify(user.onboarding));
+    query=user.device_info==null?query.is('device_info',null):query.eq('device_info',JSON.stringify(user.device_info));
     const { data: deleted, error } = await query.select('id').maybeSingle();
     if (error) {
       safeError(`[UserAccountService] Error hard-deleting user ${userId}:`, error.message);
@@ -207,15 +207,14 @@ export async function deleteUserAccount(
       is_blocked: true,
       is_deleted: true,
       account_status: 'deleted',
-      deleted_at: nowIso
+      deleted_at: nowIso,
+      bot_messages: []
     };
-    delete (updatedOb as any).bot_messages;
 
     const { error } = await updateProfileSnapshot(userId, user, {
         onboarding: updatedOb,
         updated_at: nowIso
       });
-    if (!error) await clearBotMessages(userId).catch((e) => safeWarn(`[UserAccountService] chat history clear failed for ${userId}:`, e));
 
     if (error) {
       safeError(`[UserAccountService] Error soft-deleting user ${userId}:`, error.message);

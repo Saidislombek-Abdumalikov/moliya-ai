@@ -3,7 +3,6 @@ process.env.SUPABASE_URL = "http://127.0.0.1:54321"
 process.env.SUPABASE_SERVICE_ROLE_KEY = "offline-test"
 process.env.TELEGRAM_BOT_TOKEN = "offline-test"
 const { supabase } = await import("../api/_supabaseClient.js")
-const {installFakeBotMessages:__ifb}=await import('./_fakeBotMessages.js');const botStore=__ifb(supabase);
 const {
   deliverDebtReminder,
   deliveryKind,
