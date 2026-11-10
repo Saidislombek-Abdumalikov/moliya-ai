@@ -17,7 +17,7 @@ export function explicitAmount(source:string):number|null{
  text=text.replace(/(\d+)\s+yarim\s+(mln|million|ming)\b/g,(_,n,unit)=>`${Number(n)+0.5} ${unit}`);
  text=text.replace(/(\d+)\s*(?:mln|million)\s+(\d+)\s*ming\b/g,(_,a,b)=>String(Number(a)*1e6+Number(b)*1e3));
  const candidates:number[]=[];
- const re=/(?:[$€₽£₸]\s*)?\d+(?:[ \u00a0]\d{3})*(?:[.,]\d+)?\s*(?:(?:mln|million|ming|минг|миллион|млн|k|к|m)(?![a-zа-я]))?\s*(?:so'm|som|sum|uzs|сум|сўм|usd|dollar|dollor|eur|euro|yevro|rub|rubl|gbp|funt|kzt|tenge|[$€₽£₸])?/gi;
+ const re=/(?:[$€₽£₸]\s*)?\d+(?:[ \u00a0]\d{3})*(?:[.,]\d+)?\s*(?:(?:mln|million|ming|минг|миллион|млн|k|к|m)(?:ga|lik|dan|ta|cha)?(?![a-zа-я]))?\s*(?:so'm(?:ga|lik|dan)?|som(?:ga|lik|dan)?|sum(?:ga|lik|dan)?|uzs|сум(?:га|лик|дан)?|сўм(?:га|лик|дан)?|usd|dollar(?:ga|lik|dan)?|dollor(?:ga|lik|dan)?|доллар(?:га|лик|дан)?|eur|euro(?:ga|lik|dan)?|evro(?:ga|lik|dan)?|yevro(?:ga|lik|dan)?|евро(?:га|лик|дан)?|rub|rubl(?:ga|lik|dan)?|рубль(?:га|лик|дан)?|руб(?:га|лик|дан)?|gbp|funt(?:ga|lik|dan)?|kzt|tenge(?:ga|lik|dan)?|тенге(?:га|лик|дан)?|[$€₽£₸])?/gi;
  text=text.replace(re,(token,offset)=>{
   // Never read a number embedded in an identifier (card/model/transaction ID).
   if(/[a-zа-я_]/i.test(text[offset-1]||'') || /[a-zа-я_]/i.test(text[offset+token.trimEnd().length]||'')){candidates.push(NaN);return ' ';}
@@ -27,8 +27,8 @@ export function explicitAmount(source:string):number|null{
   if(/[.,]\d{3}$/.test(compact)){candidates.push(NaN);return ' ';}
   const n=Number(compact.replace(',','.'));
   const suffix=token.slice(token.indexOf(digits)+digits.length).trim();
-  const multiplier=/^(mln|million|миллион|млн|m)(?![a-z])/i.test(suffix)?1e6:/^(ming|минг|k|к)(?![a-z])/i.test(suffix)?1e3:1;
-  const explicitCurrency=/[$€₽£₸]|so'm|som|sum|uzs|сум|сўм|usd|dollar|dollor|eur|euro|yevro|rub|rubl|gbp|funt|kzt|tenge/.test(token);
+  const multiplier=/^(mln|million|миллион|млн|m)(?:ga|lik|dan|ta|cha)?(?![a-z])/i.test(suffix)?1e6:/^(ming|минг|k|к)(?:ga|lik|dan|ta|cha)?(?![a-z])/i.test(suffix)?1e3:1;
+  const explicitCurrency=/[$€₽£₸]|so'm|som|sum|uzs|сум|сўм|usd|dollar|dollor|доллар|eur|euro|evro|yevro|евро|rub|rubl|рубль|руб|gbp|funt|kzt|tenge|тенге/.test(token);
   if(multiplier!==1 || explicitCurrency || n>=1000)candidates.push(n*multiplier);
   else candidates.push(NaN); // Do not silently treat a small bare number as thousands.
   return ' ';
@@ -44,7 +44,7 @@ export function explicitAmount(source:string):number|null{
    else current+=v;
   }
   const value=total+current;
-  if(hasScale || ["so'm",'som','sum','dollar','usd','euro','rubl'].includes(tokens[j]))candidates.push(value);
+  if(hasScale || ["so'm",'som','sum','dollar','usd','euro','evro','yevro','rubl'].includes(tokens[j]))candidates.push(value);
   else candidates.push(NaN);
   i=j-1;
  }
@@ -63,15 +63,15 @@ export function hasTransactionIntent(source:string):boolean {
  if(/[?？]/.test(text) || /\b(?:qancha|necha|nima|nega|qanday|agar|ertaga|keyin|reja\w*|kerak|narx\w*|turadi|bo'ladi|bo'lsa|emas|yo'q|olmoqchi\w*|bermoqchi\w*|sarflamoqchi\w*|sarflayman|olaman|beraman|to'layman|would|could|will|price|if|not|tomorrow)\b/.test(text))return false;
  if(/\b[a-z']*(?:madim|magan|mayman|madi)\b/.test(text))return false;
  // Completed actions; longer statements still require the AI parser.
- if(/\b(?:sarfladim|ishlatdim|to'ladim|toladim|berdim|oldim|tushdi|topdim|spent|paid|earned|received)\b/.test(text))return true;
+ if(/\b(?:sarfladim|ishlatdim|to'ladim|toladim|to‘ladim|toʻladim|berdim|oldim|tushdi|topdim|yechildi|ketdi|xarid\s+qildim|sotib\s+oldim|o'tkazdim|otkazdim|spent|paid|earned|received)\b/.test(text))return true;
  // Shorthand is accepted only when every non-amount word is a known label.
  const tokens=text.replace(/\b(?:men|bugun|kecha|kechagi|uchun)\b/g,' ').replace(/[.,!]/g,' ').split(/\s+/).filter(Boolean);
- const labels=new Set(['taksi','taksiga','taxi','bozor','bozorlik','bozorlikka','bozorga','non','nonga','ovqat','ovqatga','tushlik','tushlikka','obed','obedga','abet','abetga','nonushta','nonushtaga','kechki','choy','choyga','kofe','kofega','somsa','somsaga','osh','oshga','shashlik','lavash','korzinka','korzinkaga','makro','restoran','restoranga','maosh','oylik','avans','ijara','ijaraga','kvartira','kvartiraga','benzin','benzinga','metan','propan','avtobus','avtobusga','metro','metroga','yandex','yandeks','yolkira',"yo'lkira",'internet','internetga','wifi','wifiga','svet','svetga','gaz','gazga','kommunal','transport','kafe','kafega','kurs','kursga','kontrakt','kontraktga','kitob','kitobga','maktab','maktabga','dori','doriga','apteka','aptekaga','kiyim','kiyimga','kino','kinoga','fitnes','telefon','telefonga','ovqatlandim']);
+ const labels=new Set(['taksi','taksiga','taxi','bozor','bozorlik','bozorlikka','bozorga','non','nonga','ovqat','ovqatga','tushlik','tushlikka','obed','obedga','abet','abetga','nonushta','nonushtaga','kechki','choy','choyga','kofe','kofega','somsa','somsaga','osh','oshga','shashlik','lavash','korzinka','korzinkaga','makro','restoran','restoranga','maosh','oylik','avans','ijara','ijaraga','kvartira','kvartiraga','benzin','benzinga','metan','metanga','propan','propanga','avtobus','avtobusga','metro','metroga','yandex','yandeks','yolkira',"yo'lkira",'internet','internetga','wifi','wifiga','svet','svetga','gaz','gazga','kommunal','transport','kafe','kafega','kurs','kursga','kontrakt','kontraktga','kitob','kitobga','maktab','maktabga','dori','doriga','apteka','aptekaga','dorixona','dorixonaga','kiyim','kiyimga','kino','kinoga','fitnes','telefon','telefonga','ovqatlandim','lunch','lunchga','fastfood','fastfoodga','havas','havasga','supermarket','supermarketga','magazin','magazinga','shifoxona','shifoxonaga','doktor','doktorga','klinika','klinikaga','paynet','paynetga','gosht','goshtga',"go'sht","go'shtga"]);
  let labelCount=0;
  for(const token of tokens){
   if(labels.has(token)){labelCount++;continue;}
-  if(token in words || /^(?:so'm|som|sum|uzs|usd|dollar|dollor|eur|euro|rub|rubl|ming|mln|million|k|m)$/.test(token))continue;
-  if(/^(?:[$€₽£₸])?\d+(?:k|m|ming|mln)?(?:[$€₽£₸])?$/.test(token))continue;
+  if(token in words || /^(?:so'm|som|sum|uzs|usd|dollar|dollor|eur|euro|evro|yevro|rub|rubl|ming|mln|million|k|m)(?:ga|lik|dan|ta)?$/.test(token))continue;
+  if(/^(?:[$€₽£₸])?\d+(?:k|m|ming|mln)?(?:ga|lik|dan)?(?:[$€₽£₸])?$/.test(token))continue;
   return false;
  }
  return labelCount===1;

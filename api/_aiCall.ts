@@ -10,8 +10,8 @@ export async function generateBounded(ai:Pick<GoogleGenAI,'models'>,params:Gener
     ...(!params.config?.thinkingConfig
       ? /^gemini-2\.5-flash(?:-lite)?$/i.test(String(params.model || ''))
         ? {thinkingConfig:{thinkingBudget:0}}
-        : /^gemini-3\.(?:5|6)-flash(?:-lite)?$/.test(params.model)
-        ? {thinkingConfig:{thinkingLevel:ThinkingLevel.MINIMAL}}
+        : /^gemini-3\./i.test(String(params.model || ''))
+        ? {thinkingConfig:{thinkingLevel:ThinkingLevel.LOW}}
         : {}
       : {}),
     maxOutputTokens:Math.max(params.config?.maxOutputTokens||0,2048),

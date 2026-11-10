@@ -136,11 +136,11 @@ DATA: ${JSON.stringify({ history, text, debts, preferences, cards: (Array.isArra
   for (const key of keys) {
     const rawPrimary = String(key.model || "").trim()
     const primaryModel =
-      !rawPrimary || rawPrimary === "gemini-flash-latest" || /^gemini-3\./i.test(rawPrimary)
-        ? "gemini-2.5-flash"
+      !rawPrimary || rawPrimary === "gemini-flash-latest" || rawPrimary.startsWith("gemini-2.0") || rawPrimary.startsWith("gemini-1.5")
+        ? "gemini-3.8-flash"
         : rawPrimary
     for (const model of [
-      ...new Set([primaryModel, "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"].filter(Boolean)),
+      ...new Set([primaryModel, "gemini-3.8-flash", "gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"].filter(Boolean)),
     ]) {
       if (Date.now() >= deadline) break
       try {

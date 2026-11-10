@@ -85,10 +85,10 @@ export async function getCandidateAiKeys(forceRefresh = false): Promise<AiKeyRec
           const isSameDay = lastUsed && !isNaN(lastUsed.getTime()) &&
             tashkentDay(lastUsed) === tashkentDay(now);
 
-          // Auto-migrate legacy or non-existent 3.x models to gemini-2.5-flash
-          let effectiveModel = String(k.model || '').trim() || 'gemini-2.5-flash';
-          if (effectiveModel === 'gemini-flash-latest' || /^gemini-3\./i.test(effectiveModel)) {
-            effectiveModel = 'gemini-2.5-flash';
+          // Auto-migrate legacy shut-down models to gemini-3.8-flash (or keep 2.5/3.x)
+          let effectiveModel = String(k.model || '').trim() || 'gemini-3.8-flash';
+          if (effectiveModel === 'gemini-flash-latest' || effectiveModel.startsWith('gemini-2.0') || effectiveModel.startsWith('gemini-1.5')) {
+            effectiveModel = 'gemini-3.8-flash';
           }
 
           return {
@@ -140,7 +140,7 @@ export async function getCandidateAiKeys(forceRefresh = false): Promise<AiKeyRec
         name: 'Default Environment Key',
         provider: 'google',
         api_key: envKey,
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3.8-flash',
         priority: 1,
         status: 'active',
         total_requests: 0,
@@ -246,11 +246,11 @@ export async function recordKeyResult(
  */
 async function callGoogleGenAi(key: AiKeyRecord, prompt: string): Promise<any> {
   const cleanKey = (key.api_key || '').trim();
-  let primaryModel = (key.model || 'gemini-2.5-flash').trim();
-  if (primaryModel === 'gemini-flash-latest' || /^gemini-3\./i.test(primaryModel)) {
-    primaryModel = 'gemini-2.5-flash';
+  let primaryModel = (key.model || 'gemini-3.8-flash').trim();
+  if (primaryModel === 'gemini-flash-latest' || primaryModel.startsWith('gemini-2.0') || primaryModel.startsWith('gemini-1.5')) {
+    primaryModel = 'gemini-3.8-flash';
   }
-  const candidateModels = [primaryModel, 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash'];
+  const candidateModels = [primaryModel, 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'];
   const models = [...new Set(candidateModels)];
 
   let lastError: any = null;
@@ -264,7 +264,7 @@ async function callGoogleGenAi(key: AiKeyRecord, prompt: string): Promise<any> {
         config: {
           temperature: 0.1,
           responseMimeType: "application/json",
-          maxOutputTokens: 250
+          maxOutputTokens: 1024
         }
       });
 
@@ -417,9 +417,9 @@ export async function testSpecificAiKey(keyData: {
   try {
     const isGoogle = keyData.provider === 'google' || (keyData.provider as string) === 'gemini';
     if (isGoogle) {
-      let targetModel = (keyData.model || 'gemini-2.5-flash').trim();
-      if (targetModel === 'gemini-flash-latest' || /^gemini-3\./i.test(targetModel)) {
-        targetModel = 'gemini-2.5-flash';
+      let targetModel = (keyData.model || 'gemini-3.8-flash').trim();
+      if (targetModel === 'gemini-flash-latest' || targetModel.startsWith('gemini-2.0') || targetModel.startsWith('gemini-1.5')) {
+        targetModel = 'gemini-3.8-flash';
       }
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${cleanKey}`;
       const res = await fetch(url, {
@@ -485,8 +485,8 @@ export async function executeAiQuery(
       const isGoogle = key.provider === 'google' || (key.provider as string) === 'gemini';
       if (isGoogle) {
         const ai = new GoogleGenAI({ apiKey: cleanKey });
-        const rawModel = (key.model || 'gemini-2.5-flash').trim();
-        const modelName = rawModel === 'gemini-flash-latest' || /^gemini-3\./i.test(rawModel) ? 'gemini-2.5-flash' : rawModel;
+        const rawModel = (key.model || 'gemini-3.8-flash').trim();
+        const modelName = rawModel === 'gemini-flash-latest' || rawModel.startsWith('gemini-2.0') || rawModel.startsWith('gemini-1.5') ? 'gemini-3.8-flash' : rawModel;
         const response = await ai.models.generateContent({
           model: modelName,
           contents: userPrompt,

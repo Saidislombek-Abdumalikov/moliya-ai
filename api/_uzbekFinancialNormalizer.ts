@@ -248,7 +248,7 @@ export function extractUzbekNumber(raw: string): number | null {
   text = resolveCompoundFinancialNumbers(text);
 
   // Multiplier abbreviations
-  text = text.replace(/(\d+)\s*(k|к)\b/gi, '$1000');
+  text = text.replace(/(\d+)\s*(k|к)\b/gi, (_, n) => `${n}000`);
   text = text.replace(/(\d+)\s*(mln|млн|million|миллион)\b/gi, (_, n) => `${n}000000`);
   text = text.replace(/(\d+)\s*(m|м)\b(?!\w)/gi, (_, n) => `${n}000000`);
   text = text.replace(/(\d+)\s*(ming|минг)\b/gi, (_, n) => `${n}000`);
@@ -382,7 +382,7 @@ export const TURBO_CATEGORY_MAP = [
   {
     category: 'Oziq-ovqat',
     type: 'expense' as const,
-    regex: /\b(ovqat\w*|avqat\w*|non\w*|go'?sht\w*|gosht\w*|bozor\w*|bozrlik\w*|bazar\w*|korzinka\w*|makro\w*|havas\w*|supermarket\w*|supermark\w*|osh\w*|choyxona\w*|lunch\w*|obed\w*|tushlik\w*|kechki\s+ovqat|kafe\w*|restoran\w*|kofe\w*|lavash\w*|shashlik\w*|somsa\w*|shirinlik\w*|suv\w*|ichimlik\w*|pechenye\w*|meva\w*|sabzavot\w*|kartoshka\w*|piyoz\w*|guruch\w*|un\b|unga\b|undan\b|yog'?\w*|magazin\w*|magaz\w*)\b/i
+    regex: /\b(ovqat\w*|avqat\w*|non\w*|go'?sht\w*|gosht\w*|bozor\w*|bozrlik\w*|bazar\w*|korzinka\w*|makro\w*|havas\w*|supermarket\w*|supermark\w*|osh\w*|choyxona\w*|lunch\w*|obed\w*|tushlik\w*|kechki\s+ovqat|kafe\w*|restoran\w*|kofe\w*|lavash\w*|shashlik\w*|somsa\w*|shirinlik\w*|suv\w*|ichimlik\w*|pechenye\w*|meva\w*|sabzavot\w*|kartoshka\w*|piyoz\w*|guruch\w*|un\b|unga\b|undan\b|yog'?\w*|magazin\w*|magaz\w*|fastfood\w*)\b/i
   },
   {
     category: 'Kommunal',
@@ -444,7 +444,7 @@ export function normalizeUzbekFinancialText(rawText: string): NormalizedFinancia
   text = resolveCompoundFinancialNumbers(text);
 
   // 3. Multiplier Preprocessing (e.g., "14mln" -> "14000000", "50k" -> "50000", "14m" -> "14000000")
-  text = text.replace(/(\d+)\s*(k|к)\b/gi, '$1000');
+  text = text.replace(/(\d+)\s*(k|к)\b/gi, (_, n) => `${n}000`);
   text = text.replace(/(\d+)\s*(mln|млн|million|миллион)\b/gi, (_, n) => `${n}000000`);
   text = text.replace(/(\d+)\s*(m|м)\b(?!\w)/gi, (_, n) => `${n}000000`);
   text = text.replace(/(\d+)\s*(ming|минг)\b/gi, (_, n) => `${n}000`);
@@ -458,8 +458,12 @@ export function normalizeUzbekFinancialText(rawText: string): NormalizedFinancia
   });
 
   // 4. Colloquial Suffix Normalization
-  text = text.replace(/(\d+)\s*mingga\b/gi, '$1000 ga');
-  text = text.replace(/(\d+)\s*mlnga\b/gi, '$1000000 ga');
+  text = text.replace(/(\d+)\s*mingga\b/gi, (_, n) => `${n}000 ga`);
+  text = text.replace(/(\d+)\s*mlnga\b/gi, (_, n) => `${n}000000 ga`);
+  text = text.replace(/(\d+)\s*mingdan\b/gi, (_, n) => `${n}000 dan`);
+  text = text.replace(/(\d+)\s*mlndan\b/gi, (_, n) => `${n}000000 dan`);
+  text = text.replace(/(\d+)\s*minglik\b/gi, (_, n) => `${n}000 lik`);
+  text = text.replace(/(\d+)\s*mlnlik\b/gi, (_, n) => `${n}000000 lik`);
 
   // Category inference hints from common colloquial words
   let inferredCategory: string | undefined;
